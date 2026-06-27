@@ -16,10 +16,13 @@ import java.util.zip.GZIPInputStream
  */
 object InternalInstaller {
 
-    // python-build-standalone 静态编译包（GitHub releases）
-    // 选择最小的 embeddable 版本
-    private const val PYTHON_URL = "https://github.com/astral-sh/python-build-standalone/releases/download/20241002/cpython-3.12.7+20241002-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
-    private const val PYTHON_URL_X86 = "https://github.com/astral-sh/python-build-standalone/releases/download/20241002/cpython-3.12.7+20241002-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    // python-build-standalone（astral-sh 维护，稳定源）
+    private const val PYTHON_URL_AARCH64 = "https://github.com/astral-sh/python-build-standalone/releases/download/20250311/cpython-3.12.9+20250311-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    private const val PYTHON_URL_X86_64 = "https://github.com/astral-sh/python-build-standalone/releases/download/20250311/cpython-3.12.9+20250311-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+
+    // Node.js — 使用 Termux 预编译包（bionic libc，Android 原生兼容）
+    private const val NODE_URL_AARCH64 = "https://packages.termux.dev/apt/termux-main/pool/main/n/nodejs/nodejs_24.1.0_aarch64.deb"
+    private const val NODE_URL_X86_64 = "https://packages.termux.dev/apt/termux-main/pool/main/n/nodejs/nodejs_24.1.0_x86_64.deb"
 
     data class InstallProgress(
         val stage: String,
@@ -49,7 +52,7 @@ object InternalInstaller {
             // 1. 检测架构
             onProgress(InstallProgress("arch", 0.05f, "检测设备架构..."))
             val arch = getArch()
-            val url = if (arch == "aarch64") PYTHON_URL else PYTHON_URL_X86
+            val url = if (arch == "aarch64") PYTHON_URL_AARCH64 else PYTHON_URL_X86_64
             Logger.i("Installer", "架构: $arch, URL: $url")
 
             // 2. 下载
@@ -113,18 +116,12 @@ object InternalInstaller {
 
         try {
             val arch = getArch()
-            // 使用 unofficial-builds 的 static binary
-            val version = "v20.11.1"
-            val url = if (arch == "aarch64") {
-                "https://unofficial-builds.nodejs.org/download/release/$version/node-$version-linux-arm64.tar.gz"
-            } else {
-                "https://unofficial-builds.nodejs.org/download/release/$version/node-$version-linux-x64.tar.gz"
-            }
+            val url = if (arch == "aarch64") NODE_URL_AARCH64 else NODE_URL_X86_64
 
-            onProgress(InstallProgress("download", 0.1f, "下载 Node.js $version..."))
-            val cacheFile = File(context.cacheDir, "node.tar.gz")
+            onProgress(InstallProgress("download", 0.1f, "下载 Node.js..."))
+            val cacheFile = File(context.cacheDir, "node.deb")
 
-            if (!cacheFile.exists() || cacheFile.length() < 1_000_000) {
+            if (!cacheFile.exists() || cacheFile.length() < 100_000) {
                 downloadFile(url, cacheFile) { downloaded, total ->
                     val pct = if (total > 0) downloaded.toFloat() / total else 0f
                     onProgress(InstallProgress("download", 0.1f + pct * 0.5f,
@@ -134,7 +131,8 @@ object InternalInstaller {
 
             onProgress(InstallProgress("extract", 0.65f, "解压中..."))
             targetDir.mkdirs()
-            extractTarGz(cacheFile, targetDir)
+            // deb 文件本质是 ar 归档，内含 data.tar.xz
+            extractDeb(cacheFile, targetDir)
 
             onProgress(InstallProgress("chmod", 0.85f, "设置权限..."))
             setExecutable(File(targetDir, "bin"))
@@ -222,7 +220,6 @@ object InternalInstaller {
 
     private fun extractTarGz(archive: File, targetDir: File) {
         Logger.i("Installer", "解压 ${archive.name} → ${targetDir.absolutePath}")
-        // 使用系统 tar 命令（Android 自带）
         val proc = ProcessBuilder(
             "sh", "-c",
             "tar xzf '${archive.absolutePath}' -C '${targetDir.absolutePath}' --strip-components=1 2>&1"
@@ -234,6 +231,62 @@ object InternalInstaller {
         if (exit != 0) {
             Logger.w("Installer", "tar exit=$exit: $out")
             throw IOException("解压失败: $out")
+        }
+    }
+
+    /**
+     * 解压 .deb 包（ar 归档 → data.tar.xz → 解压）
+     * deb 结构: debian-binary + control.tar.gz + data.tar.xz
+     */
+    private fun extractDeb(debFile: File, targetDir: File) {
+        Logger.i("Installer", "解压 deb: ${debFile.name}")
+        val tmpDir = File(targetDir.parentFile, "deb_tmp")
+        tmpDir.mkdirs()
+
+        try {
+            // 1. 用 ar 解包 deb
+            var proc = ProcessBuilder("sh", "-c", "cd '${tmpDir.absolutePath}' && ar x '${debFile.absolutePath}' 2>&1")
+            proc.redirectErrorStream(true)
+            var p = proc.start()
+            var out = p.inputStream.bufferedReader().readText()
+            var exit = p.waitFor()
+
+            if (exit != 0) {
+                // ar 不可用，尝试用 tar 直接解（某些 Android 支持）
+                Logger.w("Installer", "ar 不可用，尝试 tar: $out")
+                proc = ProcessBuilder("sh", "-c", "tar xf '${debFile.absolutePath}' -C '${tmpDir.absolutePath}' 2>&1")
+                proc.redirectErrorStream(true)
+                p = proc.start()
+                out = p.inputStream.bufferedReader().readText()
+                exit = p.waitFor()
+            }
+
+            // 2. 找到 data.tar.* 并解压
+            val dataTar = tmpDir.listFiles()?.find { it.name.startsWith("data.tar") }
+            if (dataTar != null) {
+                proc = ProcessBuilder(
+                    "sh", "-c",
+                    "tar xf '${dataTar.absolutePath}' -C '${targetDir.absolutePath}' 2>&1"
+                )
+                proc.redirectErrorStream(true)
+                p = proc.start()
+                out = p.inputStream.bufferedReader().readText()
+                exit = p.waitFor()
+
+                if (exit != 0) throw IOException("data.tar 解压失败: $out")
+
+                // Node.js deb 的结构是 data.tar.xz/usr/bin/node...
+                // 移动到 targetDir 根目录
+                val usrDir = File(targetDir, "usr")
+                if (usrDir.exists()) {
+                    usrDir.copyRecursively(targetDir, overwrite = true)
+                    usrDir.deleteRecursively()
+                }
+            } else {
+                throw IOException("未找到 data.tar 文件")
+            }
+        } finally {
+            tmpDir.deleteRecursively()
         }
     }
 
