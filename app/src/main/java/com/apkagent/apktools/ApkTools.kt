@@ -744,15 +744,16 @@ object PipInstall : Tool {
         "timeout" to intProp("超时秒数，默认120，最大300")
     ), listOf("packages"))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val pkgs = args.str("packages") ?: return ToolResult.err("缺少 packages")
-        val timeout = (args.int("timeout") ?: 120).coerceIn(30, 300)
-        val list = pkgs.split(Regex("[,\\s]+")).filter { it.isNotBlank() }
-        if (list.size == 1) {
+        if (!PythonRunner.isAvailable()) return ToolResult.err(PythonRunner.installGuide())
+        val list = args.str("packages")?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+            ?: return ToolResult.err("缺少 packages")
+        val timeout = args.int("timeout") ?: 120
+        return if (list.size == 1) {
             val r = PythonRunner.pipInstall(list[0], timeout)
-            ToolResult.ok(r.combined).takeIf { r.success } ?: ToolResult.err(r.combined)
+            if (r.success) ToolResult.ok(r.combined) else ToolResult.err(r.combined)
         } else {
             val r = PythonRunner.pipInstallBulk(list, timeout)
-            ToolResult.ok(r.combined).takeIf { r.success } ?: ToolResult.err(r.combined)
+            if (r.success) ToolResult.ok(r.combined) else ToolResult.err(r.combined)
         }
     }
 }
@@ -765,7 +766,7 @@ object PipList : Tool {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         if (!PythonRunner.isAvailable()) return ToolResult.err(PythonRunner.installGuide())
         val pkgs = PythonRunner.refreshInstalled()
-        ToolResult.ok(if (pkgs.isEmpty()) "无已安装的 pip 包" else "已安装 ${pkgs.size} 个包:\n${pkgs.joinToString("\n")}")
+        return ToolResult.ok(if (pkgs.isEmpty()) "无已安装的 pip 包" else "已安装 ${pkgs.size} 个包:\n${pkgs.joinToString("\n")}")
     }
 }
 
@@ -842,7 +843,7 @@ object ApkSearchStrings : Tool {
     override val name = "apk_search_strings"
     override val description = "在 APK 所有文件中搜索匹配正则的内容（字符串/URL/密钥模式）。逐个条目读取、忽略二进制、限时。"
     override val parameters = schemaObject(mapOf(
-        "pattern" to strProp("搜索正则表达式，如 'https?://[\w./]+' 或 'api_key|token|secret'"),
+        "pattern" to strProp("""搜索正则表达式，如 'https?://[\w./]+' 或 'api_key|token|secret'"""),
         "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"),
         "file_filter" to strProp("文件名过滤，如 '*.xml' 或 '*.dex'，留空搜全部"),
         "max_results" to intProp("最多匹配数，默认50")
@@ -857,7 +858,6 @@ object ApkSearchStrings : Tool {
         catch (e: Throwable) { return ToolResult.err("无效正则: ${e.message}") }
 
         val sb = StringBuilder()
-        sb.appendLine("搜索: /$pattern/")
         var count = 0
         var scannedFiles = 0
         try {
@@ -869,24 +869,23 @@ object ApkSearchStrings : Tool {
                     scannedFiles++
                     try {
                         val bytes = zip.getInputStream(entry).use { it.readBytes() }
-                        // 只搜索可打印字符部分
                         val text = String(bytes, Charsets.UTF_8).take(100_000)
                         if (text.isBlank()) continue
                         val matches = regex.findAll(text).take(maxResults - count).toList()
                         if (matches.isNotEmpty()) {
                             for (m in matches) {
                                 count++
-                                val ctx = text.substring(maxOf(0, m.range.first - 20), minOf(text.length, m.range.last + 30))
-                                sb.appendLine("${entry.name}:${m.range.first} → $ctx")
+                                val matchCtx = text.substring(maxOf(0, m.range.first - 20), minOf(text.length, m.range.last + 30))
+                                sb.appendLine("${entry.name}:${m.range.first} → $matchCtx")
                             }
                         }
                     } catch (_: Exception) { /* skip binary/corrupt */ }
                 }
             }
             sb.appendLine("\n搜索 ${scannedFiles} 个文件，找到 $count 条匹配")
-            ToolResult.ok(sb.toString().take(8000))
+            return ToolResult.ok(sb.toString().take(8000))
         } catch (e: Throwable) {
-            ToolResult.err("搜索失败: ${e.message}")
+            return ToolResult.err("搜索失败: ${e.message}")
         }
     }
 }
@@ -921,16 +920,16 @@ object FileSearch : Tool {
                         val text = f.readText(Charsets.UTF_8)
                         regex.find(text)?.let { m ->
                             count++
-                            val ctx = text.substring(maxOf(0, m.range.first - 15), minOf(text.length, m.range.last + 25))
-                            val rel = f.relativeTo(ctx.workspace).path
-                            sb.appendLine("$rel:${m.range.first} → $ctx")
+                            val matchCtx = text.substring(maxOf(0, m.range.first - 15), minOf(text.length, m.range.last + 25))
+                            val rel = f.relativeTo(baseDir).path
+                            sb.appendLine("$rel:${m.range.first} → $matchCtx")
                         }
                     } catch (_: Exception) {}
                 }
             sb.appendLine("\n找到 $count 条匹配")
-            ToolResult.ok(sb.toString().take(8000))
+            return ToolResult.ok(sb.toString().take(8000))
         } catch (e: Throwable) {
-            ToolResult.err("搜索失败: ${e.message}")
+            return ToolResult.err("搜索失败: ${e.message}")
         }
     }
 }
@@ -989,7 +988,7 @@ object ApkPatchManifest : Tool {
 
         if (changes.isEmpty()) return ToolResult.ok("无需修改（Manifest 已包含所需属性）")
         f.writeText(text)
-        ToolResult.ok("已修改 ${f.absolutePath}:\n${changes.joinToString("\n")}\n\n下一步: apk_repack + apk_sign 重打包")
+        return ToolResult.ok("已修改 ${f.absolutePath}:\n${changes.joinToString("\n")}\n\n下一步: apk_repack + apk_sign 重打包")
     }
 }
 
