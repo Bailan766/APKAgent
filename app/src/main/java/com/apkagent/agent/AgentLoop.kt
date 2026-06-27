@@ -1,6 +1,9 @@
 package com.apkagent.agent
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -89,31 +92,11 @@ class AgentLoop(
                     }
                 ))
 
-                for (call in result.toolCalls) {
-                    callbacks.onToolCallStart(call)
-                    val tool = registry.get(call.name)
-                    val outcome: ToolResult = if (tool == null) {
-                        ToolResult.err("未知工具：${call.name}")
-                    } else {
-                        if (tool.sensitive && !callbacks.onConfirmToolCall(call)) {
-                            ToolResult.err("拒绝执行")
-                        } else {
-                            try {
-                                withContext(Dispatchers.IO) {
-                                    val args = call.parsedArgs ?: JsonObject(emptyMap())
-                                    tool.execute(args, ctx)
-                                }
-                            } catch (e: Throwable) {
-                                ToolResult.err("工具异常：${e.message ?: e.javaClass.simpleName}")
-                            }
-                        }
-                    }
-                    callbacks.onToolCallComplete(ExecutedToolCall(
-                        id = call.id, name = call.name, arguments = call.arguments,
-                        result = outcome.content, success = outcome.success,
-                        confirmed = tool?.sensitive != true
-                    ))
-                    messages.add(ChatMessage(role = "tool", content = outcome.content, toolCallId = call.id))
+                // ── 多线程优化：同一轮 AI 发出的工具调用互不依赖，并行执行 ──
+                val executedList = executeToolCallsConcurrently(result.toolCalls)
+                for (exec in executedList) {
+                    callbacks.onToolCallComplete(exec)
+                    messages.add(ChatMessage(role = "tool", content = exec.result, toolCallId = exec.id))
                 }
             }
             return true // 达到上限，需要继续
@@ -121,6 +104,46 @@ class AgentLoop(
             callbacks.onError(e.message ?: e.javaClass.simpleName)
             callbacks.onFinished()
             return false
+        }
+    }
+
+    /**
+     * 并行执行同一轮中的多个工具调用。
+     * AI 在同一次 API 响应中发出的所有 tool_calls 之间无依赖关系
+     * （模型在发出前无法看到任何工具结果），因此可以安全并行。
+     */
+    private suspend fun executeToolCallsConcurrently(
+        toolCalls: List<PendingToolCall>
+    ): List<ExecutedToolCall> = coroutineScope {
+        toolCalls.map { call ->
+            async(Dispatchers.IO) {
+                // 1. 通知 UI 工具开始
+                callbacks.onToolCallStart(call)
+
+                val outcome = executeSingleTool(call)
+
+                ExecutedToolCall(
+                    id = call.id, name = call.name, arguments = call.arguments,
+                    result = outcome.content, success = outcome.success,
+                    confirmed = true
+                )
+            }
+        }.awaitAll()  // 保持原始顺序 → 消息顺序与 AI 发出的一致
+    }
+
+    private suspend fun executeSingleTool(call: PendingToolCall): ToolResult {
+        val tool = registry.get(call.name)
+        if (tool == null) {
+            return ToolResult.err("未知工具：${call.name}")
+        }
+        if (tool.sensitive && !callbacks.onConfirmToolCall(call)) {
+            return ToolResult.err("拒绝执行")
+        }
+        return try {
+            val args = call.parsedArgs ?: JsonObject(emptyMap())
+            tool.execute(args, ctx)
+        } catch (e: Throwable) {
+            ToolResult.err("工具异常：${e.message ?: e.javaClass.simpleName}")
         }
     }
 
