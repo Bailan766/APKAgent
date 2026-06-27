@@ -82,11 +82,17 @@ private fun AppNav() {
                 onOpenEditor = { nav.navigate("editor") }
             )
         }
-        composable("settings") { com.apkagent.ui.SettingsScreen(onBack = { nav.popBackStack() }) }
+        composable("settings") {
+            com.apkagent.ui.SettingsScreen(
+                onBack = { nav.popBackStack() },
+                onOpenAbout = { nav.navigate("about") }
+            )
+        }
         composable("editor") {
             val ctx = LocalContext.current
             val app = ctx.applicationContext as? ApkAgentApp
             if (app != null) com.apkagent.ui.EditorScreen(rootDir = app.workspace, onBack = { nav.popBackStack() })
         }
+        composable("about") { com.apkagent.ui.AboutScreen(onBack = { nav.popBackStack() }) }
     }
 }
