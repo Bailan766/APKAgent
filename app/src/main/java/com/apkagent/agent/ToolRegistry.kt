@@ -60,7 +60,8 @@ class ToolRegistry {
         )
         val dynamicTools = analysisTools + setOf(
             "run_python_script", "run_node_script", "generate_frida_script", "generate_hook",
-            "python_exec", "python_info", "pip_install", "pip_list"
+            "python_exec", "python_info", "pip_install", "pip_list",
+            "create_script", "run_script", "ext_file_read", "ext_file_list"
         )
         val allToolNames = tools.keys.toSet()
 
