@@ -50,30 +50,29 @@ private fun AppEntry() {
     val ctx = LocalContext.current
     val settingsStore = remember { SettingsStore(ctx) }
     var setupDone by remember { mutableStateOf(settingsStore.isSetupCompleted()) }
+    var showTerminal by remember { mutableStateOf(false) }
 
-    AnimatedContent(
-        targetState = setupDone,
-        transitionSpec = {
-            fadeIn() + scaleIn(initialScale = 0.95f) togetherWith
-                    fadeOut() + scaleOut(targetScale = 1.05f)
-        },
-        label = "setup_transition"
-    ) { done ->
-        if (done) {
-            AppNav()
-        } else {
-            SetupScreen(
+    when {
+        showTerminal -> {
+            com.apkagent.ui.TerminalScreen(onBack = { showTerminal = false })
+        }
+        !setupDone -> {
+            com.apkagent.ui.SetupScreen(
                 onSetupComplete = {
                     settingsStore.markSetupCompleted()
                     setupDone = true
-                }
+                },
+                onOpenTerminal = { showTerminal = true }
             )
+        }
+        else -> {
+            AppNav(onOpenTerminal = { showTerminal = true })
         }
     }
 }
 
 @Composable
-private fun AppNav() {
+private fun AppNav(onOpenTerminal: () -> Unit = {}) {
     val nav = rememberNavController()
     NavHost(navController = nav, startDestination = "chat") {
         composable("chat") {
@@ -85,7 +84,8 @@ private fun AppNav() {
         composable("settings") {
             com.apkagent.ui.SettingsScreen(
                 onBack = { nav.popBackStack() },
-                onOpenAbout = { nav.navigate("about") }
+                onOpenAbout = { nav.navigate("about") },
+                onOpenTerminal = onOpenTerminal
             )
         }
         composable("editor") {
@@ -94,5 +94,6 @@ private fun AppNav() {
             if (app != null) com.apkagent.ui.EditorScreen(rootDir = app.workspace, onBack = { nav.popBackStack() })
         }
         composable("about") { com.apkagent.ui.AboutScreen(onBack = { nav.popBackStack() }) }
+        composable("terminal") { com.apkagent.ui.TerminalScreen(onBack = { nav.popBackStack() }) }
     }
 }
