@@ -34,7 +34,7 @@ class CreateScriptTool : Tool {
 
         // 自动添加 shebang 和执行权限
         if (scriptType == "bash" && !content.startsWith("#!")) {
-            scriptFile.writeText("#!/bin/bash\n$content")
+            scriptFile.writeText("#!/bin/sh\n$content")
         }
         scriptFile.setExecutable(true)
 
@@ -75,8 +75,18 @@ class RunScriptTool : Tool {
         val scriptArgs = args["args"]?.jsonPrimitive?.contentOrNull ?: ""
         val timeout = (args["timeout"]?.jsonPrimitive?.intOrNull ?: 60) * 1000L
 
-        val scriptFile = File(scriptPath).let { f ->
-            if (f.isAbsolute) f else File(ctx.workspace, scriptPath)
+        // 防御：AI 有时把解释器名（sh/bash/python3/node）当 scriptPath 传入
+        val knownInterpreters = setOf("sh", "bash", "python3", "python", "node")
+        var actualScriptPath = scriptPath
+        var actualArgs = scriptArgs
+        if (scriptPath in knownInterpreters && scriptArgs.isNotBlank()) {
+            // AI 传反了：scriptPath 是解释器，args 才是真正的脚本路径
+            actualScriptPath = scriptArgs.split("\s+".toRegex()).firstOrNull() ?: scriptArgs
+            actualArgs = scriptArgs.split("\s+".toRegex()).drop(1).joinToString(" ")
+        }
+
+        val scriptFile = File(actualScriptPath).let { f ->
+            if (f.isAbsolute) f else File(ctx.workspace, actualScriptPath)
         }
         if (!scriptFile.exists()) return ToolResult.err("脚本不存在: ${scriptFile.absolutePath}")
 
@@ -84,12 +94,12 @@ class RunScriptTool : Tool {
         val interpreter = when {
             scriptFile.name.endsWith(".py") -> "python3"
             scriptFile.name.endsWith(".js") -> "node"
-            scriptFile.name.endsWith(".sh") || scriptFile.name.endsWith(".bash") -> "bash"
+            scriptFile.name.endsWith(".sh") || scriptFile.name.endsWith(".bash") -> "sh"
             scriptFile.canExecute() -> scriptFile.absolutePath
-            else -> "bash"
+            else -> "sh"
         }
 
-        val argsStr = if (scriptArgs.isNotBlank()) " $scriptArgs" else ""
+        val argsStr = if (actualArgs.isNotBlank()) " $actualArgs" else ""
         val cmd = "$interpreter '${scriptFile.absolutePath}'$argsStr"
 
         return try {
@@ -117,7 +127,7 @@ class RunScriptTool : Tool {
             }
 
             // 回退到普通 ProcessBuilder
-            val pb = ProcessBuilder(interpreter + scriptFile.absolutePath + scriptArgs.split(" ").filter { it.isNotBlank() })
+            val pb = ProcessBuilder(interpreter, scriptFile.absolutePath, *actualArgs.split(" ").filter { it.isNotBlank() }.toTypedArray())
             pb.directory(ctx.workspace)
             pb.environment()["APKAGENT_WORKSPACE"] = ctx.workspace.absolutePath
             ctx.openApk?.let { pb.environment()["APKAGENT_APK"] = it.absolutePath }
