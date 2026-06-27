@@ -26,16 +26,16 @@ object InternalInstaller {
 
     // ──── Python URL 构造 ────
     private fun pythonAarch64Url(): String =
-        "https://registry.npmmirror.com/-/binary/python-build-standalone/${PBS_DATE}/cpython-${PBS_VER}%2B${PBS_DATE}-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+        "https://registry.npmmirror.com/-/binary/python-build-standalone/${PBS_DATE}/cpython-${PBS_VER}+${PBS_DATE}-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
 
     private fun pythonX86_64Url(): String =
-        "https://registry.npmmirror.com/-/binary/python-build-standalone/${PBS_DATE}/cpython-${PBS_VER}%2B${PBS_DATE}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+        "https://registry.npmmirror.com/-/binary/python-build-standalone/${PBS_DATE}/cpython-${PBS_VER}+${PBS_DATE}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 
     private fun pythonGithubAarch64(): String =
-        "https://ghp.ci/https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_DATE}/cpython-${PBS_VER}%2B${PBS_DATE}-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+        "https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_DATE}/cpython-${PBS_VER}+${PBS_DATE}-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
 
     private fun pythonGithubX86_64(): String =
-        "https://ghp.ci/https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_DATE}/cpython-${PBS_VER}%2B${PBS_DATE}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+        "https://github.com/astral-sh/python-build-standalone/releases/download/${PBS_DATE}/cpython-${PBS_VER}+${PBS_DATE}-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
 
     // ──── Node.js URL（npmmirror 国内源） ────
     private fun nodeAarch64Url(): String =
