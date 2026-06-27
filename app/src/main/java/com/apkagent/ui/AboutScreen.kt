@@ -127,19 +127,18 @@ fun AboutScreen(onBack: () -> Unit) {
                         contentAlignment = Alignment.Center
                     ) {
                         // 如果有头像资源就显示，否则显示首字母
-                        try {
-                            val resId = context.resources.getIdentifier("avatar", "drawable", context.packageName)
-                            if (resId != 0) {
-                                Image(
-                                    painter = painterResource(id = resId),
-                                    contentDescription = "头像",
-                                    modifier = Modifier.fillMaxSize(),
-                                    contentScale = ContentScale.Crop
-                                )
-                            } else {
-                                Text("摆", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
-                            }
-                        } catch (_: Exception) {
+                        val resId = remember {
+                            try { context.resources.getIdentifier("avatar", "drawable", context.packageName) }
+                            catch (_: Exception) { 0 }
+                        }
+                        if (resId != 0) {
+                            Image(
+                                painter = painterResource(id = resId),
+                                contentDescription = "头像",
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        } else {
                             Text("摆", fontSize = 28.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                         }
                     }
