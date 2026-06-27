@@ -20,6 +20,7 @@ import com.apkagent.agent.strProp
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import com.apkagent.shizuku.ShizukuManager
+import com.apkagent.util.Logger
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -710,7 +711,7 @@ object ShizukuFileAccess : Tool {
 /** python.exec — 在设备上执行 Python 脚本 */
 object PythonExec : Tool {
     override val name = "python_exec"
-    override val description = "在 Android 设备上执行 Python 脚本（需安装 Termux/QPython 并配置 Python 环境）。可将 Python 代码写入工作区文件或直接执行。常用于 APK 分析：androguard 解析 APK、批量处理文件等。安装依赖：pip install frida-tools androguard objection"
+    override val description = "在 Android 设备上执行 Python 脚本。优先用 Python 引擎，不可用时自动降级为 Shizuku shell 执行简单操作（文件复制/删除/目录操作等）。复杂库（androguard/frida）仍需安装 Python。"
     override val sensitive = true
     override val parameters = schemaObject(
         mapOf(
@@ -725,6 +726,7 @@ object PythonExec : Tool {
         val timeout = (args.int("timeout") ?: 30).coerceIn(1, 120)
         val saveAs = args.str("save_as")
 
+        // 尝试用 Python 执行
         val pyFile = if (saveAs != null) {
             File(ctx.workspace, saveAs)
         } else {
@@ -734,16 +736,103 @@ object PythonExec : Tool {
         Sandbox.assertWritable(pyFile, ctx.workspace)
         pyFile.writeText(code)
 
-        return try {
+        val pyResult: ToolResult? = try {
             val result = PythonRunner.execute(pyFile, timeout, ctx.workspace)
             if (result.success) {
-                ToolResult.ok(result.combined)
-            } else {
-                ToolResult.err(result.combined)
+                return ToolResult.ok(result.combined)
             }
+            // 如果 Python 本身不可用（不是脚本错误），尝试降级
+            if (result.error?.contains("Permission denied") == true
+                || result.error?.contains("未找到") == true
+                || result.error?.contains("installGuide") == true) {
+                null // 标记需要降级
+            } else {
+                return ToolResult.err(result.combined) // Python 可用但脚本有错
+            }
+        } catch (_: Throwable) {
+            null
         } finally {
             if (saveAs == null) { try { pyFile.delete() } catch (_: Throwable) {} }
         }
+
+        // Python 不可用 — 降级为 Shizuku shell 执行简单文件操作
+        if (pyResult == null && ShizukuManager.isAuthorized()) {
+            Logger.i("Py", "Python 不可用，降级为 Shizuku shell 执行")
+            val shellCmd = pythonToShell(code, ctx.workspace.absolutePath)
+            if (shellCmd != null) {
+                val output = ShizukuManager.execAndGet(shellCmd)
+                return if (output != null) {
+                    ToolResult.ok("⚠️ Python 不可用，已通过 Shizuku shell 执行等效操作：\n${output.take(8000)}")
+                } else {
+                    ToolResult.err("Python 不可用且 Shizuku shell 执行失败")
+                }
+            }
+            return ToolResult.err("Python 不可用。此操作需要完整 Python 环境（androguard/frida 等库），请在设置页安装。")
+        }
+        return pyResult ?: ToolResult.err("Python 不可用。请在设置页安装 Python 环境。")
+    }
+
+    /**
+     * 将简单 Python 文件操作转换为等效 shell 命令。
+     * 覆盖 AI 最常用的操作：shutil.copy2, os.remove, os.makedirs, os.path.exists 等。
+     * 返回 null 表示无法转换（需要真正 Python）。
+     */
+    private fun pythonToShell(code: String, workspace: String): String? {
+        val lines = code.trim().lines().map { it.trim() }
+        val cmds = mutableListOf<String>()
+        cmds.add("cd '$workspace'")
+
+        for (line in lines) {
+            when {
+                // import/赋值/空行跳过
+                line.startsWith("import ") || line.startsWith("from ") -> {}
+                line.isBlank() || line.startsWith("#") -> {}
+                line.contains(" = ") && !line.contains("shutil") && !line.contains("os.") -> {}
+                // shutil.copy2(src, dst)
+                line.matches(Regex(".*shutil\\.copy2?\\(.+\\).*")) -> {
+                    val args = extractArgs(line) ?: return null
+                    if (args.size >= 2) cmds.add("cp -f '${args[0]}' '${args[1]}'")
+                    else return null
+                }
+                // os.remove(path)
+                line.matches(Regex(".*os\\.remove\\(.+\\).*")) -> {
+                    val args = extractArgs(line) ?: return null
+                    cmds.add("rm -f '${args[0]}'")
+                }
+                // os.makedirs(path, exist_ok=True)
+                line.matches(Regex(".*os\\.makedirs\\(.+\\).*")) -> {
+                    val args = extractArgs(line) ?: return null
+                    cmds.add("mkdir -p '${args[0]}'")
+                }
+                // shutil.rmtree(path)
+                line.matches(Regex(".*shutil\\.rmtree\\(.+\\).*")) -> {
+                    val args = extractArgs(line) ?: return null
+                    cmds.add("rm -rf '${args[0]}'")
+                }
+                // os.path.getsize → stat
+                line.matches(Regex(".*os\\.path\\.getsize\\(.+\\).*")) -> {
+                    val args = extractArgs(line) ?: return null
+                    cmds.add("stat -c %s '${args[0]}' 2>/dev/null || wc -c < '${args[0]}'")
+                }
+                // print() → echo
+                line.matches(Regex("print\\(.*\\).*")) -> {
+                    val inner = line.removePrefix("print(").removeSuffix(")")
+                        .removeSurrounding("\"").removeSurrounding("'")
+                    cmds.add("echo \"$inner\"")
+                }
+                else -> return null // 无法转换，需要真正 Python
+            }
+        }
+        return cmds.joinToString(" && ")
+    }
+
+    /** 提取函数调用参数（简单版） */
+    private fun extractArgs(call: String): List<String>? {
+        val start = call.indexOf('(')
+        val end = call.lastIndexOf(')')
+        if (start < 0 || end < 0 || end <= start) return null
+        val inner = call.substring(start + 1, end)
+        return inner.split(",").map { it.trim().removeSurrounding("'").removeSurrounding("\"") }
     }
 }
 
@@ -1270,18 +1359,40 @@ object RunNodeScript : Tool {
         val script = args.str("script_content") ?: return ToolResult.err("缺少 script_content")
         val timeout = args.int("timeout") ?: 30
 
-        // 查找 node
+        // 查找 node（只需 exists，Shizuku 可以执行）
         val nodePaths = listOf(
             File(ctx.workspace.parentFile ?: ctx.workspace, "nodejs/bin/node").absolutePath,
             "/data/data/com.termux/files/usr/bin/node",
             "/system/bin/node"
         )
-        val node = nodePaths.firstOrNull { File(it).canExecute() }
+        val node = nodePaths.firstOrNull { File(it).exists() }
             ?: return ToolResult.err("Node.js 未安装，请在设置页安装")
 
         val tmpScript = File(ctx.workspace, "_tmp_script.js")
         try {
             tmpScript.writeText(script)
+
+            // Shizuku 优先 — chmod 内部 node 目录后直接执行
+            if (ShizukuManager.isAuthorized()) {
+                val workDir = ctx.workspace.absolutePath
+                // 通过 Shizuku chmod 确保 node 二进制可执行
+                if (node.contains("/files/nodejs/")) {
+                    ShizukuManager.chmodR(node.substringBeforeLast("/bin/node"), "755")
+                }
+                val cmd = "cd '$workDir' && '$node' '${tmpScript.absolutePath}'"
+                val process = ShizukuManager.execShizuku(cmd)
+                if (process != null) {
+                    val finished = process.waitFor(timeout.toLong(), java.util.concurrent.TimeUnit.SECONDS)
+                    if (finished == false) {
+                        process.destroyForcibly()
+                        return ToolResult.err("执行超时(${timeout}s)")
+                    }
+                    val out = process.inputStream.bufferedReader().use { it.readText() }
+                    return ToolResult.ok(out.take(8000))
+                }
+            }
+
+            // 回退到普通 ProcessBuilder
             val pb = ProcessBuilder(node, tmpScript.absolutePath)
             pb.directory(ctx.workspace)
             pb.redirectErrorStream(true)
