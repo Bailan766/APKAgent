@@ -67,6 +67,11 @@ fun buildToolRegistry(): ToolRegistry {
     r.register(RunPythonScript)
     r.register(RunNodeScript)
     r.register(GenerateFridaScript)
+    // 新增工具
+    r.register(SmartSearchTool())
+    r.register(AutoPatchTool())
+    r.register(GenerateHookTool())
+    r.register(AnalyzeObfuscationTool())
     return r
 }
 
