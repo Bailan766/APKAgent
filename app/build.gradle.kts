@@ -7,14 +7,14 @@ plugins {
 
 android {
     namespace = "com.apkagent"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.apkagent"
         minSdk = 26
-        targetSdk = 34
+        targetSdk = 36
         versionCode = 24
-        versionName = "3.11.0"
+        versionName = "3.12.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
