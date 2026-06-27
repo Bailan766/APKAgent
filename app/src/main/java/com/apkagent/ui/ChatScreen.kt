@@ -7,10 +7,12 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -21,29 +23,16 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
-import androidx.compose.material.icons.filled.CleaningServices
-import androidx.compose.material.icons.filled.Edit
-import androidx.compose.material.icons.filled.FileDownload
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.filled.FolderOpen
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Stop
-import androidx.compose.material.icons.filled.SmartToy
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.SnackbarHost
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -54,6 +43,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -126,9 +117,9 @@ fun ChatScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("APKAgent", fontFamily = FontFamily.Monospace)
+                        Text("APKAgent", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                         Text(
-                            openApkName?.let { "已导入：$it" } ?: "未导入 APK",
+                            openApkName?.let { "已导入：$it" } ?: "Android APK 逆向分析工具",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
@@ -286,7 +277,7 @@ private fun ChatInputBar(
                 modifier = Modifier
                     .weight(1f)
                     .heightIn(min = 48.dp, max = 140.dp),
-                placeholder = { Text("描述你想分析的 APK…", fontSize = 14.sp) },
+                placeholder = { Text("输入分析指令（如：分析签名 / 反编译 dex）…", fontSize = 14.sp) },
                 shape = RoundedCornerShape(20.dp),
                 enabled = !running
             )
@@ -310,28 +301,150 @@ private fun EmptyHint(padding: androidx.compose.foundation.layout.PaddingValues)
         modifier = Modifier
             .fillMaxSize()
             .padding(padding)
-            .padding(24.dp),
-        contentAlignment = Alignment.Center
+            .padding(20.dp)
+            .verticalScroll(rememberScrollState()),
+        contentAlignment = Alignment.TopCenter
     ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Spacer(Modifier.height(32.dp))
+
+            // ── 标题 ──
             Icon(
-                Icons.Default.SmartToy, null,
+                Icons.Default.Security, null,
                 tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(8.dp)
+                modifier = Modifier.size(48.dp)
             )
-            Text("APKAgent — AI 驱动的 APK 逆向助手", style = MaterialTheme.typography.titleMedium)
-            Spacer(Modifier.padding(6.dp))
+            Spacer(Modifier.height(12.dp))
             Text(
-                "1. 顶部 📁 导入 APK\n" +
-                    "2. 设置页填入 API Base / Key / 模型\n" +
-                    "3. 用自然语言下指令，例如：\n" +
-                    "   “分析这个 APK 的签名信息”\n" +
-                    "   “列出 AndroidManifest 里的权限和组件”\n" +
-                    "   “把 classes.dex 提取出来并统计类数量”",
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 20.sp
+                "APKAgent",
+                style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold,
+                fontFamily = FontFamily.Monospace
             )
+            Text(
+                "Android APK 逆向分析工具",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                "专业 APK 分析 · 反编译 · 修改 · 重签名",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── 快速开始卡片 ──
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("快速开始", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Spacer(Modifier.height(8.dp))
+
+                    StepRow("1", "导入 APK", "点击顶部 📁 选择要分析的 APK 文件")
+                    StepRow("2", "配置 AI", "设置页 ⚙ 配置 AI 接口（DeepSeek、Qwen 等）")
+                    StepRow("3", "开始分析", "在下方输入框描述你的需求")
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // ── 示例指令卡片 ──
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Text("示例指令", fontWeight = FontWeight.Bold, fontSize = 14.sp)
+                    Spacer(Modifier.height(8.dp))
+
+                    val examples = listOf(
+                        "分析这个 APK 的签名信息" to Icons.Default.Fingerprint,
+                        "反编译 classes.dex 并列出所有类" to Icons.Default.Code,
+                        "扫描并移除签名校验" to Icons.Default.Shield,
+                        "生成安全风险报告" to Icons.Default.Assessment,
+                        "对比两个 APK 的差异" to Icons.Default.Compare,
+                    )
+                    examples.forEach { (text, icon) ->
+                        Row(
+                            modifier = Modifier.padding(vertical = 3.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(icon, null, modifier = Modifier.size(14.dp), tint = MaterialTheme.colorScheme.primary)
+                            Spacer(Modifier.width(8.dp))
+                            Text(text, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // ── 功能亮点 ──
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FeatureChip("smali 编辑", Modifier.weight(1f))
+                FeatureChip("自动签名", Modifier.weight(1f))
+                FeatureChip("沙箱保护", Modifier.weight(1f))
+            }
+            Spacer(Modifier.height(6.dp))
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                FeatureChip("v1/v2 签名", Modifier.weight(1f))
+                FeatureChip("Frida Hook", Modifier.weight(1f))
+                FeatureChip("Patch 库", Modifier.weight(1f))
+            }
         }
+    }
+}
+
+@Composable
+private fun StepRow(number: String, title: String, desc: String) {
+    Row(
+        modifier = Modifier.padding(vertical = 4.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Box(
+            modifier = Modifier
+                .size(22.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primary),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(number, fontSize = 11.sp, color = MaterialTheme.colorScheme.onPrimary, fontWeight = FontWeight.Bold)
+        }
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(title, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+            Text(desc, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun FeatureChip(label: String, modifier: Modifier = Modifier) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)
+    ) {
+        Text(
+            label,
+            fontSize = 11.sp,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(vertical = 6.dp),
+            color = MaterialTheme.colorScheme.primary
+        )
     }
 }
