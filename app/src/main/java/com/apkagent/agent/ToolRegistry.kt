@@ -1,5 +1,6 @@
 package com.apkagent.agent
 
+import com.apkagent.tools.*
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.add
 import kotlinx.serialization.json.buildJsonArray
@@ -31,44 +32,23 @@ class ToolRegistry {
         )
     }
 
-    /** 工具名 -> 简要描述（供系统提示词列举） */
-    fun describeAll(): String =
-        tools.values.joinToString("\n") { "- ${it.name}: ${it.description}" }
-}
-
-// —— JSON Schema 构建小工具，便于在 Tool 实现里声明参数 ——
-fun schemaObject(properties: Map<String, JsonObject>, required: List<String> = emptyList()): JsonObject = buildJsonObject {
-    put("type", "object")
-    put("properties", buildJsonObject {
-        properties.forEach { (k, v) -> put(k, v) }
-    })
-    if (required.isNotEmpty()) {
-        put("required", buildJsonArray { required.forEach { add(it) } })
+    /** 为指定工具列表生成 API tool definitions */
+    fun toToolDefs(toolList: List<Tool>): List<ToolDef> = toolList.map { t ->
+        ToolDef(
+            function = ToolFunctionDef(
+                name = t.name,
+                description = t.description,
+                parameters = t.parameters
+            )
+        )
     }
-}
-
-fun strProp(desc: String, enum: List<String>? = null): JsonObject = buildJsonObject {
-    put("type", "string")
-    put("description", desc)
-    enum?.let { put("enum", buildJsonArray { it.forEach { e -> add(e) } }) }
-}
-
-fun intProp(desc: String): JsonObject = buildJsonObject {
-    put("type", "integer")
-    put("description", desc)
-}
-
-fun boolProp(desc: String): JsonObject = buildJsonObject {
-    put("type", "boolean")
-    put("description", desc)
 
     /**
      * 按阶段过滤可用工具
      * 阶段 0 (PREPARE): 只暴露侦察工具
      * 阶段 1 (STATIC_ANALYSIS): 侦察 + 分析工具
      * 阶段 2 (DYNAMIC): 分析 + 脚本工具
-     * 阶段 3 (MODIFICATION): 所有工具
-     * 阶段 4+ : 所有工具
+     * 阶段 3+ (MODIFICATION/REPACK/DONE): 所有工具
      */
     fun getToolsForPhase(phase: ReversePhase): List<Tool> {
         val prepareTools = setOf(
@@ -95,20 +75,35 @@ fun boolProp(desc: String): JsonObject = buildJsonObject {
         return tools.values.filter { it.name in allowed }
     }
 
-    /**
-     * 为指定工具列表生成 API tool definitions
-     */
-    fun toToolDefs(toolList: List<Tool>): List<Map<String, Any>> {
-        return toolList.map { tool ->
-            mapOf(
-                "type" to "function",
-                "function" to mapOf(
-                    "name" to tool.name,
-                    "description" to tool.description,
-                    "parameters" to tool.parameters
-                )
-            )
-        }
-    }
+    /** 工具名 -> 简要描述 */
+    fun describeAll(): String =
+        tools.values.joinToString("\n") { "- ${it.name}: ${it.description}" }
+}
 
+// —— JSON Schema 构建小工具 ——
+
+fun schemaObject(properties: Map<String, JsonObject>, required: List<String> = emptyList()): JsonObject = buildJsonObject {
+    put("type", "object")
+    put("properties", buildJsonObject {
+        properties.forEach { (k, v) -> put(k, v) }
+    })
+    if (required.isNotEmpty()) {
+        put("required", buildJsonArray { required.forEach { add(it) } })
+    }
+}
+
+fun strProp(desc: String, enum: List<String>? = null): JsonObject = buildJsonObject {
+    put("type", "string")
+    put("description", desc)
+    enum?.let { put("enum", buildJsonArray { it.forEach { e -> add(e) } }) }
+}
+
+fun intProp(desc: String): JsonObject = buildJsonObject {
+    put("type", "integer")
+    put("description", desc)
+}
+
+fun boolProp(desc: String): JsonObject = buildJsonObject {
+    put("type", "boolean")
+    put("description", desc)
 }
