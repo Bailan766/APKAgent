@@ -77,6 +77,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     private var agentLoop: AgentLoop? = null
     private var lastConfig: AgentConfig? = null
     private var currentAssistantId: String? = null
+    private val contentBuffer = StringBuilder()
+    private var lastUpdateTime = 0L
+    private val updateIntervalMs = 50L // 50ms 节流，保证流畅又不卡顿
 
     val config: StateFlow<AgentConfig> get() = agentApp.settingsStore.config
 
@@ -123,7 +126,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         val ctx = ToolContext(appContext = agentApp, workspace = agentApp.workspace, openApk = agentApp.openApk.value)
         if (agentLoop == null || lastConfig != cfg) {
             Logger.i("VM", "AgentLoop: ${cfg.providerId}/${cfg.model}")
-            agentLoop = AgentLoop(OpenAIClient(cfg.baseUrl, cfg.apiKey), agentApp.toolRegistry, cfg.model, cfg.temperature, ctx, this, maxRounds = 50)
+            agentLoop = AgentLoop(OpenAIClient(cfg.baseUrl, cfg.apiKey), agentApp.toolRegistry, cfg.model, cfg.temperature, ctx, this, maxRounds = cfg.maxRounds)
             lastConfig = cfg
         }
     }
@@ -279,19 +282,31 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     // ── Callbacks ──
     override fun onAssistantContentDelta(delta: String) {
-        _messages.update { list ->
-            val id = currentAssistantId
-            if (id != null && list.any { it.id == id && it.role == Role.ASSISTANT })
-                list.map { if (it.id == id) it.copy(content = it.content + delta) else it }
-            else {
-                val newId = UUID.randomUUID().toString()
-                currentAssistantId = newId
-                list + ChatItem(id = newId, role = Role.ASSISTANT, content = delta, streaming = true)
+        contentBuffer.append(delta)
+        val now = System.currentTimeMillis()
+        if (now - lastUpdateTime >= updateIntervalMs || delta.contains('\n')) {
+            lastUpdateTime = now
+            val fullContent = contentBuffer.toString()
+            _messages.update { list ->
+                val id = currentAssistantId
+                if (id != null && list.any { it.id == id && it.role == Role.ASSISTANT })
+                    list.map { if (it.id == id) it.copy(content = fullContent) else it }
+                else {
+                    val newId = UUID.randomUUID().toString()
+                    currentAssistantId = newId
+                    list + ChatItem(id = newId, role = Role.ASSISTANT, content = fullContent, streaming = true)
+                }
             }
         }
     }
     override fun onAssistantTurnComplete(content: String, toolCalls: List<PendingToolCall>) {
-        _messages.update { list -> val id = currentAssistantId; if (id != null) list.map { if (it.id == id) it.copy(streaming = false) else it } else list }
+        // 最终同步一次完整内容
+        val fullContent = contentBuffer.toString()
+        _messages.update { list ->
+            val id = currentAssistantId
+            if (id != null) list.map { if (it.id == id) it.copy(content = fullContent, streaming = false) else it } else list
+        }
+        contentBuffer.clear()
         currentAssistantId = null
     }
     override fun onToolCallStart(call: PendingToolCall) {

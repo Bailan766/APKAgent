@@ -15,7 +15,8 @@ data class AgentConfig(
     val apiKey: String = "",
     val model: String = "deepseek-chat",
     val temperature: Double = 0.6,
-    val systemExtra: String = ""
+    val systemExtra: String = "",
+    val maxRounds: Int = 100
 ) {
     fun isValid(): Boolean = apiKey.isNotBlank() && model.isNotBlank()
     fun provider(): AiProvider = AiProvider.byId(providerId)
@@ -59,7 +60,8 @@ class SettingsStore(private val context: Context) {
             apiKey = s[KEY_AK] ?: "",
             model = s[KEY_MODEL] ?: provider.defaultModel,
             temperature = (s[KEY_TEMP] ?: "0.6").toDoubleOrNull() ?: 0.6,
-            systemExtra = s[KEY_SYS] ?: ""
+            systemExtra = s[KEY_SYS] ?: "",
+            maxRounds = (s[KEY_MAX_ROUNDS] ?: "100").toIntOrNull() ?: 100
         )
     } catch (e: Throwable) {
         Log.e("SettingsStore", "读取失败", e)
@@ -75,6 +77,7 @@ class SettingsStore(private val context: Context) {
                 .putString(KEY_MODEL, cfg.model)
                 .putString(KEY_TEMP, cfg.temperature.toString())
                 .putString(KEY_SYS, cfg.systemExtra)
+                .putString(KEY_MAX_ROUNDS, cfg.maxRounds.toString())
                 .apply()
         } catch (e: Throwable) {
             Log.e("SettingsStore", "保存失败", e)
@@ -114,6 +117,7 @@ class SettingsStore(private val context: Context) {
         private const val KEY_SETUP_DONE = "setup_completed"
         private const val KEY_PYTHON_INSTALLED = "python_installed"
         private const val KEY_NODE_INSTALLED = "node_installed"
+        private const val KEY_MAX_ROUNDS = "max_rounds"
     }
 
     private operator fun SharedPreferences.get(key: String): String? =
