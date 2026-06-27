@@ -249,8 +249,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         _messages.update { it + ChatItem(role = Role.ERROR, content = message) }
     }
     override fun onFinished() { _isRunning.value = false }
-    override fun onPhaseChange(phase: String) {
+    override fun onPhaseChange(phase: ReversePhase) {
         Logger.i("VM", "Phase: $phase")
-        _messages.update { it + ChatItem(role = Role.SYSTEM, content = phase) }
+        _messages.update { it + ChatItem(role = Role.SYSTEM, content = phase.displayText()) }
     }
 }
