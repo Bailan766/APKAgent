@@ -2,6 +2,7 @@ package com.apkagent
 
 import android.app.Application
 import com.apkagent.agent.ToolRegistry
+import com.apkagent.apktools.PythonRunner
 import com.apkagent.apktools.buildToolRegistry
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.SettingsStore
@@ -32,8 +33,9 @@ class ApkAgentApp : Application() {
         super.onCreate()
         Logger.init()
         Logger.setupCrashHandler()
-        Logger.i("App", "APKAgent v1.2.4 启动 — SDK=${android.os.Build.VERSION.SDK_INT}")
+        Logger.i("App", "APKAgent v3.5.0 启动 — SDK=${android.os.Build.VERSION.SDK_INT}")
         settingsStore = SettingsStore(this)
+        PythonRunner.init(this)
         toolRegistry = buildToolRegistry()
         ShizukuManager.init()
         Logger.i("App", "初始化完成 — workspace=${workspace.absolutePath}")
