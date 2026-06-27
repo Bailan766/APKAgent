@@ -41,6 +41,18 @@ fun buildToolRegistry(): ToolRegistry {
     // Python 脚本执行
     r.register(PythonExec)
     r.register(PythonInfo)
+    r.register(PipInstall)
+    r.register(PipList)
+    // 插件系统
+    r.register(PluginInstall)
+    r.register(PluginList)
+    // 高级搜索
+    r.register(ApkSearchStrings)
+    r.register(FileSearch)
+    // Manifest 修改
+    r.register(ApkPatchManifest)
+    // ADB
+    r.register(AdbExec)
     return r
 }
 
@@ -716,6 +728,308 @@ object PythonInfo : Tool {
         } else {
             val version = PythonRunner.getVersion() ?: "unknown"
             ToolResult.ok("Python 环境就绪\n路径: $python\n版本: $version\n\n可用的 Python APK 分析库（需在 Termux 中安装）：\n- androguard: APK 解析/证书/MinSdk分析\n- frida-tools: Frida Hook 脚本管理\n- objection: 运行时安全评估\n- apkid: APK 加固壳识别\n\n用法：用 python_exec 执行脚本代码。")
+        }
+    }
+}
+
+/* ---------------- pip 包管理 ---------------- */
+
+/** pip.install — AI 自安装 Python 包，跳过已安装的 */
+object PipInstall : Tool {
+    override val name = "pip_install"
+    override val description = "安装 Python pip 包（自动跳过已安装）。AI 可在需要时自行安装依赖，如 frida-tools、androguard、objection 等。支持批量安装。"
+    override val sensitive = true
+    override val parameters = schemaObject(mapOf(
+        "packages" to strProp("要安装的包名或空格分隔的多个包名，如 'frida-tools androguard'"),
+        "timeout" to intProp("超时秒数，默认120，最大300")
+    ), listOf("packages"))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val pkgs = args.str("packages") ?: return ToolResult.err("缺少 packages")
+        val timeout = (args.int("timeout") ?: 120).coerceIn(30, 300)
+        val list = pkgs.split(Regex("[,\\s]+")).filter { it.isNotBlank() }
+        if (list.size == 1) {
+            val r = PythonRunner.pipInstall(list[0], timeout)
+            ToolResult.ok(r.combined).takeIf { r.success } ?: ToolResult.err(r.combined)
+        } else {
+            val r = PythonRunner.pipInstallBulk(list, timeout)
+            ToolResult.ok(r.combined).takeIf { r.success } ?: ToolResult.err(r.combined)
+        }
+    }
+}
+
+/** pip.list — 查看已安装的 pip 包 */
+object PipList : Tool {
+    override val name = "pip_list"
+    override val description = "列出 Python 已安装的 pip 包及版本。"
+    override val parameters = schemaObject(emptyMap())
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        if (!PythonRunner.isAvailable()) return ToolResult.err(PythonRunner.installGuide())
+        val pkgs = PythonRunner.refreshInstalled()
+        ToolResult.ok(if (pkgs.isEmpty()) "无已安装的 pip 包" else "已安装 ${pkgs.size} 个包:\n${pkgs.joinToString("\n")}")
+    }
+}
+
+/* ---------------- 插件系统 ---------------- */
+
+/** plugin.install — 安装内置或远程插件 */
+object PluginInstall : Tool {
+    override val name = "plugin_install"
+    override val description = "安装分析插件到本地。内置插件（frida-scripts/smali-patches/反混淆/脱壳/分析脚本）直接写入，远程插件下载到 workspace/plugins/ 并缓存。"
+    override val sensitive = true
+    override val parameters = schemaObject(mapOf(
+        "id" to strProp("内置插件ID（如 frida-sslpin, smali-vip-bypass），留空则用 url 下载"),
+        "url" to strProp("远程插件下载URL（.js/.py/.patch/.zip），id 和 url 二选一"),
+        "timeout" to intProp("下载超时秒数，默认60")
+    ))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val pluginsDir = PluginManager.pluginDir(ctx.workspace)
+
+        val id = args.str("id")
+        val url = args.str("url")
+
+        if (id != null) {
+            // 查内置清单
+            val info = PluginManager.BUILTIN_CATALOG.find { it.id == id }
+            if (info == null) return ToolResult.err("未知插件ID: $id\n可用: ${PluginManager.BUILTIN_CATALOG.joinToString { it.id }}")
+            // 安装内置代码
+            val path = PluginManager.installBuiltin(id, pluginsDir)
+            return if (path != null) ToolResult.ok("✅ 已安装: ${info.name}\n路径: $path\n类型: ${info.category}")
+            else ToolResult.err("内置插件无预置代码，请从网络下载或参考模板自行编写。\n描述: ${info.description}")
+        } else if (url != null) {
+            val timeout = args.int("timeout") ?: 60
+            val result = PluginManager.download(url, pluginsDir, timeout)
+            return if (result.startsWith("已")) ToolResult.ok(result) else ToolResult.err(result)
+        } else {
+            return ToolResult.err("需提供 id 或 url")
+        }
+    }
+}
+
+/** plugin.list — 列出可用和已安装插件 */
+object PluginList : Tool {
+    override val name = "plugin_list"
+    override val description = "列出所有可用插件及安装状态。内置插件有默认代码可直接使用。"
+    override val parameters = schemaObject(mapOf(
+        "category" to strProp("按类别过滤: frida / smali / deobfuscation / unpackers / analysis")
+    ))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val cat = args.str("category")?.lowercase()
+        val pluginsDir = PluginManager.pluginDir(ctx.workspace)
+        val filtered = if (cat != null) PluginManager.BUILTIN_CATALOG.filter { it.category == cat }
+        else PluginManager.BUILTIN_CATALOG
+
+        val sb = StringBuilder()
+        var currentCat = ""
+        for (plugin in filtered) {
+            if (plugin.category != currentCat) {
+                currentCat = plugin.category
+                sb.appendLine("\n── ${currentCat.uppercase()} ──")
+            }
+            val installed = File(pluginsDir, "${plugin.category}/${plugin.filename}").exists()
+            sb.appendLine("  ${if (installed) "✅" else "⬇️"} ${plugin.id}: ${plugin.name}")
+            sb.appendLine("     ${plugin.description}")
+        }
+        sb.appendLine("\n用法: plugin.install id=插件ID")
+        sb.appendLine("目录: ${pluginsDir.absolutePath}")
+        return ToolResult.ok(sb.toString())
+    }
+}
+
+/* ---------------- 高级搜索 ---------------- */
+
+/** apk.search_strings — APK 内正则搜索 */
+object ApkSearchStrings : Tool {
+    override val name = "apk_search_strings"
+    override val description = "在 APK 所有文件中搜索匹配正则的内容（字符串/URL/密钥模式）。逐个条目读取、忽略二进制、限时。"
+    override val parameters = schemaObject(mapOf(
+        "pattern" to strProp("搜索正则表达式，如 'https?://[\w./]+' 或 'api_key|token|secret'"),
+        "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"),
+        "file_filter" to strProp("文件名过滤，如 '*.xml' 或 '*.dex'，留空搜全部"),
+        "max_results" to intProp("最多匹配数，默认50")
+    ), listOf("pattern"))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val pattern = args.str("pattern") ?: return ToolResult.err("缺少 pattern")
+        val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK")
+        val fileFilter = args.str("file_filter")
+        val maxResults = args.int("max_results") ?: 50
+
+        val regex = try { Regex(pattern, setOf(RegexOption.IGNORE_CASE)) }
+        catch (e: Throwable) { return ToolResult.err("无效正则: ${e.message}") }
+
+        val sb = StringBuilder()
+        sb.appendLine("搜索: /$pattern/")
+        var count = 0
+        var scannedFiles = 0
+        try {
+            java.util.zip.ZipFile(apk).use { zip ->
+                val entries = zip.entries().toList()
+                    .filter { !it.isDirectory && (fileFilter == null || it.name.contains(fileFilter.removeSuffix("*"))) }
+                for (entry in entries) {
+                    if (count >= maxResults) break
+                    scannedFiles++
+                    try {
+                        val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                        // 只搜索可打印字符部分
+                        val text = String(bytes, Charsets.UTF_8).take(100_000)
+                        if (text.isBlank()) continue
+                        val matches = regex.findAll(text).take(maxResults - count).toList()
+                        if (matches.isNotEmpty()) {
+                            for (m in matches) {
+                                count++
+                                val ctx = text.substring(maxOf(0, m.range.first - 20), minOf(text.length, m.range.last + 30))
+                                sb.appendLine("${entry.name}:${m.range.first} → $ctx")
+                            }
+                        }
+                    } catch (_: Exception) { /* skip binary/corrupt */ }
+                }
+            }
+            sb.appendLine("\n搜索 ${scannedFiles} 个文件，找到 $count 条匹配")
+            ToolResult.ok(sb.toString().take(8000))
+        } catch (e: Throwable) {
+            ToolResult.err("搜索失败: ${e.message}")
+        }
+    }
+}
+
+/** file.search — 工作区文件正则搜索 */
+object FileSearch : Tool {
+    override val name = "file_search"
+    override val description = "在工作区文件内容中搜索正则匹配。类似 grep -rn。"
+    override val parameters = schemaObject(mapOf(
+        "pattern" to strProp("搜索正则"),
+        "path" to strProp("搜索起始路径（工作区内）；留空=工作区根"),
+        "file_glob" to strProp("文件名匹配，如 '*.smali' 或 '*.py'"),
+        "max_results" to intProp("最多结果数，默认30")
+    ), listOf("pattern"))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val pattern = args.str("pattern") ?: return ToolResult.err("缺少 pattern")
+        val baseDir = args.str("path")?.let { File(it) } ?: ctx.workspace
+        Sandbox.assertReadable(baseDir, ctx.workspace, ctx.openApk)
+        val glob = args.str("file_glob")?.let { it.removePrefix("*.") }?.lowercase()
+        val maxResults = args.int("max_results") ?: 30
+
+        val regex = try { Regex(pattern, setOf(RegexOption.IGNORE_CASE)) }
+        catch (e: Throwable) { return ToolResult.err("无效正则: ${e.message}") }
+
+        val sb = StringBuilder()
+        var count = 0
+        try {
+            baseDir.walkTopDown().filter { it.isFile && it.length() < 1_000_000 && (glob == null || it.extension.lowercase() == glob) }
+                .forEach { f ->
+                    if (count >= maxResults) return@forEach
+                    try {
+                        val text = f.readText(Charsets.UTF_8)
+                        regex.find(text)?.let { m ->
+                            count++
+                            val ctx = text.substring(maxOf(0, m.range.first - 15), minOf(text.length, m.range.last + 25))
+                            val rel = f.relativeTo(ctx.workspace).path
+                            sb.appendLine("$rel:${m.range.first} → $ctx")
+                        }
+                    } catch (_: Exception) {}
+                }
+            sb.appendLine("\n找到 $count 条匹配")
+            ToolResult.ok(sb.toString().take(8000))
+        } catch (e: Throwable) {
+            ToolResult.err("搜索失败: ${e.message}")
+        }
+    }
+}
+
+/* ---------------- Manifest 修改 ---------------- */
+
+/** apk.patch_manifest — 修改 AndroidManifest */
+object ApkPatchManifest : Tool {
+    override val name = "apk_patch_manifest"
+    override val description = "修改 APK 的 AndroidManifest.xml（配合 apk_unpack/apk_repack 流程）。支持添加 debuggable=true、networkSecurity（允许明文）、backup、导出组件等。"
+    override val sensitive = true
+    override val parameters = schemaObject(mapOf(
+        "manifest_path" to strProp("工作区内解包后的 AndroidManifest.xml 路径"),
+        "patch_type" to strProp("修改类型：debuggable/network/backup/export/all", enum = listOf("debuggable", "network", "backup", "export", "all"))
+    ), listOf("manifest_path", "patch_type"))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val path = args.str("manifest_path") ?: return ToolResult.err("缺少 manifest_path")
+        val patchType = args.str("patch_type") ?: "all"
+        val f = File(path)
+        Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
+        Sandbox.assertWritable(f, ctx.workspace)
+        if (!f.exists()) return ToolResult.err("文件不存在: $path")
+
+        var text = f.readText()
+        val changes = mutableListOf<String>()
+        if (patchType in listOf("debuggable", "all")) {
+            if (!text.contains("android:debuggable=\"true\"")) {
+                text = text.replace("<application", "<application android:debuggable=\"true\"") // 简单替换
+                changes.add("debuggable=true")
+            }
+        }
+        if (patchType in listOf("network", "all")) {
+            if (!text.contains("android:networkSecurityConfig")) {
+                text = text.replace("<application", "<application android:networkSecurityConfig=\"@xml/network_security_config\"")
+                changes.add("networkSecurityConfig")
+            }
+            if (!text.contains("android:usesCleartextTraffic=\"true\"")) {
+                text = text.replace("<application", "<application android:usesCleartextTraffic=\"true\"")
+                changes.add("usesCleartextTraffic=true")
+            }
+        }
+        if (patchType in listOf("backup", "all")) {
+            if (!text.contains("android:allowBackup=\"true\"")) {
+                text = text.replace("<application", "<application android:allowBackup=\"true\"")
+                changes.add("allowBackup=true")
+            }
+        }
+        if (patchType in listOf("export", "all")) {
+            // 将所有 activity/receiver/service 加 exported=true（如果缺）
+            val exportedCount = Regex("""<(activity|receiver|service)[^>]*>""").findAll(text).count {
+                val tag = it.value
+                !tag.contains("android:exported=") && !tag.contains("intent-filter")
+            }
+            if (exportedCount > 0) changes.add("提示: $exportedCount 个组件缺少 exported (需手动处理)")
+        }
+
+        if (changes.isEmpty()) return ToolResult.ok("无需修改（Manifest 已包含所需属性）")
+        f.writeText(text)
+        ToolResult.ok("已修改 ${f.absolutePath}:\n${changes.joinToString("\n")}\n\n下一步: apk_repack + apk_sign 重打包")
+    }
+}
+
+/* ---------------- ADB 命令执行 ---------------- */
+
+/** adb.exec — 执行 ADB 命令 */
+object AdbExec : Tool {
+    override val name = "adb_exec"
+    override val description = "执行 ADB 命令（需设备已连接 USB 调试或无线调试）。可用于: adb install/uninstall, am/pm, logcat, dumpsys 等。"
+    override val sensitive = true
+    override val parameters = schemaObject(mapOf(
+        "command" to strProp("ADB 命令（不需要 adb 前缀），如 'install /path/to.apk' 或 'shell pm list packages'"),
+        "timeout" to intProp("超时秒数，默认30，最大60")
+    ), listOf("command"))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val cmd = args.str("command") ?: return ToolResult.err("缺少 command")
+        val timeout = (args.int("timeout") ?: 30).coerceIn(5, 60)
+
+        // 查找 adb
+        val adbPaths = listOf("/data/data/com.termux/files/usr/bin/adb", "/system/bin/adb", "/usr/bin/adb")
+        val adb = adbPaths.firstOrNull { File(it).exists() && File(it).canExecute() }
+            ?: return ToolResult.err("未找到 ADB。请在 Termux 中: pkg install android-tools\n或连接电脑使用 adb。")
+
+        return try {
+            kotlinx.coroutines.withTimeout(timeout * 1000L) {
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    val fullCmd = mutableListOf(adb)
+                    fullCmd.addAll(cmd.split(" ").filter { it.isNotBlank() })
+                    val pb = ProcessBuilder(fullCmd)
+                    pb.redirectErrorStream(true)
+                    val proc = pb.start()
+                    val out = proc.inputStream.bufferedReader().use { it.readText() }
+                    val exit = proc.waitFor()
+                    ToolResult.ok(if (exit == 0) out.take(6000) else "exit=$exit\n${out.take(6000)}")
+                }
+            }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            ToolResult.err("ADB 命令超时(${timeout}s)")
+        } catch (e: Throwable) {
+            ToolResult.err("ADB 执行失败: ${e.message}")
         }
     }
 }
