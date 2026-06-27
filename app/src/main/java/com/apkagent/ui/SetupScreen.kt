@@ -36,7 +36,7 @@ enum class InstallStatus {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SetupScreen(onSetupComplete: () -> Unit) {
+fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
@@ -253,6 +253,21 @@ fun SetupScreen(onSetupComplete: () -> Unit) {
             }
 
             Spacer(modifier = Modifier.height(28.dp))
+
+            // 内置终端按钮
+            OutlinedButton(
+                onClick = onOpenTerminal,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp),
+                shape = RoundedCornerShape(14.dp)
+            ) {
+                Icon(Icons.Default.Terminal, contentDescription = null)
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("打开内置终端安装环境", fontSize = 14.sp)
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // 完成按钮
             Button(
