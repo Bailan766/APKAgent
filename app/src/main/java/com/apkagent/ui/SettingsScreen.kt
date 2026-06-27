@@ -33,7 +33,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.apkagent.ApkAgentApp
 import com.apkagent.agent.OpenAIClient
+import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import com.apkagent.shizuku.ShizukuManager
+import com.apkagent.service.KeepAliveManager
 import com.apkagent.store.AgentConfig
 import com.apkagent.store.AiProvider
 import kotlinx.coroutines.Dispatchers
@@ -163,6 +167,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
             // ── Shizuku ──
             SectionTitle("🔐 系统权限")
             ShizukuStatusCard()
+            BatteryOptimizationCard()
 
             // ── Python ──
             SectionTitle("🐍 Python 环境")
@@ -384,6 +389,62 @@ private fun ShizukuStatusCard() {
             if (statusInfo.label != null && statusInfo.action != null) {
                 Button(onClick = { if (!requesting) statusInfo.action!!.invoke() }, enabled = !requesting, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
                     if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Text(statusInfo.label!!, fontSize = 12.sp)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BatteryOptimizationCard() {
+    val context = LocalContext.current
+    var isIgnoring by remember { mutableStateOf(KeepAliveManager.isIgnoringBatteryOptimizations(context)) }
+
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (isIgnoring)
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
+            else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
+        )
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                Icons.Default.BatteryChargingFull, null,
+                tint = if (isIgnoring) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(20.dp)
+            )
+            Spacer(Modifier.width(8.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    "电池优化白名单",
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    if (isIgnoring) "已豁免 — 后台任务不会被系统杀死" else "未豁免 — 系统可能在后台杀死分析任务",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (!isIgnoring) {
+                TextButton(onClick = {
+                    try {
+                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                        context.startActivity(intent)
+                    } catch (_: Throwable) {
+                        // 部分设备不支持，打开电池优化列表
+                        try {
+                            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                        } catch (_: Throwable) {}
+                    }
+                }) {
+                    Text("去设置", fontSize = 12.sp)
                 }
             }
         }
