@@ -265,13 +265,19 @@ object PythonRunner {
         try {
             val bin = java.io.File(path)
             if (bin.exists() && !bin.canExecute()) {
-                ProcessBuilder("sh", "-c", "chmod 755 '${'$'}{bin.absolutePath}' && chmod -R 755 '${'$'}{bin.parentFile?.parentFile?.let { java.io.File(it, "lib") }?.absolutePath ?: "/tmp"}'")
+                ProcessBuilder("sh", "-c", "chmod 755 " + bin.absolutePath)
                     .redirectErrorStream(true)
                     .start().waitFor()
-                Logger.i("Py", "chmod 修复: ${'$'}{bin.absolutePath}")
+                val libDir = bin.parentFile?.parentFile?.let { java.io.File(it, "lib") }
+                if (libDir?.exists() == true) {
+                    ProcessBuilder("sh", "-c", "chmod -R 755 " + libDir.absolutePath)
+                        .redirectErrorStream(true)
+                        .start().waitFor()
+                }
+                Logger.i("Py", "chmod done: " + bin.absolutePath)
             }
         } catch (e: Exception) {
-            Logger.w("Py", "chmod 失败: ${'$'}{e.message}")
+            Logger.w("Py", "chmod failed: " + e.message)
         }
     }
 
