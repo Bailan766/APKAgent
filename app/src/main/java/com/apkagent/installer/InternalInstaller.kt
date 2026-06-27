@@ -108,6 +108,17 @@ object InternalInstaller {
             onProgress(InstallProgress("chmod", 0.85f, "设置执行权限..."))
             setExecutable(binDir)
 
+            // 4.5 显式 chmod（Android SELinux 需要）
+            try {
+                val chmod = ProcessBuilder("sh", "-c", "chmod -R 755 '${binDir.absolutePath}'")
+                chmod.redirectErrorStream(true)
+                val cp = chmod.start()
+                cp.waitFor()
+                Logger.i("Installer", "chmod 755 done")
+            } catch (e: Exception) {
+                Logger.w("Installer", "chmod failed: ${e.message}")
+            }
+
             // 5. 验证
             onProgress(InstallProgress("verify", 0.9f, "验证安装..."))
             if (pythonBin.exists()) {
