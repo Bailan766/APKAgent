@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
+fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTerminal: () -> Unit = {}) {
     val context = LocalContext.current
     val app = context.applicationContext as ApkAgentApp
     val cfg = app.settingsStore.config.value
@@ -129,6 +129,17 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
             // ── Python ──
             SectionTitle("🐍 Python 环境")
             PythonStatusCard()
+
+            // 内置终端入口
+            OutlinedButton(
+                onClick = onOpenTerminal,
+                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Default.Terminal, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("打开内置终端", fontSize = 13.sp)
+            }
 
             // ── AI Provider ──
             SectionTitle("🤖 AI 模型")
