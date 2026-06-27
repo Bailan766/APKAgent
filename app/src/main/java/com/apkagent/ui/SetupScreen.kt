@@ -1,7 +1,13 @@
 package com.apkagent.ui
 
+import android.Manifest
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -22,6 +28,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.apkagent.apktools.PythonRunner
 import com.apkagent.installer.InternalInstaller
 import com.apkagent.util.Logger
@@ -35,6 +42,15 @@ enum class InstallStatus {
     IDLE, CHECKING, NOT_INSTALLED, INSTALLING, INSTALLED, FAILED
 }
 
+private fun hasStoragePermission(context: android.content.Context): Boolean {
+    return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        Environment.isExternalStorageManager()
+    } else {
+        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
@@ -43,15 +59,31 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
 
     var pythonStatus by remember { mutableStateOf(InstallStatus.CHECKING) }
     var nodeStatus by remember { mutableStateOf(InstallStatus.CHECKING) }
+    var storageGranted by remember { mutableStateOf(hasStoragePermission(context)) }
     var statusMessage by remember { mutableStateOf("检测环境...") }
     var progress by remember { mutableFloatStateOf(0f) }
     var pythonVersion by remember { mutableStateOf("") }
     var nodeVersion by remember { mutableStateOf("") }
     var isInstalling by remember { mutableStateOf(false) }
 
+    // 存储权限请求回调
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        storageGranted = granted || hasStoragePermission(context)
+    }
+
+    // 从设置页返回时重新检查
+    LaunchedEffect(Unit) {
+        delay(500)
+        storageGranted = hasStoragePermission(context)
+    }
+
     // 启动时自动检测
     LaunchedEffect(Unit) {
         delay(300)
+        storageGranted = hasStoragePermission(context)
+
         // ── Python ──
         statusMessage = "检测 Python 环境..."
         PythonRunner.init(context)
@@ -60,15 +92,14 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
             pythonVersion = PythonRunner.getVersion() ?: "unknown"
             pythonStatus = InstallStatus.INSTALLED
             statusMessage = "✅ Python 已就绪: $pyPath"
-            progress = 0.5f
+            progress = 0.4f
         } else {
-            // 尝试链接 Termux Python
             val linked = InternalInstaller.linkTermuxPython()
             if (linked != null) {
                 pythonVersion = PythonRunner.getVersion() ?: "unknown"
                 pythonStatus = InstallStatus.INSTALLED
                 statusMessage = "✅ 已链接 Termux Python: $linked"
-                progress = 0.5f
+                progress = 0.4f
             } else {
                 pythonStatus = InstallStatus.NOT_INSTALLED
                 statusMessage = "未检测到 Python，点击安装"
@@ -94,9 +125,9 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
             } else InstallStatus.NOT_INSTALLED
         } catch (_: Exception) { InstallStatus.NOT_INSTALLED }
 
-        progress = if (pythonStatus == InstallStatus.INSTALLED) 0.7f else 0.1f
+        progress = if (pythonStatus == InstallStatus.INSTALLED) 0.6f else 0.1f
         statusMessage = if (pythonStatus == InstallStatus.INSTALLED && nodeStatus == InstallStatus.INSTALLED)
-            "✅ 环境就绪，点击「开始使用」" else if (pythonStatus == InstallStatus.INSTALLED)
+            "✅ 环境就绪" else if (pythonStatus == InstallStatus.INSTALLED)
             "Python 就绪，Node.js 可选安装" else "点击下方按钮安装 Python"
     }
 
@@ -155,6 +186,28 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
             )
 
             Spacer(modifier = Modifier.height(24.dp))
+
+            // ── 存储权限（第一优先级）──
+            StoragePermissionCard(
+                granted = storageGranted,
+                onGrant = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        // Android 11+ 需要去设置页开启「所有文件访问」
+                        try {
+                            context.startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
+                        } catch (_: Exception) {
+                            val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION)
+                            intent.data = Uri.parse("package:${context.packageName}")
+                            context.startActivity(intent)
+                        }
+                    } else {
+                        // Android 10 及以下直接请求运行时权限
+                        storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    }
+                }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
 
             // ── Python ──
             EnvCard(
@@ -275,6 +328,68 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
             }
 
             Spacer(modifier = Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun StoragePermissionCard(granted: Boolean, onGrant: () -> Unit) {
+    val bgColor = if (granted)
+        MaterialTheme.colorScheme.primaryContainer
+    else
+        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = bgColor)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("存储权限", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.15f))
+                            .padding(horizontal = 5.dp, vertical = 1.dp)
+                    ) {
+                        Text("必需", fontSize = 9.sp, color = MaterialTheme.colorScheme.error)
+                    }
+                }
+                Text(
+                    if (granted) "已授权 · 可读写设备文件" else "未授权 · 无法保存文件到设备",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            if (granted) {
+                Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            } else {
+                FilledTonalButton(
+                    onClick = onGrant,
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text("授权", fontSize = 13.sp)
+                }
+            }
         }
     }
 }

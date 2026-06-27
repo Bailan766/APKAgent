@@ -57,6 +57,59 @@ class OpenAIClient(
     }
 
     /**
+     * 获取可用模型列表。
+     * 调用 /v1/models 端点，返回模型 ID 列表。
+     */
+    suspend fun fetchAvailableModels(): Result<List<String>> = withContext(Dispatchers.IO) {
+        try {
+            var base = baseUrl.trim().trimEnd('/')
+            if (!base.endsWith("/v1")) {
+                if (!base.endsWith("/models")) base = "$base/v1"
+            }
+            val modelsUrl = "$base/models"
+
+            val req = Request.Builder()
+                .url(modelsUrl)
+                .header("Authorization", "Bearer $apiKey")
+                .header("Accept", "application/json")
+                .get()
+                .build()
+
+            val response = client.newCall(req).execute()
+            val respBody = response.body?.string() ?: ""
+
+            if (!response.isSuccessful) {
+                val errorMsg = try {
+                    json.decodeFromString(ApiErrorBody.serializer(), respBody).error?.message
+                } catch (_: Throwable) { null } ?: "HTTP ${response.code}: ${respBody.take(200)}"
+                return@withContext Result.failure(Exception(errorMsg))
+            }
+
+            // 解析响应，兼容 OpenAI 格式 { "data": [{ "id": "model-name" }] }
+            val models = try {
+                val jsonObj = json.parseToJsonElement(respBody) as? JsonObject
+                val dataArray = jsonObj?.get("data") as? kotlinx.serialization.json.JsonArray
+                dataArray?.mapNotNull { item ->
+                    val obj = item as? JsonObject
+                    obj?.get("id")?.toString()?.trim('"')
+                }?.sorted() ?: emptyList()
+            } catch (_: Throwable) {
+                // 尝试直接解析为字符串数组
+                try {
+                    val arr = json.parseToJsonElement(respBody) as? kotlinx.serialization.json.JsonArray
+                    arr?.mapNotNull { it.toString().trim('"') }?.sorted() ?: emptyList()
+                } catch (_: Throwable) {
+                    emptyList()
+                }
+            }
+
+            Result.success(models)
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
+    /**
      * 发起流式对话。
      * @param onContentDelta 文本增量回调（用于 UI 实时显示）
      */

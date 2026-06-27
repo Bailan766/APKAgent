@@ -7,6 +7,11 @@ import com.apkagent.tools.SmartSearchTool
 import com.apkagent.tools.AutoPatchTool
 import com.apkagent.tools.GenerateHookTool
 import com.apkagent.tools.AnalyzeObfuscationTool
+import com.apkagent.tools.ExternalFileReadTool
+import com.apkagent.tools.ExternalFileWriteTool
+import com.apkagent.tools.ExternalFileListTool
+import com.apkagent.tools.CreateScriptTool
+import com.apkagent.tools.RunScriptTool
 import com.apkagent.agent.ToolResult
 import com.apkagent.agent.boolProp
 import com.apkagent.agent.intProp
@@ -72,6 +77,13 @@ fun buildToolRegistry(): ToolRegistry {
     r.register(AutoPatchTool())
     r.register(GenerateHookTool())
     r.register(AnalyzeObfuscationTool())
+    // 外部文件访问（不受沙箱限制）
+    r.register(ExternalFileReadTool())
+    r.register(ExternalFileWriteTool())
+    r.register(ExternalFileListTool())
+    // AI 自建脚本
+    r.register(CreateScriptTool())
+    r.register(RunScriptTool())
     return r
 }
 
@@ -80,7 +92,7 @@ fun buildToolRegistry(): ToolRegistry {
 private fun resolveApk(args: JsonObject, ctx: ToolContext): File? {
     val p = args.str("apk_path")
     if (p != null) {
-        val f = File(p)
+        val f = Sandbox.resolve(File(p), ctx.workspace)
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
         return f
     }
@@ -192,7 +204,7 @@ object ApkReadDex : Tool {
                 } ?: return ToolResult.err("APK 内未找到条目：$entry")
             } else {
                 val p = args.str("path") ?: return ToolResult.err("需提供 path 或 entry_in_apk。")
-                val f = File(p)
+                val f = Sandbox.resolve(File(p), ctx.workspace)
                 Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
                 f.readBytes()
             }
@@ -243,7 +255,7 @@ object ApkHexView : Tool {
                 zip.getInputStream(e).use { it.readBytes() }
             } ?: return ToolResult.err("APK 内未找到条目：$entryName")
         } else {
-            val f = File(target)
+            val f = Sandbox.resolve(File(target), ctx.workspace)
             Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
             f.readBytes()
         }
@@ -330,7 +342,7 @@ object FileReadText : Tool {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val path = args.str("path") ?: return ToolResult.err("缺少 path")
         val max = args.int("max_chars") ?: 8000
-        val f = File(path)
+        val f = Sandbox.resolve(File(path), ctx.workspace)
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
         if (!f.exists()) return ToolResult.err("文件不存在：$path")
         if (f.isDirectory) return ToolResult.err("目标是目录：$path")
@@ -347,7 +359,7 @@ object FileList : Tool {
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val p = args.str("path")
-        val dir = if (p.isNullOrBlank()) ctx.workspace else File(p)
+        val dir = if (p.isNullOrBlank()) ctx.workspace else Sandbox.resolve(File(p), ctx.workspace)
         Sandbox.assertReadable(dir, ctx.workspace, ctx.openApk)
         if (!dir.exists()) return ToolResult.err("路径不存在：${dir.path}")
         if (!dir.isDirectory) return ToolResult.err("不是目录：${dir.path}")
@@ -423,7 +435,7 @@ object ApkRemoveSignatureCheck : Tool {
                 ToolResult.ok(sb.toString())
             }
             "patch" -> {
-                val outDir = args.str("output_dir")?.let { File(it) }
+                val outDir = args.str("output_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
                     ?: File(ctx.workspace, "patched_${apk.nameWithoutExtension}")
                 Sandbox.assertWritable(outDir, ctx.workspace)
                 outDir.mkdirs()
@@ -465,9 +477,9 @@ object ApkRepack : Tool {
         listOf("src_dir", "output")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val srcDir = args.str("src_dir")?.let { File(it) }
+        val srcDir = args.str("src_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: return ToolResult.err("缺少 src_dir")
-        val output = args.str("output")?.let { File(it) }
+        val output = args.str("output")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: return ToolResult.err("缺少 output")
         Sandbox.assertReadable(srcDir, ctx.workspace, ctx.openApk)
         Sandbox.assertWritable(output, ctx.workspace)
@@ -490,7 +502,7 @@ object ApkUnpack : Tool {
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
-        val outDir = args.str("output_dir")?.let { File(it) }
+        val outDir = args.str("output_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: File(ctx.workspace, "unpacked_${apk.nameWithoutExtension}")
         Sandbox.assertWritable(outDir, ctx.workspace)
         val r = com.apkagent.apktools.smali.ApkRepackSigner.unpackApk(apk, outDir)
@@ -513,11 +525,11 @@ object ApkSign : Tool {
         listOf("apk_path")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path")?.let { File(it) }
+        val apkPath = args.str("apk_path")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: return ToolResult.err("缺少 apk_path")
         Sandbox.assertReadable(apkPath, ctx.workspace, ctx.openApk)
         val scheme = args.str("scheme") ?: "both"
-        val outPath = args.str("output")?.let { File(it) }
+        val outPath = args.str("output")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: File(apkPath.parentFile, "${apkPath.nameWithoutExtension}-signed.apk")
         Sandbox.assertWritable(outPath, ctx.workspace)
         val (v1, v2) = when (scheme) {
@@ -548,7 +560,7 @@ object DexDisasm : Tool {
         )
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val outDir = args.str("output_dir")?.let { File(it) }
+        val outDir = args.str("output_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: File(ctx.workspace, "smali_out_${System.currentTimeMillis()}")
         Sandbox.assertWritable(outDir, ctx.workspace)
         val entry = args.str("entry_in_apk")
@@ -564,7 +576,7 @@ object DexDisasm : Tool {
             } ?: return ToolResult.err("APK 内未找到条目：$entry")
         } else {
             val p = args.str("path") ?: return ToolResult.err("需提供 path 或 entry_in_apk")
-            val f = File(p)
+            val f = Sandbox.resolve(File(p), ctx.workspace)
             Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
             com.apkagent.apktools.smali.SmaliEngine.disassembleDex(f, outDir)
         }
@@ -586,9 +598,9 @@ object DexAssemble : Tool {
         listOf("smali_dir", "output")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val smaliDir = args.str("smali_dir")?.let { File(it) }
+        val smaliDir = args.str("smali_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: return ToolResult.err("缺少 smali_dir")
-        val output = args.str("output")?.let { File(it) }
+        val output = args.str("output")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: return ToolResult.err("缺少 output")
         Sandbox.assertReadable(smaliDir, ctx.workspace, ctx.openApk)
         Sandbox.assertWritable(output, ctx.workspace)
@@ -613,7 +625,7 @@ object DexEdit : Tool {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val path = args.str("smali_path") ?: return ToolResult.err("缺少 smali_path")
         val action = args.str("action") ?: "read"
-        val f = File(path)
+        val f = Sandbox.resolve(File(path), ctx.workspace)
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
         if (!f.exists()) return ToolResult.err("文件不存在：$path")
         val text = f.readText()
@@ -921,7 +933,7 @@ object FileSearch : Tool {
     ), listOf("pattern"))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val pattern = args.str("pattern") ?: return ToolResult.err("缺少 pattern")
-        val baseDir = args.str("path")?.let { File(it) } ?: ctx.workspace
+        val baseDir = args.str("path")?.let { Sandbox.resolve(File(it), ctx.workspace) } ?: ctx.workspace
         Sandbox.assertReadable(baseDir, ctx.workspace, ctx.openApk)
         val glob = args.str("file_glob")?.let { it.removePrefix("*.") }?.lowercase()
         val maxResults = args.int("max_results") ?: 30
@@ -967,7 +979,7 @@ object ApkPatchManifest : Tool {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val path = args.str("manifest_path") ?: return ToolResult.err("缺少 manifest_path")
         val patchType = args.str("patch_type") ?: "all"
-        val f = File(path)
+        val f = Sandbox.resolve(File(path), ctx.workspace)
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
         Sandbox.assertWritable(f, ctx.workspace)
         if (!f.exists()) return ToolResult.err("文件不存在: $path")
@@ -1092,7 +1104,7 @@ object RiskScan : Tool {
         "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK")
     ))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apk = args.str("apk_path")?.let { File(it) }
+        val apk = args.str("apk_path")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: ctx.openApk
             ?: return ToolResult.err("未指定 APK，请先导入或提供路径")
 

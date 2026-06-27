@@ -30,6 +30,18 @@ data class HistoryItem(
     val messageCount: Int = 0
 )
 
+@Serializable
+data class SerializableChatItem(
+    val id: String = "",
+    val role: String = "",
+    val content: String = "",
+    val toolCallId: String? = null,
+    val toolName: String? = null,
+    val toolArgs: String? = null,
+    val toolResult: String? = null,
+    val toolSuccess: Boolean = true
+)
+
 data class ChatItem(
     val id: String = UUID.randomUUID().toString(),
     val role: Role,
@@ -68,7 +80,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     val config: StateFlow<AgentConfig> get() = agentApp.settingsStore.config
 
-    init { loadHistoryList() }
+    init { loadHistoryList(); restoreLastConversation() }
 
     fun setOpenApk(file: File?) {
         agentApp.setOpenApk(file)
@@ -181,11 +193,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     fun loadHistory(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val file = File(historyDir(), "$id.json")
-                if (!file.exists()) return@launch
-                // 简单实现：读取对话文件名标记
-                // 完整实现需要序列化 ChatItem 列表
-                Logger.i("VM", "加载历史: $id")
+                val chatFile = File(historyDir(), "${id}_chat.json")
+                if (!chatFile.exists()) return@launch
+                val items = json.decodeFromString<List<SerializableChatItem>>(chatFile.readText())
+                val restored = items.map { m ->
+                    ChatItem(
+                        id = m.id, role = Role.valueOf(m.role), content = m.content,
+                        toolCallId = m.toolCallId, toolName = m.toolName,
+                        toolArgs = m.toolArgs, toolResult = m.toolResult, toolSuccess = m.toolSuccess
+                    )
+                }
+                _messages.value = restored
+                File(historyDir(), "last_id.txt").writeText(id)
+                Logger.i("VM", "加载历史: $id (${restored.size}条)")
             } catch (_: Throwable) {}
         }
     }
@@ -201,12 +221,56 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                     userInput = userInput.take(80),
                     messageCount = msgs.size
                 )
-                val file = File(historyDir(), "${item.id}.json")
-                file.writeText(json.encodeToString(item))
+                val historyDir = historyDir()
+                // 保存元数据
+                val metaFile = File(historyDir, "${item.id}.json")
+                metaFile.writeText(json.encodeToString(item))
+                // 保存完整对话
+                val chatFile = File(historyDir, "${item.id}_chat.json")
+                val serializable = msgs.map { m ->
+                    SerializableChatItem(
+                        id = m.id, role = m.role.name, content = m.content,
+                        toolCallId = m.toolCallId, toolName = m.toolName,
+                        toolArgs = m.toolArgs, toolResult = m.toolResult, toolSuccess = m.toolSuccess
+                    )
+                }
+                chatFile.writeText(json.encodeToString(serializable))
+                // 保存"最近对话"指针
+                File(historyDir, "last_id.txt").writeText(item.id)
                 _historyList.update { listOf(item) + it }
                 Logger.i("VM", "历史已保存: ${item.messageCount}条消息")
             } catch (e: Throwable) {
                 Logger.w("VM", "保存历史失败: ${e.message}")
+            }
+        }
+    }
+
+    private fun restoreLastConversation() {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val historyDir = historyDir()
+                val lastIdFile = File(historyDir, "last_id.txt")
+                if (!lastIdFile.exists()) return@launch
+                val lastId = lastIdFile.readText().trim()
+                if (lastId.isBlank()) return@launch
+
+                val chatFile = File(historyDir, "${lastId}_chat.json")
+                if (!chatFile.exists()) return@launch
+
+                val items = json.decodeFromString<List<SerializableChatItem>>(chatFile.readText())
+                val restored = items.map { m ->
+                    ChatItem(
+                        id = m.id, role = Role.valueOf(m.role), content = m.content,
+                        toolCallId = m.toolCallId, toolName = m.toolName,
+                        toolArgs = m.toolArgs, toolResult = m.toolResult, toolSuccess = m.toolSuccess
+                    )
+                }
+                if (restored.isNotEmpty()) {
+                    _messages.value = restored
+                    Logger.i("VM", "已恢复上次对话: ${restored.size}条消息")
+                }
+            } catch (e: Throwable) {
+                Logger.w("VM", "恢复对话失败: ${e.message}")
             }
         }
     }

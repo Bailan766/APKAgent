@@ -28,7 +28,8 @@ class GenerateHookTool : Tool {
         if (hookType in listOf("native", "both")) scripts.add(genNativeHook(className, methodName))
 
         val result = scripts.joinToString("\n\n// ═══════════════════════════════\n\n")
-        val outputFile = File(ctx.workspace, "hooks/${className.substringAfterLast('.')}_hook.js")
+        val simpleName = className.substringAfterLast(".")
+        val outputFile = File(ctx.workspace, "hooks/${simpleName}_hook.js")
         outputFile.parentFile?.mkdirs()
         outputFile.writeText(result)
 

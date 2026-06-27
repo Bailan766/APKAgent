@@ -32,6 +32,7 @@ import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.apkagent.ApkAgentApp
+import com.apkagent.agent.OpenAIClient
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.AgentConfig
 import com.apkagent.store.AiProvider
@@ -60,6 +61,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
     var customBaseUrl by remember { mutableStateOf(if (selectedProviderId == "custom") cfg.baseUrl else "") }
     var customModel by remember { mutableStateOf(if (selectedProviderId == "custom") cfg.model else "") }
 
+    // 动态模型列表状态
+    var dynamicModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var isLoadingModels by remember { mutableStateOf(false) }
+    var modelFetchError by remember { mutableStateOf<String?>(null) }
+
     // Theme state
     var currentTheme by remember { mutableStateOf(ThemeState.currentTheme) }
 
@@ -76,6 +82,38 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 scope.launch { snackbar.showSnackbar("壁纸已设置") }
             } catch (e: Throwable) {
                 scope.launch { snackbar.showSnackbar("壁纸加载失败") }
+            }
+        }
+    }
+
+    // 获取可用模型列表
+    fun fetchModels() {
+        if (apiKey.isBlank()) {
+            scope.launch { snackbar.showSnackbar("请先输入 API Key") }
+            return
+        }
+        isLoadingModels = true
+        modelFetchError = null
+        scope.launch(Dispatchers.IO) {
+            val baseUrl = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl
+            val client = OpenAIClient(baseUrl, apiKey)
+            val result = client.fetchAvailableModels()
+            result.onSuccess { models ->
+                dynamicModels = models
+                if (models.isNotEmpty()) {
+                    // 如果当前模型不在列表中，自动选择第一个
+                    if (model !in models) {
+                        model = models.first()
+                    }
+                    snackbar.showSnackbar("已获取 ${models.size} 个模型")
+                } else {
+                    snackbar.showSnackbar("未获取到模型，请检查 API Key")
+                }
+                isLoadingModels = false
+            }.onFailure { e ->
+                modelFetchError = e.message
+                snackbar.showSnackbar("获取失败: ${e.message?.take(50)}")
+                isLoadingModels = false
             }
         }
     }
@@ -159,6 +197,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                             onClick = {
                                 selectedProviderId = p.id; showProviderMenu = false
                                 if (p.id != "custom") { model = p.defaultModel; customBaseUrl = ""; customModel = "" }
+                                dynamicModels = emptyList() // 切换提供商时清空动态列表
                             },
                             leadingIcon = {
                                 if (p.id == selectedProviderId) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
@@ -168,27 +207,60 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 }
             }
 
-            if (selectedProvider.id != "custom" && selectedProvider.models.isNotEmpty()) {
-                var modelExpanded by remember { mutableStateOf(false) }
-                ExposedDropdownMenuBox(expanded = modelExpanded, onExpandedChange = { modelExpanded = it }) {
-                    OutlinedTextField(value = model, onValueChange = {}, readOnly = true, label = { Text("模型") },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor())
-                    ExposedDropdownMenu(expanded = modelExpanded, onDismissRequest = { modelExpanded = false }) {
-                        selectedProvider.models.forEach { m ->
-                            DropdownMenuItem(text = { Text(m) }, onClick = { model = m; modelExpanded = false },
-                                leadingIcon = { if (m == model) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) })
-                        }
-                    }
-                }
-            }
-
+            // API Key 输入
             OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, label = { Text("API Key") },
                 placeholder = { Text("粘贴 API Key") }, singleLine = true,
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
                 trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "隐藏" else "显示", fontSize = 12.sp) } })
+
+            // 自动获取模型按钮
+            Button(
+                onClick = { fetchModels() },
+                enabled = apiKey.isNotBlank() && !isLoadingModels,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                if (isLoadingModels) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
+                    Spacer(Modifier.width(8.dp))
+                    Text("获取中...")
+                } else {
+                    Icon(Icons.Default.Refresh, null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("自动获取可用模型")
+                }
+            }
+
+            // 模型选择下拉框
+            val allModels = if (dynamicModels.isNotEmpty()) dynamicModels else selectedProvider.models
+            if (allModels.isNotEmpty()) {
+                var modelExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(expanded = modelExpanded, onExpandedChange = { modelExpanded = it }) {
+                    OutlinedTextField(
+                        value = model, onValueChange = {}, readOnly = true,
+                        label = { Text("模型") },
+                        supportingText = { if (dynamicModels.isNotEmpty()) Text("已获取 ${dynamicModels.size} 个模型", fontSize = 10.sp) },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor()
+                    )
+                    ExposedDropdownMenu(expanded = modelExpanded, onDismissRequest = { modelExpanded = false }) {
+                        allModels.forEach { m ->
+                            DropdownMenuItem(text = { Text(m) }, onClick = { model = m; modelExpanded = false },
+                                leadingIcon = { if (m == model) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) })
+                        }
+                    }
+                }
+            } else if (selectedProvider.id == "custom") {
+                // 自定义提供商：手动输入模型名
+                OutlinedTextField(value = customModel, onValueChange = { customModel = it }, label = { Text("模型名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+            }
+
+            // 错误提示
+            if (modelFetchError != null) {
+                Text("⚠️ $modelFetchError", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
+            }
 
             Text("温度：%.2f".format(temp), fontSize = 13.sp)
             Slider(value = temp.toFloat(), onValueChange = { temp = it.toDouble() }, valueRange = 0f..2f, modifier = Modifier.fillMaxWidth())
@@ -198,9 +270,6 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 OutlinedTextField(value = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl,
                     onValueChange = { if (selectedProvider.id == "custom") customBaseUrl = it },
                     label = { Text("API Base URL") }, enabled = selectedProvider.id == "custom", singleLine = true, modifier = Modifier.fillMaxWidth())
-                if (selectedProvider.id == "custom") {
-                    OutlinedTextField(value = customModel, onValueChange = { customModel = it }, label = { Text("模型名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-                }
                 OutlinedTextField(value = sysExtra, onValueChange = { sysExtra = it }, label = { Text("附加提示词") }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp))
             }
 
