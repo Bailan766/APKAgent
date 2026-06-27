@@ -1,5 +1,6 @@
 package com.apkagent.apktools
 
+import android.content.Context
 import com.apkagent.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -7,32 +8,44 @@ import kotlinx.coroutines.withTimeout
 import java.io.File
 
 /**
- * Android 原生 Python 执行引擎 + 包管理。
- * - 自动探测 Termux / QPython / 系统 Python
- * - pip install 自安装 + 缓存追踪（不重复安装）
- * - 超时控制、工作区目录
+ * Python 执行引擎 — 优先使用内部安装，其次探测外部
  */
 object PythonRunner {
 
-    private val SEARCH_PATHS = listOf(
+    /** 内部安装路径（app 私有目录） */
+    private var internalDir: File? = null
+
+    private val EXTERNAL_PATHS = listOf(
+        // Termux (各种版本)
         "/data/data/com.termux/files/usr/bin/python3",
         "/data/data/com.termux/files/usr/bin/python",
+        "/data/data/com.termux.nix/files/usr/bin/python3",
+        // QPython
         "/data/data/org.qpython.qpy3/files/bin/python3",
         "/data/data/org.qpython.qpy/files/bin/python",
-        "/system/bin/python3",
-        "/system/bin/python",
+        // User custom
         "/sdcard/python3/bin/python3",
+        "/sdcard/APKAgent/python/bin/python3",
     )
 
     @Volatile private var cachedPython: String? = null
     @Volatile private var cachedAvailable: Boolean = false
     @Volatile var pythonPath: String? = null
 
-    /** 已安装 pip 包的缓存（内存中，避免重复安装） */
     private val installedPackages = mutableSetOf<String>()
     private var pipChecked = false
 
+    /** 初始化内部目录 */
+    fun init(context: Context) {
+        internalDir = File(context.filesDir, "python")
+        internalDir?.mkdirs()
+    }
+
+    /** 获取内部 Python 目录 */
+    fun getInternalDir(): File? = internalDir
+
     fun findPython(): String? {
+        // 0) 用户手动指定
         pythonPath?.let { custom ->
             val f = File(custom)
             if (f.exists() && f.canExecute()) {
@@ -40,33 +53,52 @@ object PythonRunner {
             }
         }
         if (cachedAvailable) return cachedPython
-        if (cachedPython != null) return cachedPython
-        for (path in SEARCH_PATHS) {
+
+        // 1) 内部安装
+        val internal = internalDir
+        if (internal != null) {
+            val internalPy = File(internal, "bin/python3")
+            if (internalPy.exists() && internalPy.canExecute()) {
+                cachedPython = internalPy.absolutePath; cachedAvailable = true
+                Logger.i("Py", "内部: ${internalPy.absolutePath}")
+                return cachedPython
+            }
+            // 可能没有 bin 目录，直接在根目录
+            val rootPy = File(internal, "python3")
+            if (rootPy.exists() && rootPy.canExecute()) {
+                cachedPython = rootPy.absolutePath; cachedAvailable = true
+                Logger.i("Py", "内部: ${rootPy.absolutePath}")
+                return cachedPython
+            }
+        }
+
+        // 2) 外部路径探测
+        for (path in EXTERNAL_PATHS) {
             val f = File(path)
             if (f.exists() && f.canExecute()) {
                 cachedPython = path; cachedAvailable = true
-                Logger.i("Py", "找到: $path"); return path
+                Logger.i("Py", "外部: $path"); return path
             }
         }
+
+        // 3) which
         try {
-            val proc = Runtime.getRuntime().exec(arrayOf("/system/bin/sh", "-c", "which python3 2>/dev/null || which python 2>/dev/null"))
+            val proc = ProcessBuilder("sh", "-c", "which python3 2>/dev/null || which python 2>/dev/null").start()
             val out = proc.inputStream.bufferedReader().readLine()
             proc.waitFor()
-            if (!out.isNullOrBlank()) {
+            if (!out.isNullOrBlank() && File(out.trim()).canExecute()) {
                 cachedPython = out.trim(); cachedAvailable = true
                 Logger.i("Py", "which: $cachedPython"); return cachedPython
             }
         } catch (_: Exception) {}
+
         cachedAvailable = false; return null
     }
 
     fun isAvailable(): Boolean = findPython() != null
 
     fun installGuide(): String = """
-未找到 Python 环境。请安装：
-1. Termux → pkg install python
-2. QPython (Play商店)
-3. 在设置页手动配置路径
+未找到 Python。请使用内置终端安装，或手动安装 Termux + Python。
 """.trimIndent()
 
     data class ExecResult(
@@ -83,9 +115,6 @@ object PythonRunner {
         }
     }
 
-    /**
-     * 执行 Python 脚本。
-     */
     suspend fun execute(script: File, timeoutSeconds: Int = 30, workDir: File? = null): ExecResult =
         withContext(Dispatchers.IO) {
             val python = findPython() ?: return@withContext ExecResult(false, null, installGuide())
@@ -97,6 +126,11 @@ object PythonRunner {
                 withTimeout(timeoutSeconds * 1000L) {
                     val pb = ProcessBuilder(python, script.absolutePath)
                     if (workDir?.isDirectory == true) pb.directory(workDir)
+                    // 设置环境变量让 pip 等工具正常工作
+                    pb.environment()["PYTHONHOME"] = internalDir?.absolutePath ?: ""
+                    pb.environment()["PYTHONPATH"] = File(internalDir, "lib/python3").let {
+                        if (it.exists()) it.absolutePath else ""
+                    }
                     pb.redirectErrorStream(false)
                     val proc = pb.start()
                     val stdout = proc.inputStream.bufferedReader().use { it.readText() }
@@ -117,7 +151,9 @@ object PythonRunner {
     suspend fun getVersion(): String? = withContext(Dispatchers.IO) {
         val python = findPython() ?: return@withContext null
         try {
-            val proc = ProcessBuilder(python, "--version").start()
+            val pb = ProcessBuilder(python, "--version")
+            internalDir?.let { pb.environment()["PYTHONHOME"] = it.absolutePath }
+            val proc = pb.start()
             val out = proc.inputStream.bufferedReader().readLine()
             proc.waitFor(); out
         } catch (_: Exception) { null }
@@ -125,11 +161,11 @@ object PythonRunner {
 
     // ──── pip 包管理 ────
 
-    /** 刷新已安装包列表 */
     suspend fun refreshInstalled(): List<String> = withContext(Dispatchers.IO) {
         val python = findPython() ?: return@withContext emptyList()
         try {
             val pb = ProcessBuilder(python, "-m", "pip", "list", "--format=columns")
+            internalDir?.let { pb.environment()["PYTHONHOME"] = it.absolutePath }
             pb.redirectErrorStream(true)
             val proc = pb.start()
             val out = proc.inputStream.bufferedReader().readText()
@@ -147,22 +183,16 @@ object PythonRunner {
         installedPackages.toList()
     }
 
-    /** 检查包是否已安装 */
     suspend fun isPkgInstalled(name: String): Boolean {
         if (!pipChecked) refreshInstalled()
         return installedPackages.contains(name.lowercase())
     }
 
-    /**
-     * pip install 安装包（自动跳过已安装，支持超时）。
-     * 返回安装输出。
-     */
     suspend fun pipInstall(packageName: String, timeoutSeconds: Int = 120): ExecResult =
         withContext(Dispatchers.IO) {
             val python = findPython()
                 ?: return@withContext ExecResult(false, null, installGuide())
 
-            // 检查是否已安装
             if (isPkgInstalled(packageName)) {
                 return@withContext ExecResult(true, "✅ $packageName 已安装（跳过）", null)
             }
@@ -172,8 +202,10 @@ object PythonRunner {
                 withTimeout(timeoutSeconds * 1000L) {
                     val pb = ProcessBuilder(python, "-m", "pip", "install", "--no-color", packageName)
                     pb.redirectErrorStream(true)
-                    // 设置 PIP 缓存目录到工作区外，避免占用
-                    pb.environment()["PIP_CACHE_DIR"] = File(python).parentFile?.parentFile?.resolve("pip-cache")?.absolutePath ?: ""
+                    internalDir?.let {
+                        pb.environment()["PYTHONHOME"] = it.absolutePath
+                        pb.environment()["PIP_CACHE_DIR"] = File(it, "pip-cache").absolutePath
+                    }
                     val proc = pb.start()
                     val out = proc.inputStream.bufferedReader().use { it.readText() }
                     val exit = proc.waitFor()
@@ -187,16 +219,13 @@ object PythonRunner {
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 Logger.w("Py", "pip install timeout")
-                ExecResult(false, null, "pip install 超时(${timeoutSeconds}s)。可重试或手动在 Termux 中安装:\npip install $packageName")
+                ExecResult(false, null, "pip install 超时(${timeoutSeconds}s)")
             } catch (e: Throwable) {
                 Logger.e("Py", "pip install failed", e)
-                ExecResult(false, null, "pip install 异常: ${e.message}\n手动安装:\npip install $packageName")
+                ExecResult(false, null, "pip install 异常: ${e.message}")
             }
         }
 
-    /**
-     * 批量安装。先检查全部，再安装缺失的。
-     */
     suspend fun pipInstallBulk(packages: List<String>, timeoutSeconds: Int = 180): ExecResult =
         withContext(Dispatchers.IO) {
             if (!pipChecked) refreshInstalled()
