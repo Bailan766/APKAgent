@@ -9,110 +9,172 @@ import java.io.StringWriter
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
-import kotlin.math.min
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /**
- * 文件日志系统：同时输出到 logcat 和 Downloads/APKAgent/logs/ 目录。
+ * 文件日志系统：输出到 logcat + Downloads/APKAgent/logs/
  *
- * 每次 App 启动创建新的日志文件，文件名包含时间戳。
- * 日志文件可发送给开发者用于排查问题。
+ * 格式：[MM-DD HH:mm:ss.SSS] [tid] LEVEL/TAG | message
+ *
+ * - ERROR 级别：同步写入（防止崩溃时丢失）
+ * - INFO/DEBUG：异步批量写入
+ * - 每次启动创建新文件，保留最近 20 个
  */
 object Logger {
 
     private const val TAG = "APKAgent"
     private const val LOG_DIR_NAME = "APKAgent/logs"
-    private const val MAX_LOG_FILES = 20  // 最多保留最近 20 个日志文件
+    private const val MAX_LOG_FILES = 20
 
     @Volatile private var logFile: File? = null
     @Volatile private var writer: PrintWriter? = null
-    private val writeExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
-        Thread(r, "APKAgent-Logger").apply { isDaemon = true }
-    }
+    @Volatile private var startTime: Long = 0
 
-    private val dateFormat = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
-    private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
+    private val executor = Executors.newSingleThreadExecutor { r ->
+        Thread(r, "log-writer").apply { isDaemon = true }
+    }
+    private val dateFmt = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
+    private val timeFmt = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.getDefault())
 
     val currentLogFile: File? get() = logFile
 
-    /** 初始化日志文件（App 启动时调用一次） */
+    /** 初始化（App.onCreate 调用） */
     fun init() {
+        startTime = System.currentTimeMillis()
         try {
-            val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            val logDir = File(downloadsDir, LOG_DIR_NAME)
+            val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val logDir = File(downloads, LOG_DIR_NAME)
             if (!logDir.exists()) logDir.mkdirs()
 
             if (logDir.exists()) {
-                // 清理旧日志，保留最近 20 个
-                val oldLogs = logDir.listFiles { f -> f.name.endsWith(".log") }
+                // 清理旧日志
+                logDir.listFiles { f -> f.name.endsWith(".log") }
                     ?.sortedByDescending { it.lastModified() }
-                oldLogs?.drop(MAX_LOG_FILES)?.forEach { it.delete() }
+                    ?.drop(MAX_LOG_FILES)
+                    ?.forEach { it.delete() }
 
-                // 创建新日志文件
-                val name = "apkagent_${dateFormat.format(Date())}.log"
+                val name = "apkagent_${dateFmt.format(Date())}.log"
                 logFile = File(logDir, name)
-                writer = logFile?.let { PrintWriter(FileWriter(it, true), true) }
-                w("Logger", "══════════ APKAgent 日志开始 ${dateFormat.format(Date())} ══════════")
-                w("Logger", "日志目录: ${logDir.absolutePath}")
+                writer = PrintWriter(FileWriter(logFile!!, true), true)
+                sync("Logger", "══════════ 启动 ${dateFmt.format(Date())} ══════════")
+                sync("Logger", "日志目录: ${logDir.absolutePath}")
             }
         } catch (e: Throwable) {
-            Log.e(TAG, "日志系统初始化失败", e)
+            Log.e(TAG, "日志初始化失败", e)
         }
     }
 
-    /** Debug 级别日志 */
+    /** 设置全局崩溃处理器 */
+    fun setupCrashHandler() {
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            sync("CRASH", "━━━ 未捕获异常 ━━━")
+            sync("CRASH", "线程: ${thread.name} (id=${thread.id})")
+            sync("CRASH", "异常: ${throwable.javaClass.name}: ${throwable.message}")
+            val sw = StringWriter()
+            throwable.printStackTrace(PrintWriter(sw))
+            sync("CRASH", sw.toString())
+            sync("CRASH", "━━━ 应用即将崩溃 ━━━")
+            flushSync()
+            defaultHandler?.uncaughtException(thread, throwable)
+        }
+    }
+
+    // ── 公开 API ──
+
     fun d(tag: String, msg: String) {
         Log.d(TAG, "[$tag] $msg")
-        writeToFile("D", tag, msg)
+        async("D", tag, msg)
     }
 
-    /** Info 级别日志 */
     fun i(tag: String, msg: String) {
         Log.i(TAG, "[$tag] $msg")
-        writeToFile("I", tag, msg)
+        async("I", tag, msg)
     }
 
-    /** Warning 级别日志 */
     fun w(tag: String, msg: String) {
         Log.w(TAG, "[$tag] $msg")
-        writeToFile("W", tag, msg)
+        async("W", tag, msg)
     }
 
-    /** Error 级别日志（含异常堆栈） */
+    /** ERROR 级别：同步写入保证不丢失 */
     fun e(tag: String, msg: String, throwable: Throwable? = null) {
         Log.e(TAG, "[$tag] $msg", throwable)
-        writeToFile("E", tag, msg)
+        sync("E", tag, msg)
         if (throwable != null) {
             val sw = StringWriter()
             throwable.printStackTrace(PrintWriter(sw))
-            writeToFile("E", tag, sw.toString())
+            sync("E", tag, sw.toString())
         }
     }
 
-    /** 导出当前日志文件路径（用于发送给开发者） */
+    /** 心跳日志：证明应用还活着 */
+    fun heartbeat(tag: String) {
+        val elapsed = System.currentTimeMillis() - startTime
+        Log.d(TAG, "[$tag] heartbeat +${elapsed}ms")
+        async("♥", tag, "alive +${elapsed}ms")
+    }
+
     fun getLogPath(): String? = logFile?.absolutePath
 
-    private fun writeToFile(level: String, tag: String, msg: String) {
-        writeExecutor.execute {
-            try {
-                val w = writer ?: return@execute
-                val time = timeFormat.format(Date())
-                val truncated = msg.take(2000)
-                w.println("$time $level [$tag] $truncated")
-                w.flush()
-            } catch (_: Throwable) {}
-        }
-    }
+    /** 获取已运行时间 */
+    fun elapsed(): Long = System.currentTimeMillis() - startTime
 
-    /** 关闭日志文件 */
     fun close() {
+        async("I", "Logger", "══════════ 关闭 +${elapsed()}ms ══════════")
+        flushSync()
         try {
-            writeToFile("I", "Logger", "══════════ 日志结束 ══════════")
-            writeExecutor.shutdown()
-            writeExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)
+            executor.shutdown()
+            executor.awaitTermination(3, TimeUnit.SECONDS)
             writer?.flush()
             writer?.close()
         } catch (_: Throwable) {}
         writer = null
         logFile = null
+    }
+
+    // ── 内部 ──
+
+    private fun format(level: String, tag: String): String {
+        val elapsed = System.currentTimeMillis() - startTime
+        val time = timeFmt.format(Date())
+        val thread = Thread.currentThread()
+        val tname = "${thread.name}:${thread.id}"
+        return "$time [$tname] $level/$tag"
+    }
+
+    /** 同步写入（用于 error 和关键事件，保证不丢失） */
+    private fun sync(tag: String, msg: String) = sync("I", tag, msg)
+    private fun sync(level: String, tag: String, msg: String) {
+        val header = format(level, tag)
+        try {
+            val w = writer ?: return
+            for (line in msg.split('\n')) {
+                w.println("$header | $line")
+            }
+            w.flush()
+        } catch (_: Throwable) {}
+    }
+
+    /** 异步写入 */
+    private fun async(level: String, tag: String, msg: String) {
+        executor.execute {
+            try {
+                val w = writer ?: return@execute
+                val header = format(level, tag)
+                for (line in msg.split('\n')) {
+                    w.println("$header | $line")
+                }
+                w.flush()
+            } catch (_: Throwable) {}
+        }
+    }
+
+    /** 强制刷新异步队列 */
+    private fun flushSync() {
+        try {
+            writer?.flush()
+        } catch (_: Throwable) {}
     }
 }
