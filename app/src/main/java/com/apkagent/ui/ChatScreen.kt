@@ -80,12 +80,26 @@ fun ChatScreen(
 
     val apkLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            val app = context.applicationContext as ApkAgentApp
-            val dest = File(app.workspace, "imported.apk")
-            context.contentResolver.openInputStream(uri)?.use { input ->
-                dest.outputStream().use { input.copyTo(it) }
+            try {
+                val app = context.applicationContext as ApkAgentApp
+                val dest = File(app.workspace, "imported.apk")
+                val input = context.contentResolver.openInputStream(uri)
+                if (input == null) {
+                    android.widget.Toast.makeText(context, "❌ 无法读取文件，请检查存储权限", android.widget.Toast.LENGTH_LONG).show()
+                    return@rememberLauncherForActivityResult
+                }
+                input.use { src ->
+                    dest.outputStream().use { dst -> src.copyTo(dst) }
+                }
+                if (dest.length() < 64) {
+                    android.widget.Toast.makeText(context, "❌ APK 文件为空或损坏，请重新选择", android.widget.Toast.LENGTH_LONG).show()
+                    return@rememberLauncherForActivityResult
+                }
+                vm.setOpenApk(dest)
+                android.widget.Toast.makeText(context, "✅ 已导入：${dest.name} (${dest.length() / 1024}KB)", android.widget.Toast.LENGTH_SHORT).show()
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, "❌ 导入失败：${e.message}", android.widget.Toast.LENGTH_LONG).show()
             }
-            vm.setOpenApk(dest)
         }
     }
 

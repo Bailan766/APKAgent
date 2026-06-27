@@ -1,6 +1,15 @@
 package com.apkagent.ui
 
-import androidx.compose.foundation.clickable
+import android.Manifest
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Environment
+import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -9,17 +18,26 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Shield
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
@@ -28,21 +46,25 @@ import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableDoubleStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import com.apkagent.ApkAgentApp
+import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.AgentConfig
 import kotlinx.coroutines.launch
 
@@ -52,7 +74,7 @@ fun SettingsScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val app = context.applicationContext as ApkAgentApp
     val cfg = app.settingsStore.config.value
-    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
     var baseUrl by remember { mutableStateOf(cfg.baseUrl) }
@@ -61,6 +83,14 @@ fun SettingsScreen(onBack: () -> Unit) {
     var temp by remember { mutableDoubleStateOf(cfg.temperature) }
     var sysExtra by remember { mutableStateOf(cfg.systemExtra) }
     var showKey by remember { mutableStateOf(false) }
+
+    // Shizuku 状态
+    var shizukuStatus by remember { mutableStateOf<ShizukuManager.Status>(ShizukuManager.status) }
+    var shizukuRequesting by remember { mutableStateOf(false) }
+
+    val manageStorageLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { /* 返回后刷新状态 */ }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -81,6 +111,41 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // ── Shizuku 授权 ──
+            SectionTitle("🔐 系统权限")
+            ShizukuCard(
+                status = shizukuStatus,
+                requesting = shizukuRequesting,
+                onRequestShizuku = {
+                    shizukuRequesting = true
+                    scope.launch {
+                        val ok = ShizukuManager.requestPermission()
+                        shizukuStatus = ShizukuManager.status
+                        shizukuRequesting = false
+                        snackbar.showSnackbar(
+                            if (ok) "✅ Shizuku 授权成功，已获得系统级权限"
+                            else "❌ Shizuku 授权失败/超时，请确保 Shizuku App 正在运行"
+                        )
+                    }
+                },
+                onRequestManageStorage = {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
+                            data = Uri.parse("package:${context.packageName}")
+                        }
+                        manageStorageLauncher.launch(intent)
+                    } else {
+                        scope.launch { snackbar.showSnackbar("Android 11 以下无需此权限") }
+                    }
+                },
+                onInstallShizuku = {
+                    val intent = Intent(Intent.ACTION_VIEW).apply {
+                        data = Uri.parse("https://shizuku.rikka.app/download/")
+                    }
+                    context.startActivity(intent)
+                }
+            )
+
             SectionTitle("AI 模型配置")
 
             OutlinedTextField(
@@ -109,7 +174,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                     Text(
                         if (showKey) "隐藏" else "显示",
                         fontSize = 12.sp,
-                        modifier = Modifier.clickable { showKey = !showKey }
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.padding(8.dp)
                     )
                 }
             )
@@ -157,7 +223,7 @@ fun SettingsScreen(onBack: () -> Unit) {
             }
 
             Text(
-                "提示：API Key 通过 EncryptedSharedPreferences 加密存储于本机。所有文件工具仅在 App 工作区沙箱内操作。",
+                "提示：API Key 通过 EncryptedSharedPreferences 加密存储于本机。所有文件工具默认在 App 工作区沙箱内操作。",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -167,5 +233,123 @@ fun SettingsScreen(onBack: () -> Unit) {
 
 @Composable
 private fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary)
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 8.dp)
+    )
+}
+
+@Composable
+private fun ShizukuCard(
+    status: ShizukuManager.Status,
+    requesting: Boolean,
+    onRequestShizuku: () -> Unit,
+    onRequestManageStorage: () -> Unit,
+    onInstallShizuku: () -> Unit
+) {
+    val (statusText, statusColor, actionLabel, onAction) = when (status) {
+        is ShizukuManager.Status.Authorized -> {
+            val extra = if (status.uid > 0) " (UID: ${status.uid})" else ""
+            "✅ Shizuku 已授权，拥有系统级权限$extra" to
+                MaterialTheme.colorScheme.primary to
+                null to null
+        }
+        is ShizukuManager.Status.Running -> {
+            "Shizuku 运行中，待授权" to
+                MaterialTheme.colorScheme.tertiary to
+                "点击授权" to onRequestShizuku
+        }
+        is ShizukuManager.Status.Installed -> {
+            "⚠ Shizuku 已安装但未运行" to
+                MaterialTheme.colorScheme.error to
+                "启动 Shizuku 并授权" to onRequestShizuku
+        }
+        is ShizukuManager.Status.Unavailable -> {
+            "❌ 未检测到 Shizuku" to
+                MaterialTheme.colorScheme.error to
+                "安装 Shizuku" to onInstallShizuku
+        }
+        is ShizukuManager.Status.Error -> {
+            "⚠ Shizuku 错误：${status.message}" to
+                MaterialTheme.colorScheme.error to
+                "重试" to onRequestShizuku
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Default.Shield,
+                    null,
+                    tint = statusColor,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    "Shizuku 系统权限",
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 14.sp
+                )
+            }
+
+            Text(
+                statusText,
+                fontSize = 12.sp,
+                color = statusColor,
+                lineHeight = 18.sp
+            )
+
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                // Shizuku 授权按钮
+                if (actionLabel != null && onAction != null) {
+                    Button(
+                        onClick = {
+                            if (!requesting) onAction()
+                        },
+                        enabled = !requesting,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+                    ) {
+                        if (requesting) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                modifier = Modifier.size(16.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.onPrimary
+                            )
+                        }
+                        Spacer(Modifier.width(6.dp))
+                        Text(actionLabel, fontSize = 13.sp)
+                    }
+                }
+
+                // 管理所有文件权限（备用方案）
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                    !Environment.isExternalStorageManager()
+                ) {
+                    OutlinedButton(
+                        onClick = onRequestManageStorage,
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp, vertical = 8.dp)
+                    ) {
+                        Text("存储权限", fontSize = 12.sp)
+                    }
+                }
+            }
+
+            // Shizuku 说明
+            if (status !is ShizukuManager.Status.Authorized) {
+                Text(
+                    "Shizuku 可获得 ADB 级权限，允许 APKAgent 直接访问 /data/app/ 等受限目录，绕过 SAF 限制。需先在 Shizuku App 中启动服务。",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 16.sp
+                )
+            }
+        }
+    }
 }

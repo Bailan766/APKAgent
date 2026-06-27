@@ -3,6 +3,7 @@ package com.apkagent
 import android.app.Application
 import com.apkagent.agent.ToolRegistry
 import com.apkagent.apktools.buildToolRegistry
+import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.SettingsStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -32,5 +33,11 @@ class ApkAgentApp : Application() {
         super.onCreate()
         settingsStore = SettingsStore(this)
         toolRegistry = buildToolRegistry()
+        ShizukuManager.init()
+    }
+
+    override fun onTerminate() {
+        super.onTerminate()
+        ShizukuManager.destroy()
     }
 }

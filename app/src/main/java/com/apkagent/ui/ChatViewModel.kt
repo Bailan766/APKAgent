@@ -74,6 +74,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
         viewModelScope.launch {
             ensureLoop(cfg)
+            // 每次执行前更新当前导入的 APK（解决 ToolContext 缓存过期）
+            agentLoop?.ctx?.updateOpenApk(agentApp.openApk.value)
             try {
                 agentLoop?.run(text)
             } catch (e: Throwable) {
@@ -107,15 +109,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     /** 用户在权限弹窗点击后调用 */
     fun confirmToolCall(allow: Boolean) {
-        confirmDeferred?.complete(allow)
-        confirmDeferred = null
+        val d = synchronized(this) {
+            confirmDeferred.also { confirmDeferred = null }
+        }
+        try { d?.complete(allow) } catch (_: Throwable) {}
         _pendingConfirm.value = null
     }
 
     fun stop() {
-        // 简单停止：拒绝待确认项
-        confirmDeferred?.complete(false)
-        confirmDeferred = null
+        val d = synchronized(this) {
+            confirmDeferred.also { confirmDeferred = null }
+        }
+        try { d?.complete(false) } catch (_: Throwable) {}
         _pendingConfirm.value = null
     }
 
@@ -163,7 +168,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         _pendingConfirm.value = call
         val d = CompletableDeferred<Boolean>()
         confirmDeferred = d
-        return d.await()
+        return try {
+            kotlinx.coroutines.withTimeout(60_000L) { d.await() }
+        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+            false
+        } catch (e: Throwable) {
+            false
+        }
     }
 
     override fun onToolCallComplete(call: ExecutedToolCall) {

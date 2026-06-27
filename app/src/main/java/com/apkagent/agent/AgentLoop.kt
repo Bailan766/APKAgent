@@ -31,7 +31,7 @@ class AgentLoop(
     private val registry: ToolRegistry,
     private val model: String,
     private val temperature: Double,
-    private val ctx: ToolContext,
+    val ctx: ToolContext,
     private val callbacks: AgentCallbacks,
     private val maxRounds: Int = 12
 ) {

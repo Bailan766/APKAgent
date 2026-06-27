@@ -9,6 +9,7 @@ import com.apkagent.agent.intProp
 import com.apkagent.agent.schemaObject
 import com.apkagent.agent.strProp
 import kotlinx.serialization.json.JsonObject
+import com.apkagent.shizuku.ShizukuManager
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -35,6 +36,8 @@ fun buildToolRegistry(): ToolRegistry {
     r.register(DexDisasm)
     r.register(DexAssemble)
     r.register(DexEdit)
+    // Shizuku 特权工具
+    r.register(ShizukuFileAccess)
     return r
 }
 
@@ -598,6 +601,67 @@ object DexEdit : Tool {
                 ToolResult.ok("字段列表（${fields.size}）：\n${fields.joinToString("\n")}")
             }
             else -> ToolResult.err("未知 action")
+        }
+    }
+}
+
+/* ---------------- Shizuku 特权工具 ---------------- */
+
+/** shizuku.file_access — 通过 Shizuku 以系统权限读文件 */
+object ShizukuFileAccess : Tool {
+    override val name = "shizuku_file_access"
+    override val description = "通过 Shizuku 系统权限读取/列出任意路径文件（绕过 SAF 限制）。需 Shizuku 已授权。"
+    override val parameters = schemaObject(
+        mapOf(
+            "action" to strProp("操作：read（读文件）/ list（列目录）/ copy_to_workspace（复制到工作区）",
+                enum = listOf("read", "list", "copy_to_workspace")),
+            "path" to strProp("目标路径（绝对路径）"),
+            "max_chars" to intProp("read 模式最多读取字符数，默认 8000"),
+            "dest_name" to strProp("copy_to_workspace 模式的目标文件名（留空用原名）")
+        ),
+        listOf("action", "path")
+    )
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        if (!ShizukuManager.isAuthorized()) {
+            return ToolResult.err("Shizuku 未授权，无法使用系统级文件访问。请先在设置页授权 Shizuku。")
+        }
+        val path = args.str("path") ?: return ToolResult.err("缺少 path")
+        val action = args.str("action") ?: "read"
+
+        return when (action) {
+            "read" -> {
+                val max = args.int("max_chars") ?: 8000
+                val content = ShizukuManager.readFileShizuku(path)
+                if (content != null) {
+                    ToolResult.ok(
+                        if (content.length > max) content.take(max) + "\n…(共 ${content.length} 字符，已截断)"
+                        else content
+                    )
+                } else {
+                    ToolResult.err("无法读取：$path（文件不存在或无权限）")
+                }
+            }
+            "list" -> {
+                val output = ShizukuManager.execAndGet("ls -lah '$path' 2>&1")
+                if (output != null && !output.contains("Permission denied") && !output.contains("No such file")) {
+                    ToolResult.ok(output)
+                } else {
+                    ToolResult.err("无法列出：$path")
+                }
+            }
+            "copy_to_workspace" -> {
+                val src = File(path)
+                val destName = args.str("dest_name") ?: src.name
+                val dest = File(ctx.workspace, destName)
+                Sandbox.assertWritable(dest, ctx.workspace)
+                val ok = ShizukuManager.copyFileShizuku(src, dest)
+                if (ok) {
+                    ToolResult.ok("已复制到工作区：${dest.absolutePath}（${dest.length()} 字节）")
+                } else {
+                    ToolResult.err("复制失败：$path")
+                }
+            }
+            else -> ToolResult.err("未知 action：$action")
         }
     }
 }

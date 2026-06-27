@@ -13,8 +13,8 @@ android {
         applicationId = "com.apkagent"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -88,4 +88,8 @@ dependencies {
     implementation(libs.guava)
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.bouncycastle.bcpkix)
+
+    // Shizuku 系统级权限
+    implementation(libs.shizuku.api)
+    implementation(libs.shizuku.provider)
 }

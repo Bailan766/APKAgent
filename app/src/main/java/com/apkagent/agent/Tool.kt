@@ -8,13 +8,18 @@ import java.io.File
  * 工具执行上下文：提供给工具所需的运行环境。
  * - appContext：Android Context
  * - workspace：工作区目录（沙箱根），所有可写文件操作必须在此目录内
- * - openApk：当前用户导入的 APK 文件（可空）
+ * - openApk：当前用户导入的 APK 文件（可空，动态更新不依赖创建时快照）
  */
-data class ToolContext(
+class ToolContext(
     val appContext: Context,
     val workspace: File,
-    val openApk: File?
-)
+    openApk: File?
+) {
+    @Volatile var openApk: File? = openApk
+        private set
+
+    fun updateOpenApk(file: File?) { openApk = file }
+}
 
 /**
  * Agent 工具接口。每个工具描述自己 + 执行逻辑。
