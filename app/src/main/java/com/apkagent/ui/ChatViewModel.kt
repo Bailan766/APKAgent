@@ -19,7 +19,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
-enum class Role { USER, ASSISTANT, TOOL, ERROR, DEBUG }
+enum class Role { USER, ASSISTANT, TOOL, ERROR, DEBUG, SYSTEM }
 
 @Serializable
 data class HistoryItem(
@@ -249,4 +249,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         _messages.update { it + ChatItem(role = Role.ERROR, content = message) }
     }
     override fun onFinished() { _isRunning.value = false }
+    override fun onPhaseChange(phase: String) {
+        Logger.i("VM", "Phase: $phase")
+        _messages.update { it + ChatItem(role = Role.SYSTEM, content = phase) }
+    }
 }
