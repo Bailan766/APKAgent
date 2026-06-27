@@ -1,4 +1,4 @@
-package com.apkagent.ui
+package com.apkagent.store
 
 import android.content.Context
 import android.content.SharedPreferences
