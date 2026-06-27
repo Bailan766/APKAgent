@@ -32,39 +32,40 @@ class GenerateHookTool : Tool {
         outputFile.parentFile?.mkdirs()
         outputFile.writeText(result)
 
-        return ToolResult.ok("✅ Hook 脚本已生成：${outputFile.name}\n\n\`\`\`javascript\n$result\n\`\`\`")
+        return ToolResult.ok("✅ Hook 脚本已生成：${outputFile.name}\n\n```javascript\n$result\n```")
     }
 
     private fun genJavaHook(cls: String, method: String, ret: String): String {
         val dotCls = cls.replace("/", ".")
-        return """
-// Java Hook: $dotCls.$method
-Java.perform(function() {
-    var clazz = Java.use("$dotCls");
-    clazz.$method.overloads.forEach(function(overload) {
-        overload.implementation = function() {
-            console.log("[+] $dotCls.$method called");
-            for (var i = 0; i < arguments.length; i++)
-                console.log("    arg[" + i + "]: " + arguments[i]);
-            console.log("    Stack:\n" + Java.use("android.util.Log").getStackTraceString(
-                Java.use("java.lang.Exception").\$new()).split("\n").slice(1,6).join("\n    "));
-            var result = this.$method.apply(this, arguments);
-            console.log("    Original: " + result);
-            return $ret;
-        };
-    });
-    console.log("[+] Hook: $dotCls.$method -> $ret");
-});
-"""
+        val d = "$" // literal dollar sign for JavaScript
+        val sb = StringBuilder()
+        sb.appendLine("// Java Hook: $dotCls.$method")
+        sb.appendLine("Java.perform(function() {")
+        sb.appendLine("    var clazz = Java.use(\"$dotCls\");")
+        sb.appendLine("    clazz.${d}${method}.overloads.forEach(function(overload) {")
+        sb.appendLine("        overload.implementation = function() {")
+        sb.appendLine("            console.log(\"[+] $dotCls.${d}${method} called\");")
+        sb.appendLine("            for (var i = 0; i < arguments.length; i++)")
+        sb.appendLine("                console.log(\"    arg[\" + i + \"]: \" + arguments[i]);")
+        sb.appendLine("            console.log(\"    Stack:\\n\" + Java.use(\"android.util.Log\").getStackTraceString(")
+        sb.appendLine("                Java.use(\"java.lang.Exception\").${d}new()).split(\"\\n\").slice(1,6).join(\"\\n    \"));")
+        sb.appendLine("            var result = this.${d}${method}.apply(this, arguments);")
+        sb.appendLine("            console.log(\"    Original: \" + result);")
+        sb.appendLine("            return $ret;")
+        sb.appendLine("        };")
+        sb.appendLine("    });")
+        sb.appendLine("    console.log(\"[+] Hook: $dotCls.${d}${method} -> $ret\");")
+        sb.appendLine("});")
+        return sb.toString()
     }
 
     private fun genNativeHook(cls: String, method: String): String {
-        return """
-// Native Hook: $method
-Interceptor.attach(Module.findExportByName(null, "$method"), {
-    onEnter: function(args) { console.log("[+] Native $method called, arg0=" + args[0]); },
-    onLeave: function(retval) { console.log("    retval=" + retval); }
-});
-"""
+        val sb = StringBuilder()
+        sb.appendLine("// Native Hook: $method")
+        sb.appendLine("Interceptor.attach(Module.findExportByName(null, \"$method\"), {")
+        sb.appendLine("    onEnter: function(args) { console.log(\"[+] Native $method called, arg0=\" + args[0]); },")
+        sb.appendLine("    onLeave: function(retval) { console.log(\"    retval=\" + retval); }")
+        sb.appendLine("});")
+        return sb.toString()
     }
 }

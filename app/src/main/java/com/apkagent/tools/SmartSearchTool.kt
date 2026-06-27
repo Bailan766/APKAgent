@@ -21,7 +21,7 @@ class SmartSearchTool : Tool {
         val searchType = args["searchType"]?.jsonPrimitive?.contentOrNull ?: "all"
 
         return try {
-            val workspace = File(ctx.workspace)
+            val workspace = ctx.workspace
             if (!workspace.exists()) return ToolResult.err("工作区不存在")
 
             val results = mutableListOf<String>()
