@@ -1,33 +1,19 @@
 package com.apkagent.tools
 
-import com.apkagent.agent.Tool
-import com.apkagent.agent.ToolContext
-import com.apkagent.agent.ToolResult
-import com.apkagent.util.Logger
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.jsonPrimitive
-import kotlinx.serialization.json.contentOrNull
+import com.apkagent.agent.*
+import kotlinx.serialization.json.*
 import java.io.File
 
-/**
- * 全局智能搜索工具
- * 在 APK 工作区内多维度搜索：字符串、类名、方法名、资源
- */
 class SmartSearchTool : Tool {
     override val name = "smart_search"
-    override val description = """全局智能搜索：在 APK 工作区内多维度搜索。
-参数：pattern（搜索模式，支持正则）、searchType（all/strings/classes/methods/resources/urls/keys）
-可搜索 URL、密钥、算法名、错误提示、类名模式、方法名模式等。
-返回匹配结果及所在文件位置。"""
-    override val parameters = mapOf(
-        "type" to "object",
-        "properties" to mapOf(
-            "pattern" to mapOf("type" to "string", "description" to "搜索模式（正则表达式）"),
-            "searchType" to mapOf("type" to "string", "description" to "搜索类型：all/strings/classes/methods/resources/urls/keys", "default" to "all")
+    override val description = "全局智能搜索：在 APK 工作区内多维度搜索。参数：pattern（正则）、searchType（all/strings/classes/methods/resources/urls/keys）。可搜索 URL、密钥、算法名、类名模式等。"
+    override val parameters: JsonObject = schemaObject(
+        properties = mapOf(
+            "pattern" to strProp("搜索模式（正则表达式）"),
+            "searchType" to strProp("搜索类型", listOf("all", "strings", "classes", "methods", "resources", "urls", "keys"))
         ),
-        "required" to listOf("pattern")
+        required = listOf("pattern")
     )
-    override val sensitive = false
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val pattern = args["pattern"]?.jsonPrimitive?.contentOrNull
@@ -41,14 +27,13 @@ class SmartSearchTool : Tool {
             val results = mutableListOf<String>()
             val regex = Regex(pattern, RegexOption.IGNORE_CASE)
 
-            // 搜索 smali 文件
             if (searchType in listOf("all", "strings", "classes", "methods")) {
                 workspace.walkTopDown()
-                    .filter { it.extension == "smali" || it.extension == "xml" || it.extension == "json" }
+                    .filter { it.extension in listOf("smali", "xml", "json", "java") }
                     .forEach { file ->
                         val matches = file.readLines()
                             .mapIndexedNotNull { idx, line ->
-                                if (regex.containsMatchIn(line)) "  ${file.name}:${idx+1}: ${line.trim()}" else null
+                                if (regex.containsMatchIn(line)) "  ${file.name}:${idx+1}: ${line.trim().take(120)}" else null
                             }
                         if (matches.isNotEmpty()) {
                             results.add("📄 ${file.relativeTo(workspace)}")
@@ -57,15 +42,16 @@ class SmartSearchTool : Tool {
                     }
             }
 
-            // 搜索资源文件
             if (searchType in listOf("all", "resources")) {
                 workspace.walkTopDown()
-                    .filter { it.extension in listOf("xml", "json", "properties", "cfg") }
+                    .filter { it.extension in listOf("xml", "json", "properties", "cfg", "txt") }
                     .forEach { file ->
-                        val text = file.readText()
-                        if (regex.containsMatchIn(text)) {
-                            results.add("📄 ${file.relativeTo(workspace)} (resource match)")
-                        }
+                        try {
+                            val text = file.readText()
+                            if (regex.containsMatchIn(text)) {
+                                results.add("📄 ${file.relativeTo(workspace)} (resource match)")
+                            }
+                        } catch (_: Exception) {}
                     }
             }
 
