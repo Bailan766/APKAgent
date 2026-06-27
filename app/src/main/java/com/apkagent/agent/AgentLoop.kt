@@ -138,11 +138,11 @@ class AgentLoop(
     }
 
     suspend fun run(userText: String): Boolean {
-        callbacks.onPhaseChange("🔍 分析阶段")
+        callbacks.onPhaseChange("🔍 阶段 0：侦察与准备")
         val needContinue = runInternal(userText)
 
         if (needContinue) {
-            callbacks.onPhaseChange("⏭️ 继续执行")
+            callbacks.onPhaseChange("⏭️ 继续下一阶段")
             runInternal("继续执行剩余步骤，不要重复已完成的。")
         }
         return true
