@@ -28,15 +28,12 @@ class MainActivity : ComponentActivity() {
         try { enableEdgeToEdge() } catch (_: Throwable) {}
         
         // Android 16: 启用预测性返回手势动画
-        // 让系统在用户滑动时显示预览动画
-        if (android.os.Build.VERSION.SDK_INT >= 36) {
+        if (android.os.Build.VERSION.SDK_INT >= 33) {
             try {
-                // Android 16+ 的预测性返回手势默认启用
-                // 系统会自动处理跨 Activity/Task 的动画
                 onBackPressedDispatcher.addCallback(this, 
                     object : androidx.activity.OnBackPressedCallback(true) {
                         override fun handleOnBackPressed() {
-                            // 默认行为，让 Compose 的 BackHandler 处理
+                            // 让 Compose 的 BackHandler 处理
                         }
                     }
                 )
@@ -71,24 +68,20 @@ private fun AppEntry() {
 
     // 使用 AnimatedContent 实现预测性返回动画
     AnimatedContent(
-        targetState = Triple(showTerminal, setupDone, null as String?),
+        targetState = showTerminal to setupDone,
         transitionSpec = {
-            // 滑动 + 淡入淡出动画，模拟预测性返回手势
             val direction = if (targetState.first || !targetState.second) -1 else 1
             slideInHorizontally(
                 initialOffsetX = { fullWidth -> fullWidth * direction },
                 animationSpec = tween(350, easing = FastOutSlowInEasing)
-            ) + fadeIn(
-                animationSpec = tween(250)
-            ) togetherWith slideOutHorizontally(
+            ) + fadeIn(animationSpec = tween(250)) togetherWith
+            slideOutHorizontally(
                 targetOffsetX = { fullWidth -> -fullWidth * direction },
                 animationSpec = tween(350, easing = FastOutSlowInEasing)
-            ) + fadeOut(
-                animationSpec = tween(200)
-            )
+            ) + fadeOut(animationSpec = tween(200))
         },
         label = "PredictiveBackTransition"
-    ) { (terminal, done, _) ->
+    ) { (terminal, done) ->
         when {
             terminal -> {
                 com.apkagent.ui.TerminalScreen(onBack = { showTerminal = false })
@@ -118,28 +111,24 @@ private fun AppNav(onOpenTerminal: () -> Unit = {}) {
         startDestination = "chat",
         // Android 16 预测性返回手势动画
         enterTransition = {
-            // 进入动画：从右滑入 + 淡入
             slideInHorizontally(
                 initialOffsetX = { fullWidth -> fullWidth },
                 animationSpec = tween(350, easing = FastOutSlowInEasing)
             ) + fadeIn(animationSpec = tween(250))
         },
         exitTransition = {
-            // 退出动画：向左滑出（保留部分可见）
             slideOutHorizontally(
                 targetOffsetX = { fullWidth -> -fullWidth / 3 },
                 animationSpec = tween(350, easing = FastOutSlowInEasing)
             ) + fadeOut(animationSpec = tween(200))
         },
         popEnterTransition = {
-            // 返回进入：从左滑入（从部分位置开始）
             slideInHorizontally(
                 initialOffsetX = { fullWidth -> -fullWidth / 3 },
                 animationSpec = tween(350, easing = FastOutSlowInEasing)
             ) + fadeIn(animationSpec = tween(250))
         },
         popExitTransition = {
-            // 返回退出：向右滑出
             slideOutHorizontally(
                 targetOffsetX = { fullWidth -> fullWidth },
                 animationSpec = tween(350, easing = FastOutSlowInEasing)

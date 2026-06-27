@@ -51,7 +51,7 @@
         android:theme="@style/Theme.APKAgent"
         android:requestLegacyExternalStorage="true"
         android:enableOnBackInvokedCallback="true"
-        tools:targetApi="36">
+        tools:targetApi="35">
 
         <activity
             android:name=".MainActivity"
