@@ -1,30 +1,26 @@
 package com.apkagent.agent
 
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 
 /**
- * Agent 循环事件回调（由 UI/ViewModel 实现）。
+ * Agent 循环事件回调（由 UI/ViewModel 实现，回调在 Main 线程安全执行）。
  */
 interface AgentCallbacks {
-    /** 助理文本增量（流式） */
     fun onAssistantContentDelta(delta: String)
-    /** 助理回复完成（一轮） */
     fun onAssistantTurnComplete(content: String, toolCalls: List<PendingToolCall>)
-    /** 工具开始执行 */
     fun onToolCallStart(call: PendingToolCall)
-    /** 敏感工具确认（suspend，等待用户在 UI 点击） */
     suspend fun onConfirmToolCall(call: PendingToolCall): Boolean
-    /** 工具执行完成 */
     fun onToolCallComplete(call: ExecutedToolCall)
-    /** 出错 */
     fun onError(message: String)
-    /** 整轮对话结束 */
     fun onFinished()
 }
 
 /**
- * Agent 主循环：用户输入 → LLM 推理 → 工具调用 → 结果回传 → 继续，直到无工具调用或达到上限。
+ * Agent 主循环。全部 I/O 密集操作（网络、文件、smali 编译）在 IO 线程执行。
+ * 仅回调通过 Main 线程分发，确保 UI 不卡顿。
  */
 class AgentLoop(
     private val client: OpenAIClient,
@@ -56,6 +52,10 @@ class AgentLoop(
         appendLine("- 用中文回答。")
     }
 
+    /**
+     * 执行一轮对话。整段运行在调用方协程上下文中（应为 Dispatchers.IO）。
+     * 网络请求已内置 IO 切换，工具执行在 IO 线程。
+     */
     suspend fun run(userText: String) {
         if (!systemInjected) {
             messages.add(ChatMessage(role = "system", content = systemPrompt()))
@@ -82,13 +82,11 @@ class AgentLoop(
                 callbacks.onAssistantTurnComplete(result.content, result.toolCalls)
 
                 if (result.toolCalls.isEmpty()) {
-                    // 纯文本回复，结束
                     messages.add(ChatMessage(role = "assistant", content = result.content))
                     callbacks.onFinished()
                     return
                 }
 
-                // 有工具调用：记录 assistant 消息（含 tool_calls）
                 messages.add(
                     ChatMessage(
                         role = "assistant",
@@ -99,7 +97,7 @@ class AgentLoop(
                     )
                 )
 
-                // 逐个执行工具
+                // 逐个执行工具 — 显式切到 IO 线程执行重度 I/O
                 for (call in result.toolCalls) {
                     callbacks.onToolCallStart(call)
                     val tool = registry.get(call.name)
@@ -110,8 +108,11 @@ class AgentLoop(
                             ToolResult.err("用户拒绝执行该操作。")
                         } else {
                             try {
-                                val args = call.parsedArgs ?: JsonObject(emptyMap())
-                                tool.execute(args, ctx)
+                                // 工具在 IO 线程执行（smali 编译/ZIP 解析/签名校验等重 I/O）
+                                withContext(Dispatchers.IO) {
+                                    val args = call.parsedArgs ?: JsonObject(emptyMap())
+                                    tool.execute(args, ctx)
+                                }
                             } catch (e: Throwable) {
                                 ToolResult.err("工具执行异常：${e.message ?: e.javaClass.simpleName}")
                             }
@@ -135,7 +136,6 @@ class AgentLoop(
                         )
                     )
                 }
-                // 继续下一轮，让 LLM 看到工具结果
             }
             callbacks.onError("已达到最大推理轮数（$maxRounds），任务可能未完成。")
             callbacks.onFinished()
