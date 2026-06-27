@@ -16,13 +16,31 @@ import java.util.zip.GZIPInputStream
  */
 object InternalInstaller {
 
-    // python-build-standalone（astral-sh 维护，稳定源）
-    private const val PYTHON_URL_AARCH64 = "https://github.com/astral-sh/python-build-standalone/releases/download/20250311/cpython-3.12.9+20250311-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
-    private const val PYTHON_URL_X86_64 = "https://github.com/astral-sh/python-build-standalone/releases/download/20250311/cpython-3.12.9+20250311-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    // python-build-standalone — 国内镜像 + GitHub 备选
+    private const val PYTHON_URL_AARCH64 = "https://npmmirror.com/mirrors/python-build-standalone/20250311/cpython-3.12.9+202****0311-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    private const val PYTHON_URL_X86_64 = "https://npmmirror.com/mirrors/python-build-standalone/20250311/cpython-3.12.9+202****0311-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    private val PYTHON_FALLBACK_AARCH64 = listOf(
+        PYTHON_URL_AARCH64,
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20250311/cpython-3.12.9+202****0311-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "https://ghp.ci/https://github.com/astral-sh/python-build-standalone/releases/download/20250311/cpython-3.12.9+202****0311-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    )
+    private val PYTHON_FALLBACK_X86_64 = listOf(
+        PYTHON_URL_X86_64,
+        "https://github.com/astral-sh/python-build-standalone/releases/download/20250311/cpython-3.12.9+202****0311-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+        "https://ghp.ci/https://github.com/astral-sh/python-build-standalone/releases/download/20250311/cpython-3.12.9+202****0311-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz",
+    )
 
-    // Node.js — 使用 Termux 预编译包（bionic libc，Android 原生兼容）
-    private const val NODE_URL_AARCH64 = "https://packages.termux.dev/apt/termux-main/pool/main/n/nodejs/nodejs_24.1.0_aarch64.deb"
-    private const val NODE_URL_X86_64 = "https://packages.termux.dev/apt/termux-main/pool/main/n/nodejs/nodejs_24.1.0_x86_64.deb"
+    // Node.js — 国内镜像 + 官方备选
+    private const val NODE_URL_AARCH64 = "https://npmmirror.com/mirrors/node/v20.18.1/node-v20.18.1-linux-arm64.tar.gz"
+    private const val NODE_URL_X86_64 = "https://npmmirror.com/mirrors/node/v20.18.1/node-v20.18.1-linux-x64.tar.gz"
+    private val NODE_FALLBACK_AARCH64 = listOf(
+        NODE_URL_AARCH64,
+        "https://nodejs.org/dist/v20.18.1/node-v20.18.1-linux-arm64.tar.gz",
+    )
+    private val NODE_FALLBACK_X86_64 = listOf(
+        NODE_URL_X86_64,
+        "https://nodejs.org/dist/v20.18.1/node-v20.18.1-linux-x64.tar.gz",
+    )
 
     data class InstallProgress(
         val stage: String,
@@ -52,15 +70,15 @@ object InternalInstaller {
             // 1. 检测架构
             onProgress(InstallProgress("arch", 0.05f, "检测设备架构..."))
             val arch = getArch()
-            val url = if (arch == "aarch64") PYTHON_URL_AARCH64 else PYTHON_URL_X86_64
-            Logger.i("Installer", "架构: $arch, URL: $url")
+            val urls = if (arch == "aarch64") PYTHON_FALLBACK_AARCH64 else PYTHON_FALLBACK_X86_64
+            Logger.i("Installer", "架构: $arch")
 
             // 2. 下载
             onProgress(InstallProgress("download", 0.1f, "下载 Python 3.12..."))
             val cacheFile = File(context.cacheDir, "python.tar.gz")
 
             if (!cacheFile.exists() || cacheFile.length() < 1_000_000) {
-                downloadFile(url, cacheFile) { downloaded, total ->
+                downloadWithFallback(urls, cacheFile) { downloaded, total ->
                     val pct = if (total > 0) downloaded.toFloat() / total else 0f
                     onProgress(InstallProgress("download", 0.1f + pct * 0.5f,
                         "下载中... ${downloaded / 1024 / 1024}MB"))
@@ -116,13 +134,13 @@ object InternalInstaller {
 
         try {
             val arch = getArch()
-            val url = if (arch == "aarch64") NODE_URL_AARCH64 else NODE_URL_X86_64
+            val urls = if (arch == "aarch64") NODE_FALLBACK_AARCH64 else NODE_FALLBACK_X86_64
 
             onProgress(InstallProgress("download", 0.1f, "下载 Node.js..."))
-            val cacheFile = File(context.cacheDir, "node.deb")
+            val cacheFile = File(context.cacheDir, "node.tar.gz")
 
-            if (!cacheFile.exists() || cacheFile.length() < 100_000) {
-                downloadFile(url, cacheFile) { downloaded, total ->
+            if (!cacheFile.exists() || cacheFile.length() < 1_000_000) {
+                downloadWithFallback(urls, cacheFile) { downloaded, total ->
                     val pct = if (total > 0) downloaded.toFloat() / total else 0f
                     onProgress(InstallProgress("download", 0.1f + pct * 0.5f,
                         "下载中... ${downloaded / 1024 / 1024}MB"))
@@ -131,8 +149,7 @@ object InternalInstaller {
 
             onProgress(InstallProgress("extract", 0.65f, "解压中..."))
             targetDir.mkdirs()
-            // deb 文件本质是 ar 归档，内含 data.tar.xz
-            extractDeb(cacheFile, targetDir)
+            extractTarGz(cacheFile, targetDir)
 
             onProgress(InstallProgress("chmod", 0.85f, "设置权限..."))
             setExecutable(File(targetDir, "bin"))
@@ -179,6 +196,28 @@ object InternalInstaller {
         } catch (_: Exception) {
             System.getProperty("os.arch") ?: "aarch64"
         }
+    }
+
+    /**
+     * 带 fallback 的下载 — 尝试多个源
+     */
+    private fun downloadWithFallback(urls: List<String>, dest: File, onProgress: (Long, Long) -> Unit) {
+        var lastError: Exception? = null
+        for (url in urls) {
+            try {
+                Logger.i("Installer", "尝试下载: $url")
+                downloadFile(url, dest, onProgress)
+                if (dest.exists() && dest.length() > 10_000) {
+                    Logger.i("Installer", "下载成功: $url (${dest.length() / 1024}KB)")
+                    return
+                }
+            } catch (e: Exception) {
+                Logger.w("Installer", "下载失败: $url → ${e.message}")
+                lastError = e
+                dest.delete()
+            }
+        }
+        throw lastError ?: IOException("所有下载源均失败")
     }
 
     private fun downloadFile(urlStr: String, dest: File, onProgress: (Long, Long) -> Unit) {
