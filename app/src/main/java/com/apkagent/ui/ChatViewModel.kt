@@ -49,6 +49,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     private val _openApkName = MutableStateFlow<String?>(null)
     val openApkName: StateFlow<String?> = _openApkName.asStateFlow()
 
+    private val _isExporting = MutableStateFlow(false)
+    val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
+
     private var agentLoop: AgentLoop? = null
     private var lastConfig: AgentConfig? = null
     private var currentAssistantId: String? = null
@@ -121,6 +124,111 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     fun stop() { Logger.i("VM", "⏹ 用户停止") }
+
+    /** 一键导出破解后的 APK：自动搜索工作区 → 合并 → 重打包 → 签名 → 保存到 Downloads */
+    fun exportPatchedApk(onResult: (Boolean, String) -> Unit) {
+        if (_isExporting.value) return
+        _isExporting.value = true
+        Logger.i("VM", "📦 开始导出...")
+
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val ws = agentApp.workspace
+                val originalApk = File(ws, "imported.apk")
+                if (!originalApk.exists()) {
+                    withContext(Dispatchers.Main) { onResult(false, "未找到原始 APK，请先导入") }
+                    return@launch
+                }
+
+                // 1. 搜索 patched DEX 目录
+                val patchedDirs = ws.listFiles { f -> f.isDirectory && f.name.startsWith("patched_") }
+                    ?.sortedByDescending { it.lastModified() }
+                val smaliDirs = ws.listFiles { f -> f.isDirectory && f.name.startsWith("smali_out_") }
+                    ?.sortedByDescending { it.lastModified() }
+
+                if (patchedDirs.isNullOrEmpty() && smaliDirs.isNullOrEmpty()) {
+                    withContext(Dispatchers.Main) {
+                        onResult(false, "未找到破解产物。\n请先让 AI 执行签名校验扫描和 patch。\n例如：\"扫描签名校验并 patch\"")
+                    }
+                    return@launch
+                }
+
+                Logger.i("VM", "📦 发现: patched=${patchedDirs?.map{it.name}}, smali=${smaliDirs?.map{it.name}}")
+
+                // 2. 解包原始 APK 到临时目录
+                val unpackDir = File(ws, "_export_unpacked")
+                if (unpackDir.exists()) unpackDir.deleteRecursively()
+                val unpack = com.apkagent.apktools.smali.ApkRepackSigner.unpackApk(originalApk, unpackDir)
+                if (!unpack.success) {
+                    withContext(Dispatchers.Main) { onResult(false, "解包失败: ${unpack.message}") }
+                    return@launch
+                }
+                Logger.i("VM", "📦 解包完成: ${unpack.fileCount} 个文件")
+
+                // 3. 替换 DEX 文件
+                if (!patchedDirs.isNullOrEmpty()) {
+                    for (dir in patchedDirs) {
+                        dir.listFiles()?.filter { it.extension == "dex" }?.forEach { patchedDex ->
+                            val targetName = patchedDex.name
+                            val target = File(unpackDir, targetName)
+                            patchedDex.copyTo(target, overwrite = true)
+                            Logger.i("VM", "📦 替换 DEX: $targetName → ${target.length()} bytes")
+                        }
+                    }
+                }
+
+                // 若有 smali 目录且没有 patched DEX，尝试回编译
+                if ((patchedDirs.isNullOrEmpty() || patchedDirs.flatMap { it.listFiles()?.toList() ?: emptyList() }.isEmpty()) &&
+                    !smaliDirs.isNullOrEmpty()) {
+                    for (dir in smaliDirs) {
+                        val dexName = dir.name.removePrefix("smali_out_") + ".dex"
+                        if (dexName == ".dex") continue
+                        val outDex = File(unpackDir, if (dexName.startsWith(".")) "classes$dexName" else dexName)
+                        val r = com.apkagent.apktools.smali.SmaliEngine.assembleSmali(dir, outDex)
+                        if (r.success) {
+                            Logger.i("VM", "📦 smali→DEX: $dexName")
+                        }
+                    }
+                }
+
+                // 4. 重打包
+                val repacked = File(ws, "_export_unsigned.apk")
+                val repack = com.apkagent.apktools.smali.ApkRepackSigner.repack(unpackDir, repacked)
+                if (!repack.success) {
+                    withContext(Dispatchers.Main) { onResult(false, "重打包失败: ${repack.message}") }
+                    return@launch
+                }
+                Logger.i("VM", "📦 重打包: ${repacked.length()} bytes")
+
+                // 5. 签名
+                val downloadsDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val name = originalApk.nameWithoutExtension + "_patched.apk"
+                val finalApk = File(downloadsDir, name)
+                finalApk.parentFile?.mkdirs()
+
+                val sign = com.apkagent.apktools.smali.ApkRepackSigner.signApk(repacked, finalApk, v1Enabled = true, v2Enabled = true)
+                if (!sign.success) {
+                    withContext(Dispatchers.Main) { onResult(false, "签名失败: ${sign.message}") }
+                    return@launch
+                }
+
+                // 6. 清理临时文件
+                unpackDir.deleteRecursively()
+                repacked.delete()
+
+                val schemes = sign.schemes?.joinToString("+") ?: "v1+v2"
+                val msg = "✅ 导出成功！\n${finalApk.absolutePath}\n${finalApk.length() / 1024}KB | 签名: $schemes"
+                Logger.i("VM", "📦 $msg")
+                withContext(Dispatchers.Main) { onResult(true, msg) }
+            } catch (e: Throwable) {
+                Logger.e("VM", "导出失败", e)
+                withContext(Dispatchers.Main) { onResult(false, "导出失败: ${e.message}") }
+            } finally {
+                _isExporting.value = false
+            }
+        }
+    }
+
     fun clearChat() {
         agentLoop?.reset()
         agentLoop = null
