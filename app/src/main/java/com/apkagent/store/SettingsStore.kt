@@ -1,4 +1,4 @@
-package com.apkagent.store
+package com.apkagent.ui
 
 import android.content.Context
 import android.content.SharedPreferences
@@ -82,6 +82,28 @@ class SettingsStore(private val context: Context) {
         _config.value = cfg
     }
 
+    // ──── 首次启动引导 ────
+
+    /** 是否已完成首次设置 */
+    fun isSetupCompleted(): Boolean = getPrefs().getBoolean(KEY_SETUP_DONE, false)
+
+    /** 标记设置完成 */
+    fun markSetupCompleted() {
+        getPrefs().edit().putBoolean(KEY_SETUP_DONE, true).apply()
+    }
+
+    /** Python 安装状态 */
+    fun isPythonInstalled(): Boolean = getPrefs().getBoolean(KEY_PYTHON_INSTALLED, false)
+    fun setPythonInstalled(installed: Boolean) {
+        getPrefs().edit().putBoolean(KEY_PYTHON_INSTALLED, installed).apply()
+    }
+
+    /** Node.js 安装状态 */
+    fun isNodeInstalled(): Boolean = getPrefs().getBoolean(KEY_NODE_INSTALLED, false)
+    fun setNodeInstalled(installed: Boolean) {
+        getPrefs().edit().putBoolean(KEY_NODE_INSTALLED, installed).apply()
+    }
+
     companion object {
         private const val KEY_PROVIDER = "provider"
         private const val KEY_BASE = "base_url"
@@ -89,6 +111,9 @@ class SettingsStore(private val context: Context) {
         private const val KEY_MODEL = "model"
         private const val KEY_TEMP = "temperature"
         private const val KEY_SYS = "system_extra"
+        private const val KEY_SETUP_DONE = "setup_completed"
+        private const val KEY_PYTHON_INSTALLED = "python_installed"
+        private const val KEY_NODE_INSTALLED = "node_installed"
     }
 
     private operator fun SharedPreferences.get(key: String): String? =
