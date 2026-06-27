@@ -146,7 +146,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                 val repacked = File(ws, "_unsigned.apk")
                 com.apkagent.apktools.smali.ApkRepackSigner.repack(unpackDir, repacked)
 
-                val dl = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val dl = File(android.os.Environment.getExternalStorageDirectory(), "APKAgent/build")
                 val out = File(dl, "${original.nameWithoutExtension}_patched.apk").apply { parentFile?.mkdirs() }
                 val sign = com.apkagent.apktools.smali.ApkRepackSigner.signApk(repacked, out, true, true)
                 unpackDir.deleteRecursively(); repacked.delete()
