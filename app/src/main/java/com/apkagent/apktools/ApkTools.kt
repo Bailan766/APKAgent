@@ -1333,7 +1333,7 @@ Java.perform(function() {
             }
         });
         var ctx = SSLContext.getInstance("TLS");
-        ctx.init(null, [TrustMan.$new()], null);
+        ctx.init(null, [TrustMan.${"$"}new()], null);
     } catch(e) { console.log("[-] TrustManager bypass failed: " + e); }
 
     console.log("[✓] SSL Pinning bypassed");
@@ -1370,7 +1370,7 @@ Java.perform(function() {
         Runtime.exec.overload('[Ljava.lang.String;').implementation = function(cmd) {
             if (cmd[0] === "su") {
                 console.log("[+] Blocked su command");
-                throw Java.use("java.io.IOException").$new("su not found");
+                throw Java.use("java.io.IOException").${"$"}new("su not found");
             }
             return this.exec(cmd);
         };
