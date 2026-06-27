@@ -268,6 +268,8 @@ private fun ShizukuCard(
                     }
                 }
 
+            }
+
             if (status !is ShizukuManager.Status.Authorized) {
                 Text(
                     "Shizuku 可获得 ADB 级权限，允许 APKAgent 直接访问 /data/app/ 等受限目录，绕过 SAF 限制。需先在 Shizuku App 中启动服务。",
