@@ -780,10 +780,10 @@ object PipInstall : Tool {
             ?: return ToolResult.err("缺少 packages")
         val timeout = args.int("timeout") ?: 120
         return if (list.size == 1) {
-            val r = PythonRunner.pipInstall(list[0], timeout)
+            val r = PythonRunner.pipInstall(list[0], timeoutSeconds = timeout)
             if (r.success) ToolResult.ok(r.combined) else ToolResult.err(r.combined)
         } else {
-            val r = PythonRunner.pipInstallBulk(list, timeout)
+            val r = PythonRunner.pipInstall(*list.toTypedArray(), timeoutSeconds = timeout)
             if (r.success) ToolResult.ok(r.combined) else ToolResult.err(r.combined)
         }
     }

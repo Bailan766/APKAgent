@@ -94,7 +94,7 @@ object ShizukuManager {
 
     /**
      * 通过 Shizuku 以 shell (uid 2000) 权限执行命令。
-     * 这是真正提权的执行方式，不是普通 ProcessBuilder。
+     * 使用反射调用 Shizuku.newProcess()（在某些版本中标记为 library-private）。
      */
     fun execShizuku(command: String): Process? {
         if (!isAuthorized()) {
@@ -102,12 +102,18 @@ object ShizukuManager {
             return null
         }
         return try {
-            // Shizuku.newProcess 在 Shizuku 服务端 fork 进程
-            // 以 shell 用户 (uid 2000) 身份运行，拥有 ADB 全部权限
-            Shizuku.newProcess(arrayOf("sh", "-c", command), null, null)
+            val method = Shizuku::class.java.getMethod(
+                "newProcess", Array<String>::class.java, Array<String>::class.java, String::class.java
+            )
+            method.invoke(null, arrayOf("sh", "-c", command), null, null) as? Process
         } catch (e: Throwable) {
-            Log.e(TAG, "Shizuku exec 失败: $command", e)
-            null
+            Log.e(TAG, "Shizuku newProcess 反射失败，回退到普通执行: $command", e)
+            try {
+                Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
+            } catch (e2: Throwable) {
+                Log.e(TAG, "普通执行也失败: $command", e2)
+                null
+            }
         }
     }
 
