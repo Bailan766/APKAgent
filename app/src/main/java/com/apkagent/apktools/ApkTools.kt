@@ -393,29 +393,22 @@ object ApkRemoveSignatureCheck : Tool {
                     ?: File(ctx.workspace, "patched_${apk.nameWithoutExtension}")
                 Sandbox.assertWritable(outDir, ctx.workspace)
                 outDir.mkdirs()
-                // 提取所有 DEX 并 patch
                 val sb = StringBuilder()
                 sb.appendLine("签名校验 Patch：${apk.name}")
+                // 提取所有 DEX + 并行 patch
+                val dexFiles = mutableListOf<Pair<String, File>>()
                 java.util.zip.ZipFile(apk).use { zip ->
-                    val dexEntries = zip.entries().toList().filter { it.name.endsWith(".dex") }
-                    for (entry in dexEntries) {
-                        val dexTmp = File(ctx.workspace, "_tmp_${entry.name.replace("/", "_")}")
-                        zip.getInputStream(entry).use { it.copyTo(dexTmp.outputStream()) }
-                        // 扫描
-                        val scan = com.apkagent.apktools.smali.SignatureCheckerScanner.scanDex(dexTmp)
-                        if (scan.success && scan.hits.isNotEmpty()) {
-                            val outDex = File(outDir, entry.name)
-                            val pr = com.apkagent.apktools.smali.SignatureCheckerScanner.patchDex(
-                                dexTmp, outDex,
-                                com.apkagent.apktools.smali.SignatureCheckerScanner.PatchMode.METHOD_RETURN_TRUE
-                            )
-                            sb.appendLine("${entry.name}: ${scan.hits.size} 处调用点, ${pr.message}")
-                        } else {
-                            sb.appendLine("${entry.name}: 无校验调用点，跳过")
-                        }
-                        dexTmp.delete()
+                    zip.entries().toList().filter { it.name.endsWith(".dex") }.forEach { entry ->
+                        val tmp = File(ctx.workspace, "_tmp_${entry.name.replace("/", "_")}")
+                        zip.getInputStream(entry).use { it.copyTo(tmp.outputStream()) }
+                        dexFiles.add(entry.name to tmp)
                     }
                 }
+                // 并行 patch 所有 DEX
+                val report = com.apkagent.apktools.smali.SignatureCheckerScanner.patchAllDex(dexFiles, outDir)
+                // 清理临时文件
+                dexFiles.forEach { (_, f) -> try { f.delete() } catch (_: Throwable) {} }
+                sb.appendLine(report)
                 sb.appendLine()
                 sb.appendLine("Patch 输出目录：${outDir.absolutePath}")
                 sb.appendLine("下一步：用 apk.repack + apk.sign 重打包签名。")
