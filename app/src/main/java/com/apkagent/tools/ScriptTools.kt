@@ -81,8 +81,8 @@ class RunScriptTool : Tool {
         var actualArgs = scriptArgs
         if (scriptPath in knownInterpreters && scriptArgs.isNotBlank()) {
             // AI 传反了：scriptPath 是解释器，args 才是真正的脚本路径
-            actualScriptPath = scriptArgs.split("\s+".toRegex()).firstOrNull() ?: scriptArgs
-            actualArgs = scriptArgs.split("\s+".toRegex()).drop(1).joinToString(" ")
+            actualScriptPath = scriptArgs.split(Regex("""\s+""")).firstOrNull() ?: scriptArgs
+            actualArgs = scriptArgs.split(Regex("""\s+""")).drop(1).joinToString(" ")
         }
 
         val scriptFile = File(actualScriptPath).let { f ->
