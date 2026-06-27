@@ -5,7 +5,6 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
-import android.os.Environment
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -27,10 +26,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
-import androidx.compose.ui.text.style.LineHeightStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.core.content.ContextCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.apkagent.ApkAgentApp
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.AgentConfig
@@ -55,10 +53,6 @@ fun SettingsScreen(onBack: () -> Unit) {
     // Shizuku 状态
     var shizukuStatus by remember { mutableStateOf<ShizukuManager.Status>(ShizukuManager.status) }
     var shizukuRequesting by remember { mutableStateOf(false) }
-
-    val manageStorageLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { /* 返回后刷新状态 */ }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -94,16 +88,6 @@ fun SettingsScreen(onBack: () -> Unit) {
                             if (ok) "✅ Shizuku 授权成功，已获得系统级权限"
                             else "❌ Shizuku 授权失败/超时，请确保 Shizuku App 正在运行"
                         )
-                    }
-                },
-                onRequestManageStorage = {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        val intent = Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION).apply {
-                            data = Uri.parse("package:${context.packageName}")
-                        }
-                        manageStorageLauncher.launch(intent)
-                    } else {
-                        scope.launch { snackbar.showSnackbar("Android 11 以下无需此权限") }
                     }
                 },
                 onInstallShizuku = {
@@ -211,7 +195,6 @@ private fun ShizukuCard(
     status: ShizukuManager.Status,
     requesting: Boolean,
     onRequestShizuku: () -> Unit,
-    onRequestManageStorage: () -> Unit,
     onInstallShizuku: () -> Unit
 ) {
     data class StatusInfo(
@@ -284,18 +267,6 @@ private fun ShizukuCard(
                         Text(info.actionLabel, fontSize = 13.sp)
                     }
                 }
-
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
-                    !Environment.isExternalStorageManager()
-                ) {
-                    OutlinedButton(
-                        onClick = onRequestManageStorage,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
-                    ) {
-                        Text("存储权限", fontSize = 12.sp)
-                    }
-                }
-            }
 
             if (status !is ShizukuManager.Status.Authorized) {
                 Text(

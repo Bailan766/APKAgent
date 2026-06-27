@@ -5,6 +5,7 @@ import com.apkagent.agent.ToolRegistry
 import com.apkagent.apktools.buildToolRegistry
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.SettingsStore
+import com.apkagent.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -31,6 +32,8 @@ class ApkAgentApp : Application() {
 
     override fun onCreate() {
         super.onCreate()
+        Logger.init()
+        Logger.i("App", "APKAgent v1.2.1 启动")
         settingsStore = SettingsStore(this)
         toolRegistry = buildToolRegistry()
         ShizukuManager.init()
@@ -39,5 +42,6 @@ class ApkAgentApp : Application() {
     override fun onTerminate() {
         super.onTerminate()
         ShizukuManager.destroy()
+        Logger.close()
     }
 }
