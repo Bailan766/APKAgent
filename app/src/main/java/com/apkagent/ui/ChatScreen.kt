@@ -68,7 +68,6 @@ fun ChatScreen(
     val context = LocalContext.current
     val messages by vm.messages.collectAsStateWithLifecycle()
     val isRunning by vm.isRunning.collectAsStateWithLifecycle()
-    val pendingConfirm by vm.pendingConfirm.collectAsStateWithLifecycle()
     val openApkName by vm.openApkName.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
@@ -101,10 +100,6 @@ fun ChatScreen(
                 android.widget.Toast.makeText(context, "❌ 导入失败：${e.message}", android.widget.Toast.LENGTH_LONG).show()
             }
         }
-    }
-
-    pendingConfirm?.let { call ->
-        PermissionDialog(call = call, onResult = { vm.confirmToolCall(it) })
     }
 
     Scaffold(
@@ -202,6 +197,19 @@ private fun MessageBubble(item: ChatItem) {
             }
         }
         Role.TOOL -> ToolCard(item)
+        Role.DEBUG -> Surface(
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            shape = RoundedCornerShape(4.dp),
+            modifier = Modifier.fillMaxWidth()
+        ) {
+            Text(
+                item.content,
+                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                fontFamily = FontFamily.Monospace,
+                fontSize = 10.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            )
+        }
         Role.ERROR -> Surface(
             color = MaterialTheme.colorScheme.errorContainer,
             shape = RoundedCornerShape(8.dp),

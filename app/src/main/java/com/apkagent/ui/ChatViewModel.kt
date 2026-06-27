@@ -1,6 +1,7 @@
 package com.apkagent.ui
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.apkagent.ApkAgentApp
@@ -11,7 +12,6 @@ import com.apkagent.agent.OpenAIClient
 import com.apkagent.agent.PendingToolCall
 import com.apkagent.agent.ToolContext
 import com.apkagent.store.AgentConfig
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 import java.io.File
 import java.util.UUID
 
-enum class Role { USER, ASSISTANT, TOOL, ERROR }
+enum class Role { USER, ASSISTANT, TOOL, ERROR, DEBUG }
 
 data class ChatItem(
     val id: String = UUID.randomUUID().toString(),
@@ -35,6 +35,10 @@ data class ChatItem(
 
 class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
+    companion object {
+        private const val TAG = "APKAgent"
+    }
+
     private val agentApp get() = getApplication<ApkAgentApp>()
 
     private val _messages = MutableStateFlow<List<ChatItem>>(emptyList())
@@ -43,13 +47,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     private val _isRunning = MutableStateFlow(false)
     val isRunning: StateFlow<Boolean> = _isRunning.asStateFlow()
 
-    private val _pendingConfirm = MutableStateFlow<PendingToolCall?>(null)
-    val pendingConfirm: StateFlow<PendingToolCall?> = _pendingConfirm.asStateFlow()
-
     private val _openApkName = MutableStateFlow<String?>(null)
     val openApkName: StateFlow<String?> = _openApkName.asStateFlow()
 
-    private var confirmDeferred: CompletableDeferred<Boolean>? = null
     private var agentLoop: AgentLoop? = null
     private var lastConfig: AgentConfig? = null
     private var currentAssistantId: String? = null
@@ -59,6 +59,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     fun setOpenApk(file: File?) {
         agentApp.setOpenApk(file)
         _openApkName.value = file?.name
+        log("📁 APK: ${file?.name ?: "null"} (${file?.length() ?: 0} bytes)")
     }
 
     fun send(text: String) {
@@ -72,16 +73,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         _isRunning.value = true
         currentAssistantId = null
 
+        log("🚀 send: $text")
+
         viewModelScope.launch {
             ensureLoop(cfg)
-            // 每次执行前更新当前导入的 APK（解决 ToolContext 缓存过期）
             agentLoop?.ctx?.updateOpenApk(agentApp.openApk.value)
             try {
                 agentLoop?.run(text)
             } catch (e: Throwable) {
+                log("❌ run error: ${e.message}", Log.ERROR)
                 _messages.update { it + ChatItem(role = Role.ERROR, content = "运行异常：${e.message}") }
             } finally {
                 _isRunning.value = false
+                log("✅ run finished")
             }
         }
     }
@@ -93,6 +97,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
             openApk = agentApp.openApk.value
         )
         if (agentLoop == null || lastConfig != cfg || lastConfig?.apiKey != cfg.apiKey) {
+            log("🔧 init AgentLoop: model=${cfg.model}")
             val client = OpenAIClient(cfg.baseUrl, cfg.apiKey)
             agentLoop = AgentLoop(
                 client = client,
@@ -107,27 +112,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         }
     }
 
-    /** 用户在权限弹窗点击后调用 */
-    fun confirmToolCall(allow: Boolean) {
-        val d = synchronized(this) {
-            confirmDeferred.also { confirmDeferred = null }
-        }
-        try { d?.complete(allow) } catch (_: Throwable) {}
-        _pendingConfirm.value = null
-    }
-
     fun stop() {
-        val d = synchronized(this) {
-            confirmDeferred.also { confirmDeferred = null }
-        }
-        try { d?.complete(false) } catch (_: Throwable) {}
-        _pendingConfirm.value = null
+        log("⏹ stop requested")
     }
 
     fun clearChat() {
         agentLoop?.reset()
         agentLoop = null
         _messages.value = emptyList()
+        log("🧹 chat cleared")
     }
 
     // —— AgentCallbacks ——
@@ -155,6 +148,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     override fun onToolCallStart(call: PendingToolCall) {
+        log("🔨 tool start: ${call.name} args=${call.arguments.take(200)}")
         val item = ChatItem(
             role = Role.TOOL,
             toolName = call.name,
@@ -164,20 +158,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         _messages.update { it + item }
     }
 
+    /** 默认允许所有敏感操作，不弹窗确认 */
     override suspend fun onConfirmToolCall(call: PendingToolCall): Boolean {
-        _pendingConfirm.value = call
-        val d = CompletableDeferred<Boolean>()
-        confirmDeferred = d
-        return try {
-            kotlinx.coroutines.withTimeout(60_000L) { d.await() }
-        } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-            false
-        } catch (e: Throwable) {
-            false
-        }
+        log("🟢 auto-approve: ${call.name}")
+        return true
     }
 
     override fun onToolCallComplete(call: ExecutedToolCall) {
+        val status = if (call.success) "✅" else "❌"
+        log("🔨 tool done: ${call.name} $status result=${call.result.take(200)}")
         _messages.update { list ->
             val idx = list.indexOfLast { it.role == Role.TOOL && it.streaming && it.toolName == call.name }
             if (idx >= 0) {
@@ -187,10 +176,18 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     override fun onError(message: String) {
+        log("❌ error: $message", Log.ERROR)
         _messages.update { it + ChatItem(role = Role.ERROR, content = "⚠ $message") }
     }
 
     override fun onFinished() {
         _isRunning.value = false
+        log("🏁 agent finished")
+    }
+
+    /** Debug 日志：同时输出到 logcat 和聊天消息 */
+    private fun log(msg: String, level: Int = Log.DEBUG) {
+        Log.println(level, TAG, msg)
+        _messages.update { it + ChatItem(role = Role.DEBUG, content = "[debug] $msg") }
     }
 }
