@@ -141,7 +141,11 @@ object PythonRunner {
                     if (pyLib.exists()) append("PYTHONPATH='${pyLib.absolutePath}' ")
                 }
             }
-            val cmd = "cd '$workDirPath' && ${env}${python} '${script.absolutePath}'"
+            // 通过 Shizuku chmod 确保 Python 二进制可执行
+            if (ShizukuManager.isAuthorized()) {
+                ensureExecutableShizuku(python)
+            }
+            val cmd = "cd '$workDirPath' && ${env}'${python}' '${script.absolutePath}'"
 
             try {
                 withTimeout(timeoutSeconds * 1000L) {
@@ -192,7 +196,8 @@ object PythonRunner {
         try {
             // Shizuku 优先
             if (ShizukuManager.isAuthorized()) {
-                val v = ShizukuManager.execAndGet("$python --version 2>&1")?.trim()
+                ensureExecutableShizuku(python)
+                val v = ShizukuManager.execAndGet("'${python}' --version 2>&1")?.trim()
                 if (!v.isNullOrBlank()) return@withContext v
             }
             val pb = ProcessBuilder(python, "--version")
@@ -284,22 +289,18 @@ object PythonRunner {
     }
 
     /**
-     * 确保 Python 二进制有执行权限（chmod 755）
+     * 通过 Shizuku 确保 Python 二进制及依赖库有执行权限（chmod -R 755）
+     * 在 execute() 前调用一次，之后 shell uid 即可直接执行
      */
-    private fun ensureExecutable(pythonPath: String) {
+    private fun ensureExecutableShizuku(pythonPath: String) {
         try {
-            val bin = File(pythonPath)
-            if (!bin.canExecute()) {
-                bin.setExecutable(true, false)
-                Logger.i("Py", "chmod 755: $pythonPath")
-            }
-            // 也给 pip 设置权限
-            val pip = File(bin.parentFile, "pip3")
-            if (pip.exists() && !pip.canExecute()) {
-                pip.setExecutable(true, false)
+            // chmod 整个 python 目录（bin/、lib/ 等）
+            internalDir?.let { dir ->
+                ShizukuManager.chmodR(dir.absolutePath, "755")
+                Logger.i("Py", "Shizuku chmod -R 755: ${dir.absolutePath}")
             }
         } catch (e: Exception) {
-            Logger.w("Py", "chmod 失败: ${e.message}")
+            Logger.w("Py", "Shizuku chmod 失败: ${e.message}")
         }
     }
 }
