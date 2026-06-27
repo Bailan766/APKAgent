@@ -7,6 +7,11 @@ import com.apkagent.tools.SmartSearchTool
 import com.apkagent.tools.AutoPatchTool
 import com.apkagent.tools.GenerateHookTool
 import com.apkagent.tools.AnalyzeObfuscationTool
+import com.apkagent.tools.ExternalFileReadTool
+import com.apkagent.tools.ExternalFileWriteTool
+import com.apkagent.tools.ExternalFileListTool
+import com.apkagent.tools.CreateScriptTool
+import com.apkagent.tools.RunScriptTool
 import com.apkagent.agent.ToolResult
 import com.apkagent.agent.boolProp
 import com.apkagent.agent.intProp
@@ -72,6 +77,13 @@ fun buildToolRegistry(): ToolRegistry {
     r.register(AutoPatchTool())
     r.register(GenerateHookTool())
     r.register(AnalyzeObfuscationTool())
+    // 外部文件访问（不受沙箱限制）
+    r.register(ExternalFileReadTool())
+    r.register(ExternalFileWriteTool())
+    r.register(ExternalFileListTool())
+    // AI 自建脚本
+    r.register(CreateScriptTool())
+    r.register(RunScriptTool())
     return r
 }
 
