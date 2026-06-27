@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CleaningServices
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.FileDownload
 import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Stop
@@ -37,6 +38,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -71,6 +73,7 @@ fun ChatScreen(
     val context = LocalContext.current
     val messages by vm.messages.collectAsStateWithLifecycle()
     val isRunning by vm.isRunning.collectAsStateWithLifecycle()
+    val isExporting by vm.isExporting.collectAsStateWithLifecycle()
     val openApkName by vm.openApkName.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
@@ -81,6 +84,7 @@ fun ChatScreen(
     }
 
     val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+    val snackbarHostState = androidx.compose.material3.remember { androidx.compose.material3.SnackbarHostState() }
 
     val apkLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
@@ -116,6 +120,7 @@ fun ChatScreen(
     }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 title = {
@@ -132,6 +137,20 @@ fun ChatScreen(
                     IconButton(onClick = {
                         apkLauncher.launch(arrayOf("application/vnd.android.package-archive"))
                     }) { Icon(Icons.Default.FolderOpen, "导入 APK") }
+                    IconButton(
+                        onClick = {
+                            vm.exportPatchedApk { ok, msg ->
+                                coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                            }
+                        },
+                        enabled = !isExporting
+                    ) {
+                        if (isExporting) {
+                            CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                        } else {
+                            Icon(Icons.Default.FileDownload, "导出破解APK")
+                        }
+                    }
                     IconButton(onClick = onOpenEditor) { Icon(Icons.Default.Edit, "编辑器") }
                     IconButton(onClick = { vm.clearChat() }) { Icon(Icons.Default.CleaningServices, "清空") }
                     IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, "设置") }
