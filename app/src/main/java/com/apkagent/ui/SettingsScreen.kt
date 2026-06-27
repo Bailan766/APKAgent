@@ -35,6 +35,7 @@ import com.apkagent.ApkAgentApp
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.AgentConfig
 import com.apkagent.store.AiProvider
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -124,6 +125,10 @@ fun SettingsScreen(onBack: () -> Unit) {
             // ── Shizuku ──
             SectionTitle("🔐 系统权限")
             ShizukuStatusCard()
+
+            // ── Python ──
+            SectionTitle("🐍 Python 环境")
+            PythonStatusCard()
 
             // ── AI Provider ──
             SectionTitle("🤖 AI 模型")
@@ -273,6 +278,82 @@ private fun ShizukuStatusCard() {
                 Button(onClick = { if (!requesting) statusInfo.action!!.invoke() }, enabled = !requesting, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
                     if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Text(statusInfo.label!!, fontSize = 12.sp)
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PythonStatusCard() {
+    val context = LocalContext.current
+    var checking by remember { mutableStateOf(true) }
+    var available by remember { mutableStateOf(false) }
+    var pythonPath by remember { mutableStateOf<String?>(null) }
+    var version by remember { mutableStateOf<String?>(null) }
+    var customPath by remember { mutableStateOf("") }
+    val scope = rememberCoroutineScope()
+
+    LaunchedEffect(Unit) {
+        scope.launch(Dispatchers.IO) {
+            available = com.apkagent.apktools.PythonRunner.isAvailable()
+            pythonPath = com.apkagent.apktools.PythonRunner.findPython()
+            version = com.apkagent.apktools.PythonRunner.getVersion()
+            customPath = com.apkagent.apktools.PythonRunner.pythonPath ?: ""
+            checking = false
+        }
+    }
+
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp)) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    Icons.Filled.Code, contentDescription = null,
+                    tint = if (available) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                    modifier = Modifier.size(20.dp)
+                )
+                Spacer(Modifier.width(10.dp))
+                if (checking) {
+                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("检测中...", fontSize = 12.sp)
+                } else if (available) {
+                    Text("Python 就绪", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                } else {
+                    Text("未检测到 Python", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+            if (!checking) {
+                if (available && version != null) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("路径: $pythonPath", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("版本: $version", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                // 手动配置路径
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(
+                    value = customPath,
+                    onValueChange = { customPath = it },
+                    label = { Text("Python 路径（手动指定）", fontSize = 11.sp) },
+                    singleLine = true,
+                    textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
+                    modifier = Modifier.fillMaxWidth(),
+                    trailingIcon = {
+                        IconButton(onClick = {
+                            com.apkagent.apktools.PythonRunner.pythonPath = customPath.ifBlank { null }
+                            scope.launch(Dispatchers.IO) {
+                                available = com.apkagent.apktools.PythonRunner.isAvailable()
+                                pythonPath = com.apkagent.apktools.PythonRunner.findPython()
+                                version = com.apkagent.apktools.PythonRunner.getVersion()
+                            }
+                        }) {
+                            Icon(Icons.Filled.Refresh, "检测", modifier = Modifier.size(18.dp))
+                        }
+                    }
+                )
+                Text(
+                    "需先安装 Termux: pkg install python && pip install frida-tools androguard",
+                    fontSize = 10.sp, color = MaterialTheme.colorScheme.outline
+                )
             }
         }
     }
