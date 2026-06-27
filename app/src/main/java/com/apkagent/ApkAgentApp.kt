@@ -29,7 +29,7 @@ class ApkAgentApp : Application() {
             // 尝试 /sdcard/Download/APKAgent，需要 MANAGE_EXTERNAL_STORAGE
             try {
                 downloadWs.apply { mkdirs() }
-                if (canWrite(downloadWs)) downloadWs else File(filesDir, "workspace")
+                if (downloadWs.canWrite()) downloadWs else File(filesDir, "workspace")
             } catch (_: Throwable) {
                 File(filesDir, "workspace")
             }
