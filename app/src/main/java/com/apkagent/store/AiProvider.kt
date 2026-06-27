@@ -69,6 +69,13 @@ data class AiProvider(
                 models = listOf("deepseek-ai/DeepSeek-V3", "deepseek-ai/DeepSeek-R1", "Qwen/Qwen3-235B-A22B")
             ),
             AiProvider(
+                id = "tokenplan",
+                label = "TokenPlan(Mimo)",
+                baseUrl = "https://token-plan-cn.xiaomimimo.com/v1",
+                defaultModel = "mimo-v2.5-pro",
+                models = listOf("mimo-v2.5-pro", "mimo-v2.5-flash", "mimo-v2.0")
+            ),
+            AiProvider(
                 id = "custom",
                 label = "自定义",
                 baseUrl = "",
