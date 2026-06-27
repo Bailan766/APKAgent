@@ -23,6 +23,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.apkagent.apktools.PythonRunner
+import com.apkagent.installer.InternalInstaller
 import com.apkagent.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -31,7 +32,7 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 enum class InstallStatus {
-    IDLE, CHECKING, NOT_INSTALLED, INSTALLING, INSTALLED, FAILED, NEED_MANUAL
+    IDLE, CHECKING, NOT_INSTALLED, INSTALLING, INSTALLED, FAILED
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -46,21 +47,32 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
     var progress by remember { mutableFloatStateOf(0f) }
     var pythonVersion by remember { mutableStateOf("") }
     var nodeVersion by remember { mutableStateOf("") }
+    var isInstalling by remember { mutableStateOf(false) }
 
     // 启动时自动检测
     LaunchedEffect(Unit) {
         delay(300)
         // ── Python ──
         statusMessage = "检测 Python 环境..."
+        PythonRunner.init(context)
         val pyPath = PythonRunner.findPython()
         if (pyPath != null) {
             pythonVersion = PythonRunner.getVersion() ?: "unknown"
             pythonStatus = InstallStatus.INSTALLED
             statusMessage = "✅ Python 已就绪: $pyPath"
-            progress = 0.4f
+            progress = 0.5f
         } else {
-            pythonStatus = InstallStatus.NOT_INSTALLED
-            statusMessage = "未检测到 Python 环境"
+            // 尝试链接 Termux Python
+            val linked = InternalInstaller.linkTermuxPython()
+            if (linked != null) {
+                pythonVersion = PythonRunner.getVersion() ?: "unknown"
+                pythonStatus = InstallStatus.INSTALLED
+                statusMessage = "✅ 已链接 Termux Python: $linked"
+                progress = 0.5f
+            } else {
+                pythonStatus = InstallStatus.NOT_INSTALLED
+                statusMessage = "未检测到 Python，点击安装"
+            }
         }
 
         delay(200)
@@ -68,17 +80,10 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
         statusMessage = "检测 Node.js 环境..."
         nodeStatus = try {
             val paths = listOf(
+                File(context.filesDir, "nodejs/bin/node").absolutePath,
                 "/data/data/com.termux/files/usr/bin/node",
-                "/system/bin/node",
-                "/sdcard/nodejs/bin/node"
             )
             val found = paths.any { File(it).canExecute() }
-                    || run {
-                val p = ProcessBuilder("which", "node").start()
-                val out = p.inputStream.bufferedReader().readLine()
-                p.waitFor()
-                !out.isNullOrBlank()
-            }
             if (found) {
                 nodeVersion = try {
                     val p = ProcessBuilder("node", "--version").start()
@@ -86,15 +91,13 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                     p.waitFor(); v
                 } catch (_: Exception) { "" }
                 InstallStatus.INSTALLED
-            } else {
-                InstallStatus.NOT_INSTALLED
-            }
-        } catch (_: Exception) {
-            InstallStatus.NOT_INSTALLED
-        }
-        progress = if (pythonStatus == InstallStatus.INSTALLED) 0.6f else 0.1f
+            } else InstallStatus.NOT_INSTALLED
+        } catch (_: Exception) { InstallStatus.NOT_INSTALLED }
+
+        progress = if (pythonStatus == InstallStatus.INSTALLED) 0.7f else 0.1f
         statusMessage = if (pythonStatus == InstallStatus.INSTALLED && nodeStatus == InstallStatus.INSTALLED)
-            "✅ 环境就绪，点击「完成」开始使用" else "请安装下方缺少的组件"
+            "✅ 环境就绪，点击「开始使用」" else if (pythonStatus == InstallStatus.INSTALLED)
+            "Python 就绪，Node.js 可选安装" else "点击下方按钮安装 Python"
     }
 
     Box(
@@ -120,7 +123,7 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                 contentAlignment = Alignment.Center
             ) {
                 Icon(
-                    imageVector = Icons.Default.Android,
+                    imageVector = Icons.Default.Security,
                     contentDescription = null,
                     modifier = Modifier.size(48.dp),
                     tint = MaterialTheme.colorScheme.primary
@@ -130,7 +133,7 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
-                text = "欢迎使用 APKAgent",
+                text = "APKAgent",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold
             )
@@ -143,7 +146,6 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
 
             Spacer(modifier = Modifier.height(24.dp))
 
-            // 进度条
             LinearProgressIndicator(
                 progress = { progress },
                 modifier = Modifier
@@ -161,34 +163,27 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                 icon = Icons.Default.Code,
                 status = pythonStatus,
                 required = true,
+                isInstalling = isInstalling,
                 onAction = {
                     when (pythonStatus) {
                         InstallStatus.NOT_INSTALLED, InstallStatus.FAILED -> {
                             scope.launch {
+                                isInstalling = true
                                 pythonStatus = InstallStatus.INSTALLING
-                                statusMessage = "正在查找 Python..."
-                                progress = 0.15f
 
-                                val ok = installPython(context) { msg, p ->
-                                    statusMessage = msg
-                                    progress = p
+                                val ok = InternalInstaller.installPython(context) { p ->
+                                    statusMessage = p.message
+                                    progress = 0.1f + p.progress * 0.5f
                                 }
+
                                 pythonStatus = if (ok) {
                                     pythonVersion = PythonRunner.getVersion() ?: ""
-                                    statusMessage = "✅ Python 就绪"
                                     InstallStatus.INSTALLED
                                 } else {
-                                    statusMessage = "自动安装失败，请手动安装 Termux + Python"
-                                    InstallStatus.NEED_MANUAL
+                                    InstallStatus.FAILED
                                 }
+                                isInstalling = false
                             }
-                        }
-                        InstallStatus.NEED_MANUAL -> {
-                            // 打开 Termux F-Droid 页面
-                            try {
-                                context.startActivity(Intent(Intent.ACTION_VIEW,
-                                    Uri.parse("https://f-droid.org/packages/com.termux/")))
-                            } catch (_: Exception) {}
                         }
                         else -> {}
                     }
@@ -204,30 +199,22 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                 icon = Icons.Default.AccountTree,
                 status = nodeStatus,
                 required = false,
+                isInstalling = isInstalling,
                 onAction = {
                     when (nodeStatus) {
                         InstallStatus.NOT_INSTALLED, InstallStatus.FAILED -> {
                             scope.launch {
+                                isInstalling = true
                                 nodeStatus = InstallStatus.INSTALLING
-                                statusMessage = "正在查找 Node.js..."
 
-                                val ok = installNode(context) { msg, _ ->
-                                    statusMessage = msg
+                                val ok = InternalInstaller.installNode(context) { p ->
+                                    statusMessage = p.message
+                                    progress = 0.6f + p.progress * 0.3f
                                 }
-                                nodeStatus = if (ok) {
-                                    statusMessage = "✅ Node.js 就绪"
-                                    InstallStatus.INSTALLED
-                                } else {
-                                    statusMessage = "请在 Termux 中运行: pkg install nodejs"
-                                    InstallStatus.NEED_MANUAL
-                                }
+
+                                nodeStatus = if (ok) InstallStatus.INSTALLED else InstallStatus.FAILED
+                                isInstalling = false
                             }
-                        }
-                        InstallStatus.NEED_MANUAL -> {
-                            try {
-                                context.startActivity(Intent(Intent.ACTION_VIEW,
-                                    Uri.parse("https://f-droid.org/packages/com.termux/")))
-                            } catch (_: Exception) {}
                         }
                         else -> {}
                     }
@@ -254,7 +241,7 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            // 内置终端按钮
+            // 终端按钮
             OutlinedButton(
                 onClick = onOpenTerminal,
                 modifier = Modifier
@@ -264,7 +251,7 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
             ) {
                 Icon(Icons.Default.Terminal, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("打开内置终端安装环境", fontSize = 14.sp)
+                Text("打开内置终端", fontSize = 14.sp)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -283,7 +270,6 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                 Text("开始使用", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
 
-            // 跳过
             TextButton(onClick = onSetupComplete, modifier = Modifier.padding(top = 4.dp)) {
                 Text("稍后配置", color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -300,11 +286,12 @@ private fun EnvCard(
     icon: ImageVector,
     status: InstallStatus,
     required: Boolean,
+    isInstalling: Boolean,
     onAction: () -> Unit
 ) {
     val bgColor = when (status) {
         InstallStatus.INSTALLED -> MaterialTheme.colorScheme.primaryContainer
-        InstallStatus.FAILED, InstallStatus.NEED_MANUAL -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+        InstallStatus.FAILED -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
         else -> MaterialTheme.colorScheme.surfaceVariant
     }
 
@@ -352,13 +339,12 @@ private fun EnvCard(
                     CircularProgressIndicator(modifier = Modifier.size(22.dp), strokeWidth = 2.dp)
                 }
                 InstallStatus.NOT_INSTALLED, InstallStatus.FAILED -> {
-                    FilledTonalButton(onClick = onAction, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) {
-                        Text("安装", fontSize = 13.sp)
-                    }
-                }
-                InstallStatus.NEED_MANUAL -> {
-                    FilledTonalButton(onClick = onAction, contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)) {
-                        Text("下载 Termux", fontSize = 12.sp)
+                    FilledTonalButton(
+                        onClick = onAction,
+                        enabled = !isInstalling,
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Text("一键安装", fontSize = 13.sp)
                     }
                 }
                 InstallStatus.INSTALLED -> {
@@ -368,85 +354,4 @@ private fun EnvCard(
             }
         }
     }
-}
-
-// ──── 安装逻辑 ────
-
-private suspend fun installPython(
-    context: android.content.Context,
-    onProgress: (String, Float) -> Unit
-): Boolean = withContext(Dispatchers.IO) {
-    // 1) 已有 Python?
-    PythonRunner.findPython()?.let {
-        onProgress("✅ 已找到: $it", 0.4f)
-        return@withContext true
-    }
-
-    // 2) 检查 Termux Python
-    onProgress("检查 Termux...", 0.15f)
-    val termuxPy = "/data/data/com.termux/files/usr/bin/python3"
-    if (File(termuxPy).canExecute()) {
-        PythonRunner.pythonPath = termuxPy
-        onProgress("✅ Termux Python 就绪", 0.4f)
-        return@withContext true
-    }
-
-    // 3) 检查 QPython
-    onProgress("检查 QPython...", 0.2f)
-    val qpyPaths = listOf(
-        "/data/data/org.qpython.qpy3/files/bin/python3",
-        "/data/data/org.qpython.qpy/files/bin/python"
-    )
-    for (p in qpyPaths) {
-        if (File(p).canExecute()) {
-            PythonRunner.pythonPath = p
-            onProgress("✅ QPython 就绪", 0.4f)
-            return@withContext true
-        }
-    }
-
-    // 4) 系统 which
-    onProgress("搜索系统 Python...", 0.25f)
-    try {
-        val proc = ProcessBuilder("sh", "-c", "which python3 2>/dev/null || which python 2>/dev/null").start()
-        val out = proc.inputStream.bufferedReader().readLine()?.trim()
-        proc.waitFor()
-        if (!out.isNullOrEmpty() && File(out).canExecute()) {
-            PythonRunner.pythonPath = out
-            onProgress("✅ 找到: $out", 0.4f)
-            return@withContext true
-        }
-    } catch (_: Exception) {}
-
-    onProgress("未找到 Python，请安装 Termux 后运行: pkg install python", 0.3f)
-    false
-}
-
-private suspend fun installNode(
-    context: android.content.Context,
-    onProgress: (String, Float) -> Unit
-): Boolean = withContext(Dispatchers.IO) {
-    val nodePaths = listOf(
-        "/data/data/com.termux/files/usr/bin/node",
-        "/system/bin/node",
-        "/sdcard/nodejs/bin/node"
-    )
-    for (p in nodePaths) {
-        if (File(p).canExecute()) {
-            onProgress("✅ Node.js: $p", 0.8f)
-            return@withContext true
-        }
-    }
-    try {
-        val proc = ProcessBuilder("which", "node").start()
-        val out = proc.inputStream.bufferedReader().readLine()?.trim()
-        proc.waitFor()
-        if (!out.isNullOrEmpty()) {
-            onProgress("✅ Node.js: $out", 0.8f)
-            return@withContext true
-        }
-    } catch (_: Exception) {}
-
-    onProgress("未找到 Node.js，请在 Termux 中运行: pkg install nodejs", 0.7f)
-    false
 }
