@@ -38,6 +38,9 @@ fun buildToolRegistry(): ToolRegistry {
     r.register(DexEdit)
     // Shizuku 特权工具
     r.register(ShizukuFileAccess)
+    // Python 脚本执行
+    r.register(PythonExec)
+    r.register(PythonInfo)
     return r
 }
 
@@ -655,6 +658,64 @@ object ShizukuFileAccess : Tool {
                 }
             }
             else -> ToolResult.err("未知 action：$action")
+        }
+    }
+}
+
+/* ---------------- Python 脚本执行工具 ---------------- */
+
+/** python.exec — 在设备上执行 Python 脚本 */
+object PythonExec : Tool {
+    override val name = "python_exec"
+    override val description = "在 Android 设备上执行 Python 脚本（需安装 Termux/QPython 并配置 Python 环境）。可将 Python 代码写入工作区文件或直接执行。常用于 APK 分析：androguard 解析 APK、批量处理文件等。安装依赖：pip install frida-tools androguard objection"
+    override val sensitive = true
+    override val parameters = schemaObject(
+        mapOf(
+            "code" to strProp("Python 代码（必填）。可直接内联代码，或写导入 os/json 等标准库。代码中可用 open() 读写工作区文件。"),
+            "timeout" to intProp("超时秒数，默认 30，最大 120"),
+            "save_as" to strProp("将代码保存为工作区内 .py 文件（留空则自动命名并执行后删除）")
+        ),
+        listOf("code")
+    )
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val code = args.str("code") ?: return ToolResult.err("缺少 code")
+        val timeout = (args.int("timeout") ?: 30).coerceIn(1, 120)
+        val saveAs = args.str("save_as")
+
+        val pyFile = if (saveAs != null) {
+            File(ctx.workspace, saveAs)
+        } else {
+            File(ctx.workspace, "_py_${System.currentTimeMillis()}.py")
+        }
+
+        Sandbox.assertWritable(pyFile, ctx.workspace)
+        pyFile.writeText(code)
+
+        return try {
+            val result = PythonRunner.execute(pyFile, timeout, ctx.workspace)
+            if (result.success) {
+                ToolResult.ok(result.combined)
+            } else {
+                ToolResult.err(result.combined)
+            }
+        } finally {
+            if (saveAs == null) { try { pyFile.delete() } catch (_: Throwable) {} }
+        }
+    }
+}
+
+/** python.info — 检查 Python 环境状态 */
+object PythonInfo : Tool {
+    override val name = "python_info"
+    override val description = "检查设备上 Python 环境是否可用，以及版本信息。"
+    override val parameters = schemaObject(emptyMap())
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val python = PythonRunner.findPython()
+        return if (python == null) {
+            ToolResult.err(PythonRunner.installGuide())
+        } else {
+            val version = PythonRunner.getVersion() ?: "unknown"
+            ToolResult.ok("Python 环境就绪\n路径: $python\n版本: $version\n\n可用的 Python APK 分析库（需在 Termux 中安装）：\n- androguard: APK 解析/证书/MinSdk分析\n- frida-tools: Frida Hook 脚本管理\n- objection: 运行时安全评估\n- apkid: APK 加固壳识别\n\n用法：用 python_exec 执行脚本代码。")
         }
     }
 }
