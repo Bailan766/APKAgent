@@ -3,6 +3,10 @@ package com.apkagent.apktools
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolRegistry
+import com.apkagent.tools.SmartSearchTool
+import com.apkagent.tools.AutoPatchTool
+import com.apkagent.tools.GenerateHookTool
+import com.apkagent.tools.AnalyzeObfuscationTool
 import com.apkagent.agent.ToolResult
 import com.apkagent.agent.boolProp
 import com.apkagent.agent.intProp
