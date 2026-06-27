@@ -34,6 +34,7 @@ data class ChatItem(
     val id: String = UUID.randomUUID().toString(),
     val role: Role,
     val content: String = "",
+    val toolCallId: String? = null,
     val toolName: String? = null,
     val toolArgs: String? = null,
     val toolResult: String? = null,
@@ -110,7 +111,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         val ctx = ToolContext(appContext = agentApp, workspace = agentApp.workspace, openApk = agentApp.openApk.value)
         if (agentLoop == null || lastConfig != cfg) {
             Logger.i("VM", "AgentLoop: ${cfg.providerId}/${cfg.model}")
-            agentLoop = AgentLoop(OpenAIClient(cfg.baseUrl, cfg.apiKey), agentApp.toolRegistry, cfg.model, cfg.temperature, ctx, this, maxRounds = 15)
+            agentLoop = AgentLoop(OpenAIClient(cfg.baseUrl, cfg.apiKey), agentApp.toolRegistry, cfg.model, cfg.temperature, ctx, this, maxRounds = 50)
             lastConfig = cfg
         }
     }
@@ -231,14 +232,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
     override fun onToolCallStart(call: PendingToolCall) {
         Logger.i("VM", "[${call.name}] ${call.arguments.take(200)}")
-        _messages.update { it + ChatItem(role = Role.TOOL, toolName = call.name, toolArgs = call.arguments, streaming = true) }
+        _messages.update { it + ChatItem(role = Role.TOOL, toolCallId = call.id, toolName = call.name, toolArgs = call.arguments, streaming = true) }
     }
     override suspend fun onConfirmToolCall(call: PendingToolCall): Boolean = true
     override fun onToolCallComplete(call: ExecutedToolCall) {
         val ok = if (call.success) "OK" else "FAIL"
         Logger.i("VM", "[${call.name}] $ok (${call.result.length}chars)")
         _messages.update { list ->
-            val idx = list.indexOfLast { it.role == Role.TOOL && it.streaming && it.toolName == call.name }
+            // 并行执行时用 toolCallId 精确匹配，防止同名工具匹配错误
+            val idx = list.indexOfLast { it.role == Role.TOOL && it.streaming && it.toolCallId == call.id }
             if (idx >= 0) list.toMutableList().also { it[idx] = it[idx].copy(toolResult = call.result, toolSuccess = call.success, streaming = false) } else list
         }
     }
