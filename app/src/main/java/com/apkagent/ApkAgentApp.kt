@@ -20,8 +20,21 @@ class ApkAgentApp : Application() {
     lateinit var toolRegistry: ToolRegistry
         private set
 
+    // 工作区放在 /sdcard/Download/APKAgent/（外部存储，shell uid 可访问，用户可见）
     val workspace: File by lazy {
-        File(filesDir, "workspace").apply { if (!exists()) mkdirs() }
+        val ext = getExternalFilesDir(null)  // /storage/emulated/0/Android/data/com.apkagent/files
+        val downloadWs = File("/sdcard/Download/APKAgent")
+        // 优先用 /sdcard/Download/APKAgent/（Shizuku shell 可读写执行）
+        val ws = if (ext != null) {
+            // 尝试 /sdcard/Download/APKAgent，需要 MANAGE_EXTERNAL_STORAGE
+            try {
+                downloadWs.apply { mkdirs() }
+                if (canWrite(downloadWs)) downloadWs else File(filesDir, "workspace")
+            } catch (_: Throwable) {
+                File(filesDir, "workspace")
+            }
+        } else File(filesDir, "workspace")
+        ws.apply { if (!exists()) mkdirs() }
     }
 
     private val _openApk = MutableStateFlow<File?>(null)
