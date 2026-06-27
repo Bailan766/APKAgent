@@ -1,0 +1,34 @@
+# Android / Gradle
+.gradle/
+build/
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+bin/
+gen/
+out/
+
+# IDE
+.idea/
+*.iml
+*.iws
+*.ipr
+.settings/
+.project
+.classpath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Local configuration
+local.properties
+*.keystore
+*.jks
+*.p12
+*.key
+
+# Secrets
+secrets.properties
