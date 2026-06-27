@@ -56,6 +56,9 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.apkagent.ApkAgentApp
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -77,27 +80,37 @@ fun ChatScreen(
         if (messages.isNotEmpty()) listState.animateScrollToItem(messages.size - 1)
     }
 
+    val coroutineScope = androidx.compose.runtime.rememberCoroutineScope()
+
     val apkLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) {
-            try {
-                val app = context.applicationContext as ApkAgentApp
-                val dest = File(app.workspace, "imported.apk")
-                val input = context.contentResolver.openInputStream(uri)
-                if (input == null) {
-                    android.widget.Toast.makeText(context, "❌ 无法读取文件，请检查存储权限", android.widget.Toast.LENGTH_LONG).show()
-                    return@rememberLauncherForActivityResult
+            coroutineScope.launch(Dispatchers.IO) {
+                try {
+                    val app = context.applicationContext as ApkAgentApp
+                    val dest = File(app.workspace, "imported.apk")
+                    val input = context.contentResolver.openInputStream(uri)
+                    if (input == null) {
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(context, "❌ 无法读取文件，请检查存储权限", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                        return@launch
+                    }
+                    input.use { src -> dest.outputStream().use { dst -> src.copyTo(dst) } }
+                    if (dest.length() < 64) {
+                        withContext(Dispatchers.Main) {
+                            android.widget.Toast.makeText(context, "❌ APK 文件为空或损坏，请重新选择", android.widget.Toast.LENGTH_LONG).show()
+                        }
+                        return@launch
+                    }
+                    vm.setOpenApk(dest)
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "✅ 已导入：${dest.name} (${dest.length() / 1024}KB)", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } catch (e: Exception) {
+                    withContext(Dispatchers.Main) {
+                        android.widget.Toast.makeText(context, "❌ 导入失败：${e.message}", android.widget.Toast.LENGTH_LONG).show()
+                    }
                 }
-                input.use { src ->
-                    dest.outputStream().use { dst -> src.copyTo(dst) }
-                }
-                if (dest.length() < 64) {
-                    android.widget.Toast.makeText(context, "❌ APK 文件为空或损坏，请重新选择", android.widget.Toast.LENGTH_LONG).show()
-                    return@rememberLauncherForActivityResult
-                }
-                vm.setOpenApk(dest)
-                android.widget.Toast.makeText(context, "✅ 已导入：${dest.name} (${dest.length() / 1024}KB)", android.widget.Toast.LENGTH_SHORT).show()
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(context, "❌ 导入失败：${e.message}", android.widget.Toast.LENGTH_LONG).show()
             }
         }
     }
