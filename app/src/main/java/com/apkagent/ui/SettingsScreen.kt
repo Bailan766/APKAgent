@@ -40,7 +40,7 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit) {
+fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}) {
     val context = LocalContext.current
     val app = context.applicationContext as ApkAgentApp
     val cfg = app.settingsStore.config.value
@@ -191,6 +191,33 @@ fun SettingsScreen(onBack: () -> Unit) {
                     OutlinedTextField(value = customModel, onValueChange = { customModel = it }, label = { Text("模型名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
                 OutlinedTextField(value = sysExtra, onValueChange = { sysExtra = it }, label = { Text("附加提示词") }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp))
+            }
+
+            // ── 关于 ──
+            SectionTitle("ℹ️ 关于")
+            Card(
+                modifier = Modifier.fillMaxWidth().clickable { onOpenAbout() },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
+                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("关于本应用", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text("开发者信息 · 版本 · 开源地址", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
+                }
             }
 
             Spacer(Modifier.padding(4.dp))
