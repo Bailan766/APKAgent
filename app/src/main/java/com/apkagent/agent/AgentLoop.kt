@@ -48,8 +48,10 @@ class AgentLoop(
         appendLine(registry.describeAll())
         appendLine()
         appendLine("注意事项：")
-        appendLine("- 路径参数可以是工作区内的真实路径，或 APK 内条目（用 apk.list_files 先浏览）。")
-        appendLine("- 敏感操作（修改/删除/重打包）会请求用户确认。")
+        appendLine("- 路径参数尽量用相对路径（如 \"smali_classes\"），系统会自动基于工作区解析。")
+        appendLine("- 也可用绝对路径。路径越界会被沙箱拒绝。")
+        appendLine("- APK 内条目通过 apk:// 协议或 entry_in_apk 参数访问。")
+        appendLine("- 敏感操作（修改/删除/重打包）默认允许执行。")
         appendLine("- 解析结果尽量精炼，先列概览再按需深入。")
         appendLine("- 用中文回答。")
     }
