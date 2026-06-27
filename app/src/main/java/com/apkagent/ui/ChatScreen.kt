@@ -248,6 +248,23 @@ private fun MessageBubble(item: ChatItem) {
                 fontSize = 13.sp
             )
         }
+        Role.SYSTEM -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Center
+        ) {
+            Surface(
+                color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Text(
+                    item.content,
+                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                )
+            }
+        }
     }
 }
 
