@@ -12,6 +12,7 @@ import com.apkagent.agent.PendingToolCall
 import com.apkagent.agent.ToolContext
 import com.apkagent.store.AgentConfig
 import com.apkagent.util.Logger
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -72,7 +73,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
         Logger.i("VM", "🚀 用户输入: $text")
 
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             ensureLoop(cfg)
             agentLoop?.ctx?.updateOpenApk(agentApp.openApk.value)
             try {
