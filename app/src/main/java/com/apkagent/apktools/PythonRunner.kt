@@ -124,6 +124,7 @@ object PythonRunner {
             Logger.i("Py", "执行: ${script.name} timeout=${timeoutSeconds}s")
             try {
                 withTimeout(timeoutSeconds * 1000L) {
+                    ensureExecutable(python)
                     val pb = ProcessBuilder(python, script.absolutePath)
                     if (workDir?.isDirectory == true) pb.directory(workDir)
                     // 设置环境变量让 pip 等工具正常工作
@@ -151,6 +152,7 @@ object PythonRunner {
     suspend fun getVersion(): String? = withContext(Dispatchers.IO) {
         val python = findPython() ?: return@withContext null
         try {
+            ensureExecutable(python)
             val pb = ProcessBuilder(python, "--version")
             internalDir?.let { pb.environment()["PYTHONHOME"] = it.absolutePath }
             val proc = pb.start()
@@ -164,6 +166,7 @@ object PythonRunner {
     suspend fun refreshInstalled(): List<String> = withContext(Dispatchers.IO) {
         val python = findPython() ?: return@withContext emptyList()
         try {
+            ensureExecutable(python)
             val pb = ProcessBuilder(python, "-m", "pip", "list", "--format=columns")
             internalDir?.let { pb.environment()["PYTHONHOME"] = it.absolutePath }
             pb.redirectErrorStream(true)
@@ -200,7 +203,8 @@ object PythonRunner {
             Logger.i("Py", "pip install $packageName")
             try {
                 withTimeout(timeoutSeconds * 1000L) {
-                    val pb = ProcessBuilder(python, "-m", "pip", "install", "--no-color", packageName)
+                    ensureExecutable(python)
+            val pb = ProcessBuilder(python, "-m", "pip", "install", "--no-color", packageName)
                     pb.redirectErrorStream(true)
                     internalDir?.let {
                         pb.environment()["PYTHONHOME"] = it.absolutePath
@@ -253,4 +257,22 @@ object PythonRunner {
             }
             ExecResult(okCount == missing.size, sb.toString(), null)
         }
+
+    /**
+     * 确保 Python 二进制有执行权限（Android SELinux 兼容）
+     */
+    private fun ensureExecutable(path: String) {
+        try {
+            val bin = java.io.File(path)
+            if (bin.exists() && !bin.canExecute()) {
+                ProcessBuilder("sh", "-c", "chmod 755 '${'$'}{bin.absolutePath}' && chmod -R 755 '${'$'}{bin.parentFile?.parentFile?.let { java.io.File(it, "lib") }?.absolutePath ?: "/tmp"}'")
+                    .redirectErrorStream(true)
+                    .start().waitFor()
+                Logger.i("Py", "chmod 修复: ${'$'}{bin.absolutePath}")
+            }
+        } catch (e: Exception) {
+            Logger.w("Py", "chmod 失败: ${'$'}{e.message}")
+        }
+    }
+
 }
