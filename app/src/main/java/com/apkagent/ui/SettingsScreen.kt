@@ -1,13 +1,8 @@
 package com.apkagent.ui
 
-import android.Manifest
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
-import android.provider.Settings
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,8 +10,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,10 +22,10 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.apkagent.ApkAgentApp
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.AgentConfig
+import com.apkagent.store.AiProvider
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -43,16 +37,18 @@ fun SettingsScreen(onBack: () -> Unit) {
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
-    var baseUrl by remember { mutableStateOf(cfg.baseUrl) }
+    var selectedProviderId by remember { mutableStateOf(cfg.providerId) }
     var apiKey by remember { mutableStateOf(cfg.apiKey) }
     var model by remember { mutableStateOf(cfg.model) }
     var temp by remember { mutableDoubleStateOf(cfg.temperature) }
     var sysExtra by remember { mutableStateOf(cfg.systemExtra) }
     var showKey by remember { mutableStateOf(false) }
+    var showAdvanced by remember { mutableStateOf(false) }
+    var showProviderMenu by remember { mutableStateOf(false) }
 
-    // Shizuku 状态
-    var shizukuStatus by remember { mutableStateOf<ShizukuManager.Status>(ShizukuManager.status) }
-    var shizukuRequesting by remember { mutableStateOf(false) }
+    val selectedProvider = AiProvider.byId(selectedProviderId)
+    var customBaseUrl by remember { mutableStateOf(if (selectedProviderId == "custom") cfg.baseUrl else "") }
+    var customModel by remember { mutableStateOf(if (selectedProviderId == "custom") cfg.model else "") }
 
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
@@ -73,51 +69,80 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // ── Shizuku 授权 ──
+            // ── Shizuku ──
             SectionTitle("🔐 系统权限")
-            ShizukuCard(
-                status = shizukuStatus,
-                requesting = shizukuRequesting,
-                onRequestShizuku = {
-                    shizukuRequesting = true
-                    scope.launch {
-                        val ok = ShizukuManager.requestPermission()
-                        shizukuStatus = ShizukuManager.status
-                        shizukuRequesting = false
-                        snackbar.showSnackbar(
-                            if (ok) "✅ Shizuku 授权成功，已获得系统级权限"
-                            else "❌ Shizuku 授权失败/超时，请确保 Shizuku App 正在运行"
+            ShizukuStatusCard()
+
+            // ── AI Provider ──
+            SectionTitle("🤖 AI 模型")
+            Text("选择提供商，填入 API Key 即可使用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+
+            // Provider 选择
+            ExposedDropdownMenuBox(
+                expanded = showProviderMenu,
+                onExpandedChange = { showProviderMenu = it }
+            ) {
+                OutlinedTextField(
+                    value = selectedProvider.label,
+                    onValueChange = {},
+                    readOnly = true,
+                    label = { Text("AI 提供商") },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showProviderMenu) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                )
+                ExposedDropdownMenu(expanded = showProviderMenu, onDismissRequest = { showProviderMenu = false }) {
+                    AiProvider.PRESETS.forEach { p ->
+                        DropdownMenuItem(
+                            text = { Text(p.label) },
+                            onClick = {
+                                selectedProviderId = p.id
+                                showProviderMenu = false
+                                if (p.id != "custom") {
+                                    model = p.defaultModel
+                                    customBaseUrl = ""
+                                    customModel = ""
+                                }
+                            },
+                            leadingIcon = {
+                                if (p.id == selectedProviderId) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                            }
                         )
                     }
-                },
-                onInstallShizuku = {
-                    val intent = Intent(Intent.ACTION_VIEW).apply {
-                        data = Uri.parse("https://shizuku.rikka.app/download/")
-                    }
-                    context.startActivity(intent)
                 }
-            )
+            }
 
-            SectionTitle("AI 模型配置")
+            // Model 选择（非自定义时显示下拉）
+            if (selectedProvider.id != "custom" && selectedProvider.models.isNotEmpty()) {
+                var modelExpanded by remember { mutableStateOf(false) }
+                ExposedDropdownMenuBox(expanded = modelExpanded, onExpandedChange = { modelExpanded = it }) {
+                    OutlinedTextField(
+                        value = model,
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("模型") },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
+                        modifier = Modifier.fillMaxWidth().menuAnchor()
+                    )
+                    ExposedDropdownMenu(expanded = modelExpanded, onDismissRequest = { modelExpanded = false }) {
+                        selectedProvider.models.forEach { m ->
+                            DropdownMenuItem(
+                                text = { Text(m) },
+                                onClick = { model = m; modelExpanded = false },
+                                leadingIcon = {
+                                    if (m == model) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                                }
+                            )
+                        }
+                    }
+                }
+            }
 
-            OutlinedTextField(
-                value = baseUrl,
-                onValueChange = { baseUrl = it },
-                label = { Text("API Base URL") },
-                placeholder = { Text("https://api.openai.com/v1") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-            Text(
-                "兼容 OpenAI 协议的接口地址，可填第三方中转。会自动拼接 /chat/completions。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-
+            // API Key
             OutlinedTextField(
                 value = apiKey,
                 onValueChange = { apiKey = it },
                 label = { Text("API Key") },
+                placeholder = { Text("在此粘贴 API Key") },
                 singleLine = true,
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
@@ -129,154 +154,102 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             )
 
-            OutlinedTextField(
-                value = model,
-                onValueChange = { model = it },
-                label = { Text("模型名") },
-                placeholder = { Text("gpt-4o-mini / deepseek-chat / qwen-plus …") },
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
+            // 温度
             Text("温度：%.2f".format(temp), fontSize = 13.sp)
-            Slider(
-                value = temp.toFloat(),
-                onValueChange = { temp = it.toDouble() },
-                valueRange = 0f..2f,
-                modifier = Modifier.fillMaxWidth()
-            )
+            Slider(value = temp.toFloat(), onValueChange = { temp = it.toDouble() }, valueRange = 0f..2f, modifier = Modifier.fillMaxWidth())
 
-            SectionTitle("系统提示补充（可选）")
-            OutlinedTextField(
-                value = sysExtra,
-                onValueChange = { sysExtra = it },
-                label = { Text("附加指令") },
-                placeholder = { Text("例如：默认用英文类名分析…") },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 120.dp)
-            )
-
-            Spacer(Modifier.padding(4.dp))
-            Button(
-                onClick = {
-                    val newCfg = AgentConfig(baseUrl.trim(), apiKey.trim(), model.trim(), temp, sysExtra)
-                    app.settingsStore.save(newCfg)
-                    scope.launch { snackbar.showSnackbar("已保存") }
-                },
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Check, null)
-                Spacer(Modifier.padding(4.dp))
-                Text("保存配置")
+            // 高级选项
+            TextButton(onClick = { showAdvanced = !showAdvanced }) {
+                Text(if (showAdvanced) "收起高级选项 ▲" else "展开高级选项 ▼", fontSize = 12.sp)
+            }
+            if (showAdvanced) {
+                OutlinedTextField(
+                    value = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl,
+                    onValueChange = { if (selectedProvider.id == "custom") customBaseUrl = it },
+                    label = { Text("API Base URL") },
+                    enabled = selectedProvider.id == "custom",
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                if (selectedProvider.id == "custom") {
+                    OutlinedTextField(
+                        value = customModel,
+                        onValueChange = { customModel = it },
+                        label = { Text("模型名") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+                OutlinedTextField(
+                    value = sysExtra,
+                    onValueChange = { sysExtra = it },
+                    label = { Text("附加提示词") },
+                    modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp)
+                )
             }
 
-            Text(
-                "提示：API Key 通过 EncryptedSharedPreferences 加密存储于本机。所有文件工具默认在 App 工作区沙箱内操作。",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+            // 保存
+            Spacer(Modifier.padding(4.dp))
+            Button(onClick = {
+                val baseUrl = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl
+                val finalModel = if (selectedProvider.id == "custom") customModel else model
+                val newCfg = AgentConfig(selectedProviderId, baseUrl, apiKey.trim(), finalModel.trim(), temp, sysExtra)
+                app.settingsStore.save(newCfg)
+                scope.launch { snackbar.showSnackbar("✅ 已保存 — ${selectedProvider.label} / $finalModel") }
+            }, modifier = Modifier.fillMaxWidth()) {
+                Icon(Icons.Default.Check, null); Spacer(Modifier.padding(4.dp)); Text("保存配置")
+            }
+
+            Text("API Key 加密存储于本机，不上传任何服务器。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
 
 @Composable
 private fun SectionTitle(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleSmall,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 8.dp)
-    )
+    Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
 }
 
 @Composable
-private fun ShizukuCard(
-    status: ShizukuManager.Status,
-    requesting: Boolean,
-    onRequestShizuku: () -> Unit,
-    onInstallShizuku: () -> Unit
-) {
-    data class StatusInfo(
-        val text: String,
-        val color: androidx.compose.ui.graphics.Color,
-        val actionLabel: String?,
-        val action: (() -> Unit)?
-    )
+private fun ShizukuStatusCard() {
+    val status = ShizukuManager.status
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var requesting by remember { mutableStateOf(false) }
 
-    val info = when (status) {
+    val (text, color, label, action) = when (status) {
         is ShizukuManager.Status.Authorized -> {
             val extra = if (status.uid > 0) " (UID: ${status.uid})" else ""
-            StatusInfo("✅ Shizuku 已授权，拥有系统级权限$extra", MaterialTheme.colorScheme.primary, null, null)
+            ("✅ Shizuku 已授权$extra" to MaterialTheme.colorScheme.primary to null to null)
         }
         is ShizukuManager.Status.Running ->
-            StatusInfo("Shizuku 运行中，待授权", MaterialTheme.colorScheme.tertiary, "点击授权", onRequestShizuku)
+            ("运行中，待授权" to MaterialTheme.colorScheme.tertiary to "授权" to {
+                requesting = true
+                scope.launch { ShizukuManager.requestPermission(); requesting = false }
+            })
         is ShizukuManager.Status.Installed ->
-            StatusInfo("⚠ Shizuku 已安装但未运行", MaterialTheme.colorScheme.error, "启动 Shizuku 并授权", onRequestShizuku)
-        is ShizukuManager.Status.Unavailable ->
-            StatusInfo("❌ 未检测到 Shizuku", MaterialTheme.colorScheme.error, "安装 Shizuku", onInstallShizuku)
-        is ShizukuManager.Status.Error ->
-            StatusInfo("⚠ Shizuku 错误：${status.message}", MaterialTheme.colorScheme.error, "重试", onRequestShizuku)
+            ("已安装未运行" to MaterialTheme.colorScheme.error to "授权" to {
+                requesting = true
+                scope.launch { ShizukuManager.requestPermission(); requesting = false }
+            })
+        else ->
+            ("未检测到 Shizuku" to MaterialTheme.colorScheme.error to "安装" to {
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")))
+            })
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(12.dp)
-    ) {
-        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Security,
-                    contentDescription = null,
-                    tint = info.color,
-                    modifier = Modifier.size(22.dp)
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    "Shizuku 系统权限",
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 14.sp
-                )
+    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp)) {
+        Row(Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Security, null, tint = color, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(text, fontSize = 12.sp, color = color)
             }
-
-            Text(
-                info.text,
-                fontSize = 12.sp,
-                color = info.color,
-                style = MaterialTheme.typography.bodySmall.copy(lineHeight = 18.sp)
-            )
-
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (info.actionLabel != null && info.action != null) {
-                    Button(
-                        onClick = {
-                            if (!requesting) info.action()
-                        },
-                        enabled = !requesting,
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
-                    ) {
-                        if (requesting) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(16.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        }
-                        Spacer(Modifier.width(6.dp))
-                        Text(info.actionLabel, fontSize = 13.sp)
-                    }
+            if (label != null && action != null) {
+                Button(onClick = { if (!requesting) action() }, enabled = !requesting, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+                    if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    else Text(label, fontSize = 12.sp)
                 }
-
-            }
-
-            if (status !is ShizukuManager.Status.Authorized) {
-                Text(
-                    "Shizuku 可获得 ADB 级权限，允许 APKAgent 直接访问 /data/app/ 等受限目录，绕过 SAF 限制。需先在 Shizuku App 中启动服务。",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    style = MaterialTheme.typography.bodySmall.copy(lineHeight = 16.sp)
-                )
             }
         }
     }
