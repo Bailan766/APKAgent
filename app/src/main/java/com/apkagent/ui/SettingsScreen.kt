@@ -244,21 +244,34 @@ private fun ShizukuStatusCard() {
     val scope = rememberCoroutineScope()
     var requesting by remember { mutableStateOf(false) }
 
-    val (text, color, label, action) = when (status) {
-        is ShizukuManager.Status.Authorized -> { val extra = if (status.uid > 0) " (UID: ${status.uid})" else ""; ("Shizuku 已授权$extra" to MaterialTheme.colorScheme.primary to null to null) }
-        is ShizukuManager.Status.Running -> ("运行中，待授权" to MaterialTheme.colorScheme.tertiary to "授权" to { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } })
-        is ShizukuManager.Status.Installed -> ("已安装未运行" to MaterialTheme.colorScheme.error to "授权" to { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } })
-        else -> ("未检测到" to MaterialTheme.colorScheme.error to "安装" to { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/"))) })
+    data class StatusInfo(val text: String, val color: androidx.compose.ui.graphics.Color, val label: String?, val action: (() -> Unit)?)
+    val statusInfo = when (status) {
+        is ShizukuManager.Status.Authorized -> StatusInfo(
+            "Shizuku 已授权${if (status.uid > 0) " (UID: ${status.uid})" else ""}",
+            MaterialTheme.colorScheme.primary, null, null
+        )
+        is ShizukuManager.Status.Running -> StatusInfo(
+            "运行中，待授权", MaterialTheme.colorScheme.tertiary, "授权",
+            { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } }
+        )
+        is ShizukuManager.Status.Installed -> StatusInfo(
+            "已安装未运行", MaterialTheme.colorScheme.error, "授权",
+            { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } }
+        )
+        else -> StatusInfo(
+            "未检测到", MaterialTheme.colorScheme.error, "安装",
+            { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/"))) }
+        )
     }
 
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp)) {
         Row(Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Security, null, tint = color, modifier = Modifier.size(20.dp))
+            Icon(Icons.Filled.Security, contentDescription = null, tint = statusInfo.color, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
-            Text(text, fontSize = 12.sp, color = color, modifier = Modifier.weight(1f))
-            if (label != null && action != null) {
-                Button(onClick = { if (!requesting) action() }, enabled = !requesting, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
-                    if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Text(label, fontSize = 12.sp)
+            Text(statusInfo.text, fontSize = 12.sp, color = statusInfo.color, modifier = Modifier.weight(1f))
+            if (statusInfo.label != null && statusInfo.action != null) {
+                Button(onClick = { if (!requesting) statusInfo.action!!.invoke() }, enabled = !requesting, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
+                    if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Text(statusInfo.label!!, fontSize = 12.sp)
                 }
             }
         }
