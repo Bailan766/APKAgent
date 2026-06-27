@@ -2,9 +2,16 @@ package com.apkagent.ui
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -15,6 +22,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -50,14 +59,32 @@ fun SettingsScreen(onBack: () -> Unit) {
     var customBaseUrl by remember { mutableStateOf(if (selectedProviderId == "custom") cfg.baseUrl else "") }
     var customModel by remember { mutableStateOf(if (selectedProviderId == "custom") cfg.model else "") }
 
+    // Theme state
+    var currentTheme by remember { mutableStateOf(ThemeState.currentTheme) }
+
+    val wallpaperLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        if (uri != null) {
+            try {
+                val input = context.contentResolver.openInputStream(uri)
+                val tmp = java.io.File(context.cacheDir, "wallpaper_tmp")
+                input?.use { it.copyTo(tmp.outputStream()) }
+                input?.close()
+                ThemeState.loadWallpaper(tmp.absolutePath)
+                ThemeState.currentTheme = AppTheme.CUSTOM_WALLPAPER
+                currentTheme = AppTheme.CUSTOM_WALLPAPER
+                scope.launch { snackbar.showSnackbar("壁纸已设置") }
+            } catch (e: Throwable) {
+                scope.launch { snackbar.showSnackbar("壁纸加载失败") }
+            }
+        }
+    }
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
                 title = { Text("设置") },
-                navigationIcon = {
-                    IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
-                }
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } }
             )
         }
     ) { padding ->
@@ -69,6 +96,31 @@ fun SettingsScreen(onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // ── 主题 ──
+            SectionTitle("🎨 主题")
+            Text("选择配色方案", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                items(AppTheme.entries.toList()) { theme ->
+                    ThemeChip(
+                        theme = theme,
+                        selected = currentTheme == theme,
+                        onClick = {
+                            ThemeState.currentTheme = theme
+                            currentTheme = theme
+                        }
+                    )
+                }
+            }
+            // 壁纸按钮
+            TextButton(onClick = { wallpaperLauncher.launch("image/*") }) {
+                Icon(Icons.Default.Wallpaper, null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text("选择壁纸", fontSize = 13.sp)
+            }
+            if (ThemeState.wallpaperPath != null) {
+                Text("壁纸: ${ThemeState.wallpaperPath!!.takeLast(30)}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+
             // ── Shizuku ──
             SectionTitle("🔐 系统权限")
             ShizukuStatusCard()
@@ -77,15 +129,9 @@ fun SettingsScreen(onBack: () -> Unit) {
             SectionTitle("🤖 AI 模型")
             Text("选择提供商，填入 API Key 即可使用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
-            // Provider 选择
-            ExposedDropdownMenuBox(
-                expanded = showProviderMenu,
-                onExpandedChange = { showProviderMenu = it }
-            ) {
+            ExposedDropdownMenuBox(expanded = showProviderMenu, onExpandedChange = { showProviderMenu = it }) {
                 OutlinedTextField(
-                    value = selectedProvider.label,
-                    onValueChange = {},
-                    readOnly = true,
+                    value = selectedProvider.label, onValueChange = {}, readOnly = true,
                     label = { Text("AI 提供商") },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showProviderMenu) },
                     modifier = Modifier.fillMaxWidth().menuAnchor()
@@ -95,13 +141,8 @@ fun SettingsScreen(onBack: () -> Unit) {
                         DropdownMenuItem(
                             text = { Text(p.label) },
                             onClick = {
-                                selectedProviderId = p.id
-                                showProviderMenu = false
-                                if (p.id != "custom") {
-                                    model = p.defaultModel
-                                    customBaseUrl = ""
-                                    customModel = ""
-                                }
+                                selectedProviderId = p.id; showProviderMenu = false
+                                if (p.id != "custom") { model = p.defaultModel; customBaseUrl = ""; customModel = "" }
                             },
                             leadingIcon = {
                                 if (p.id == selectedProviderId) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
@@ -111,97 +152,83 @@ fun SettingsScreen(onBack: () -> Unit) {
                 }
             }
 
-            // Model 选择（非自定义时显示下拉）
             if (selectedProvider.id != "custom" && selectedProvider.models.isNotEmpty()) {
                 var modelExpanded by remember { mutableStateOf(false) }
                 ExposedDropdownMenuBox(expanded = modelExpanded, onExpandedChange = { modelExpanded = it }) {
-                    OutlinedTextField(
-                        value = model,
-                        onValueChange = {},
-                        readOnly = true,
-                        label = { Text("模型") },
+                    OutlinedTextField(value = model, onValueChange = {}, readOnly = true, label = { Text("模型") },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
-                    )
+                        modifier = Modifier.fillMaxWidth().menuAnchor())
                     ExposedDropdownMenu(expanded = modelExpanded, onDismissRequest = { modelExpanded = false }) {
                         selectedProvider.models.forEach { m ->
-                            DropdownMenuItem(
-                                text = { Text(m) },
-                                onClick = { model = m; modelExpanded = false },
-                                leadingIcon = {
-                                    if (m == model) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
-                                }
-                            )
+                            DropdownMenuItem(text = { Text(m) }, onClick = { model = m; modelExpanded = false },
+                                leadingIcon = { if (m == model) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) })
                         }
                     }
                 }
             }
 
-            // API Key
-            OutlinedTextField(
-                value = apiKey,
-                onValueChange = { apiKey = it },
-                label = { Text("API Key") },
-                placeholder = { Text("在此粘贴 API Key") },
-                singleLine = true,
+            OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, label = { Text("API Key") },
+                placeholder = { Text("粘贴 API Key") }, singleLine = true,
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
-                trailingIcon = {
-                    TextButton(onClick = { showKey = !showKey }) {
-                        Text(if (showKey) "隐藏" else "显示", fontSize = 12.sp)
-                    }
-                }
-            )
+                trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "隐藏" else "显示", fontSize = 12.sp) } })
 
-            // 温度
             Text("温度：%.2f".format(temp), fontSize = 13.sp)
             Slider(value = temp.toFloat(), onValueChange = { temp = it.toDouble() }, valueRange = 0f..2f, modifier = Modifier.fillMaxWidth())
 
-            // 高级选项
-            TextButton(onClick = { showAdvanced = !showAdvanced }) {
-                Text(if (showAdvanced) "收起高级选项 ▲" else "展开高级选项 ▼", fontSize = 12.sp)
-            }
+            TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(if (showAdvanced) "收起高级 ▼" else "展开高级 ▲", fontSize = 12.sp) }
             if (showAdvanced) {
-                OutlinedTextField(
-                    value = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl,
+                OutlinedTextField(value = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl,
                     onValueChange = { if (selectedProvider.id == "custom") customBaseUrl = it },
-                    label = { Text("API Base URL") },
-                    enabled = selectedProvider.id == "custom",
-                    singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
-                )
+                    label = { Text("API Base URL") }, enabled = selectedProvider.id == "custom", singleLine = true, modifier = Modifier.fillMaxWidth())
                 if (selectedProvider.id == "custom") {
-                    OutlinedTextField(
-                        value = customModel,
-                        onValueChange = { customModel = it },
-                        label = { Text("模型名") },
-                        singleLine = true,
-                        modifier = Modifier.fillMaxWidth()
-                    )
+                    OutlinedTextField(value = customModel, onValueChange = { customModel = it }, label = { Text("模型名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
                 }
-                OutlinedTextField(
-                    value = sysExtra,
-                    onValueChange = { sysExtra = it },
-                    label = { Text("附加提示词") },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp)
-                )
+                OutlinedTextField(value = sysExtra, onValueChange = { sysExtra = it }, label = { Text("附加提示词") }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp))
             }
 
-            // 保存
             Spacer(Modifier.padding(4.dp))
             Button(onClick = {
                 val baseUrl = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl
                 val finalModel = if (selectedProvider.id == "custom") customModel else model
                 val newCfg = AgentConfig(selectedProviderId, baseUrl, apiKey.trim(), finalModel.trim(), temp, sysExtra)
                 app.settingsStore.save(newCfg)
-                scope.launch { snackbar.showSnackbar("✅ 已保存 — ${selectedProvider.label} / $finalModel") }
+                scope.launch { snackbar.showSnackbar("已保存 — ${selectedProvider.label}") }
             }, modifier = Modifier.fillMaxWidth()) {
                 Icon(Icons.Default.Check, null); Spacer(Modifier.padding(4.dp)); Text("保存配置")
             }
-
-            Text("API Key 加密存储于本机，不上传任何服务器。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text("API Key 加密存储于本机。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+    }
+}
+
+@Composable
+private fun ThemeChip(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
+    val previewColor = when (theme) {
+        AppTheme.AMOLED_BLACK -> Color(0xFF000000)
+        AppTheme.PURE_WHITE -> Color(0xFFFFFFFF)
+        AppTheme.CREAM -> Color(0xFFFAF8F5)
+        AppTheme.MD3_BLUE -> Color(0xFF1A3A5C)
+        AppTheme.MD3_GREEN -> Color(0xFFE8F5E9)
+        AppTheme.MD3_PURPLE -> Color(0xFF2D1B4E)
+        AppTheme.MD3_ORANGE -> Color(0xFFFFF3E0)
+        AppTheme.MD3_MONO -> Color(0xFFEEEEEE)
+        AppTheme.CUSTOM_WALLPAPER -> Color(0xFF607D8B)
+        AppTheme.CUSTOM_WALLPAPER_DARK -> Color(0xFF263238)
+        else -> Color(0xFF888888)
+    }
+
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(64.dp).clickable { onClick() }) {
+        Box(
+            modifier = Modifier.size(44.dp).clip(CircleShape).background(previewColor)
+                .then(if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, CircleShape) else Modifier.border(1.dp, Color.Gray.copy(alpha = 0.3f), CircleShape)),
+            contentAlignment = Alignment.Center
+        ) {
+            if (selected) Icon(Icons.Default.Check, null, tint = if (theme.isDark) Color.White else Color.Black, modifier = Modifier.size(20.dp))
+        }
+        Spacer(Modifier.height(4.dp))
+        Text(theme.label, fontSize = 10.sp, maxLines = 1)
     }
 }
 
@@ -218,37 +245,20 @@ private fun ShizukuStatusCard() {
     var requesting by remember { mutableStateOf(false) }
 
     val (text, color, label, action) = when (status) {
-        is ShizukuManager.Status.Authorized -> {
-            val extra = if (status.uid > 0) " (UID: ${status.uid})" else ""
-            ("✅ Shizuku 已授权$extra" to MaterialTheme.colorScheme.primary to null to null)
-        }
-        is ShizukuManager.Status.Running ->
-            ("运行中，待授权" to MaterialTheme.colorScheme.tertiary to "授权" to {
-                requesting = true
-                scope.launch { ShizukuManager.requestPermission(); requesting = false }
-            })
-        is ShizukuManager.Status.Installed ->
-            ("已安装未运行" to MaterialTheme.colorScheme.error to "授权" to {
-                requesting = true
-                scope.launch { ShizukuManager.requestPermission(); requesting = false }
-            })
-        else ->
-            ("未检测到 Shizuku" to MaterialTheme.colorScheme.error to "安装" to {
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/")))
-            })
+        is ShizukuManager.Status.Authorized -> { val extra = if (status.uid > 0) " (UID: ${status.uid})" else ""; ("Shizuku 已授权$extra" to MaterialTheme.colorScheme.primary to null to null) }
+        is ShizukuManager.Status.Running -> ("运行中，待授权" to MaterialTheme.colorScheme.tertiary to "授权" to { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } })
+        is ShizukuManager.Status.Installed -> ("已安装未运行" to MaterialTheme.colorScheme.error to "授权" to { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } })
+        else -> ("未检测到" to MaterialTheme.colorScheme.error to "安装" to { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/"))) })
     }
 
     Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp)) {
         Row(Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.Security, null, tint = color, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text(text, fontSize = 12.sp, color = color)
-            }
+            Text(text, fontSize = 12.sp, color = color, modifier = Modifier.weight(1f))
             if (label != null && action != null) {
                 Button(onClick = { if (!requesting) action() }, enabled = !requesting, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
-                    if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    else Text(label, fontSize = 12.sp)
+                    if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Text(label, fontSize = 12.sp)
                 }
             }
         }
