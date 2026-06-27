@@ -53,6 +53,11 @@ fun buildToolRegistry(): ToolRegistry {
     r.register(ApkPatchManifest)
     // ADB
     r.register(AdbExec)
+    // 智能 Patch 库
+    r.register(SmartPatchScan)
+    r.register(SmartPatchApply)
+    // 安全风险扫描
+    r.register(RiskScan)
     return r
 }
 
@@ -1030,5 +1035,56 @@ object AdbExec : Tool {
         } catch (e: Throwable) {
             ToolResult.err("ADB 执行失败: ${e.message}")
         }
+    }
+}
+
+/* ───────── 智能 Patch 库 ───────── */
+
+/** smart_patch.scan — 扫描可应用的 Patch */
+object SmartPatchScan : Tool {
+    override val name = "smart_patch_scan"
+    override val description = "扫描 APK 工作区，列出所有可应用的智能 Patch（签名校验/root检测/emulator检测/调试限制/SSL pinning/VIP绕过）"
+    override val parameters = schemaObject(emptyMap())
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val result = SmartPatch.scanAvailable(ctx.workspace)
+        return ToolResult.ok(result)
+    }
+}
+
+/** smart_patch.apply — 应用指定 Patch */
+object SmartPatchApply : Tool {
+    override val name = "smart_patch_apply"
+    override val description = "一键应用智能 Patch。可用ID: signature_check(签名校验), root_detection(Root检测), emulator_detection(模拟器检测), debug_restriction(调试限制), ssl_pinning(SSL Pinning), vip_bypass(VIP绕过)"
+    override val sensitive = true
+    override val parameters = schemaObject(mapOf(
+        "patch_id" to strProp("Patch ID: signature_check / root_detection / emulator_detection / debug_restriction / ssl_pinning / vip_bypass"),
+        "target_dir" to strProp("目标 smali 目录路径（留空自动检测）")
+    ), listOf("patch_id"))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val patchId = args.str("patch_id") ?: return ToolResult.err("缺少 patch_id\n可用: ${SmartPatch.PATCHES.joinToString { it.id }}")
+        val targetDir = args.str("target_dir")
+        val result = SmartPatch.applyPatch(ctx.workspace, patchId, targetDir)
+        return if (result.success) ToolResult.ok(result.message) else ToolResult.err(result.message)
+    }
+}
+
+/* ───────── 安全风险扫描 ───────── */
+
+/** risk.scan — 安全风险扫描仪表盘 */
+object RiskScan : Tool {
+    override val name = "risk_scan"
+    override val description = "全面扫描 APK 安全风险：危险权限/导出组件/WebView风险/硬编码密钥/证书Pinning/debuggable/allowBackup/明文传输/代码混淆/原生库。生成安全评分和报告。"
+    override val parameters = schemaObject(mapOf(
+        "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK")
+    ))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val apk = args.str("apk_path")?.let { File(it) }
+            ?: ctx.openApk
+            ?: return ToolResult.err("未指定 APK，请先导入或提供路径")
+
+        if (!apk.exists()) return ToolResult.err("APK 文件不存在: ${apk.absolutePath}")
+
+        val result = RiskScanner.scan(apk)
+        return ToolResult.ok(result.report)
     }
 }
