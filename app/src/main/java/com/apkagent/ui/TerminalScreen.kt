@@ -163,7 +163,7 @@ fun TerminalScreen(onBack: () -> Unit) {
                         val tv = scrollView.findViewWithTag<TextView>("terminal_output")
                         if (tv != null && tv.text.toString() != output) {
                             tv.text = output
-                            scrollView.post { scrollView.fullDown(ScrollView.FOCUS_DOWN) }
+                            scrollView.post { scrollView.fullScroll(ScrollView.FOCUS_DOWN) }
                         }
                     },
                     modifier = Modifier.fillMaxSize()
