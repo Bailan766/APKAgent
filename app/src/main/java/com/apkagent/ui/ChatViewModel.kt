@@ -19,6 +19,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
+import com.apkagent.service.KeepAliveService
 import com.apkagent.service.KeepAliveManager
 
 enum class Role { USER, ASSISTANT, TOOL, ERROR, DEBUG, SYSTEM }
@@ -106,6 +107,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
         Logger.i("VM", "开始: $text")
         KeepAliveManager.acquire(agentApp)
+        KeepAliveService.roundCount = 0
         viewModelScope.launch(Dispatchers.IO) {
             ensureLoop(cfg)
             agentLoop?.ctx?.updateOpenApk(agentApp.openApk.value)
@@ -315,7 +317,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
     override fun onToolCallStart(call: PendingToolCall) {
         Logger.i("VM", "[${call.name}] ${call.arguments.take(200)}")
-        KeepAliveManager.updateTask(call.name)
+        KeepAliveService.currentTask = call.name
+        KeepAliveManager.updateTask("轮次 ${KeepAliveService.roundCount} · ${call.name}")
         _messages.update { it + ChatItem(role = Role.TOOL, toolCallId = call.id, toolName = call.name, toolArgs = call.arguments, streaming = true) }
     }
     override suspend fun onConfirmToolCall(call: PendingToolCall): Boolean = true
