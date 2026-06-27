@@ -61,4 +61,54 @@ fun intProp(desc: String): JsonObject = buildJsonObject {
 fun boolProp(desc: String): JsonObject = buildJsonObject {
     put("type", "boolean")
     put("description", desc)
+
+    /**
+     * 按阶段过滤可用工具
+     * 阶段 0 (PREPARE): 只暴露侦察工具
+     * 阶段 1 (STATIC_ANALYSIS): 侦察 + 分析工具
+     * 阶段 2 (DYNAMIC): 分析 + 脚本工具
+     * 阶段 3 (MODIFICATION): 所有工具
+     * 阶段 4+ : 所有工具
+     */
+    fun getToolsForPhase(phase: ReversePhase): List<Tool> {
+        val prepareTools = setOf(
+            "apk_apk_info", "apk_read_signer", "apk_read_manifest", "apk_list_files", "risk_scan"
+        )
+        val analysisTools = prepareTools + setOf(
+            "dex_disasm", "apk_read_dex", "hex_view", "apk_extract_entry",
+            "apk_search_strings", "file_search", "smart_search", "analyze_obfuscation"
+        )
+        val dynamicTools = analysisTools + setOf(
+            "run_python_script", "run_node_script", "generate_frida_script", "generate_hook",
+            "python_exec", "python_info", "pip_install", "pip_list"
+        )
+        val allToolNames = tools.keys.toSet()
+
+        val allowed = when (phase) {
+            ReversePhase.PREPARE -> prepareTools
+            ReversePhase.STATIC_ANALYSIS -> analysisTools
+            ReversePhase.DYNAMIC -> dynamicTools
+            ReversePhase.MODIFICATION -> allToolNames
+            ReversePhase.REPACK -> allToolNames
+            ReversePhase.DONE -> allToolNames
+        }
+        return tools.values.filter { it.name in allowed }
+    }
+
+    /**
+     * 为指定工具列表生成 API tool definitions
+     */
+    fun toToolDefs(toolList: List<Tool>): List<Map<String, Any>> {
+        return toolList.map { tool ->
+            mapOf(
+                "type" to "function",
+                "function" to mapOf(
+                    "name" to tool.name,
+                    "description" to tool.description,
+                    "parameters" to tool.parameters
+                )
+            )
+        }
+    }
+
 }
