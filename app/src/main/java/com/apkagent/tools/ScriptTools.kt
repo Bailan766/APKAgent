@@ -93,8 +93,8 @@ class RunScriptTool : Tool {
             pb.redirectErrorStream(true)
 
             val process = pb.start()
-            val finished = process.waitFor(java.util.concurrent.TimeUnit.MILLISECONDS)
-            if (!finished) {
+            val finished = process.waitFor(timeout, java.util.concurrent.TimeUnit.MILLISECONDS)
+            if (finished == false) {
                 process.destroyForcibly()
                 return ToolResult.err("脚本执行超时（${timeout/1000}秒）")
             }
