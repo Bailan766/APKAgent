@@ -25,6 +25,9 @@ object Logger {
 
     @Volatile private var logFile: File? = null
     @Volatile private var writer: PrintWriter? = null
+    private val writeExecutor = java.util.concurrent.Executors.newSingleThreadExecutor { r ->
+        Thread(r, "APKAgent-Logger").apply { isDaemon = true }
+    }
 
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd_HH-mm-ss", Locale.getDefault())
     private val timeFormat = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault())
@@ -89,19 +92,23 @@ object Logger {
     fun getLogPath(): String? = logFile?.absolutePath
 
     private fun writeToFile(level: String, tag: String, msg: String) {
-        try {
-            val w = writer ?: return
-            val time = timeFormat.format(Date())
-            val truncated = msg.take(2000)
-            w.println("$time $level [$tag] $truncated")
-            w.flush()
-        } catch (_: Throwable) {}
+        writeExecutor.execute {
+            try {
+                val w = writer ?: return@execute
+                val time = timeFormat.format(Date())
+                val truncated = msg.take(2000)
+                w.println("$time $level [$tag] $truncated")
+                w.flush()
+            } catch (_: Throwable) {}
+        }
     }
 
     /** 关闭日志文件 */
     fun close() {
         try {
-            w("Logger", "══════════ 日志结束 ══════════")
+            writeToFile("I", "Logger", "══════════ 日志结束 ══════════")
+            writeExecutor.shutdown()
+            writeExecutor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)
             writer?.flush()
             writer?.close()
         } catch (_: Throwable) {}
