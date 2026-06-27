@@ -143,7 +143,7 @@ object SignatureCheckerScanner {
         dexFiles: List<Pair<String, File>>,
         outputDir: File
     ): String = coroutineScope {
-        val results = dexFiles.map { (name, tmp) ->
+        dexFiles.map { (name, tmp) ->
             async(Dispatchers.IO) {
                 val scan = scanDex(tmp)
                 if (scan.success && scan.hits.isNotEmpty()) {
