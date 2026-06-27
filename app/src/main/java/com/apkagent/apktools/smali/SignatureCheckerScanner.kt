@@ -9,6 +9,10 @@ import com.android.tools.smali.dexlib2.iface.instruction.Instruction
 import com.android.tools.smali.dexlib2.iface.instruction.ReferenceInstruction
 import com.android.tools.smali.dexlib2.iface.reference.FieldReference
 import com.android.tools.smali.dexlib2.iface.reference.MethodReference
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -89,29 +93,68 @@ object SignatureCheckerScanner {
         }
     }
 
-    fun scanApk(apkFile: File): ScanResult {
+    /**
+     * 并行扫描 APK 中所有 DEX 文件的签名校验调用点。
+     * 先串行提取 DEX（ZIP 需要顺序读取），再并行扫描。
+     */
+    suspend fun scanApk(apkFile: File): ScanResult = coroutineScope {
         val allHits = mutableListOf<CheckHit>()
         var dexCount = 0
         try {
+            // 第一步：串行提取所有 DEX 到临时文件
+            val dexFiles = mutableListOf<Pair<String, File>>()
             ZipFile(apkFile).use { zip ->
                 val dexEntries = zip.entries().toList().filter { it.name.endsWith(".dex") }
                 for (entry in dexEntries) {
                     val tmp = File.createTempFile(entry.name.replace("/", "_"), ".dex")
                     zip.getInputStream(entry).use { it.copyTo(tmp.outputStream()) }
+                    dexFiles.add(entry.name to tmp)
+                }
+            }
+
+            // 第二步：并行扫描所有 DEX
+            val results = dexFiles.map { (name, tmp) ->
+                async(Dispatchers.IO) {
                     val r = scanDex(tmp)
-                    if (r.success) {
-                        allHits.addAll(r.hits)
-                        dexCount++
-                    }
-                    tmp.delete()
+                    try { tmp.delete() } catch (_: Throwable) {}
+                    Triple(name, r.success, r.hits)
+                }
+            }.awaitAll()
+
+            for ((_, success, hits) in results) {
+                if (success) {
+                    allHits.addAll(hits)
+                    dexCount++
                 }
             }
             val msg = if (allHits.isEmpty()) "扫描 $dexCount 个 DEX，未发现签名校验调用点"
             else "扫描 $dexCount 个 DEX，发现 ${allHits.size} 处疑似签名校验调用点"
-            return ScanResult(true, msg, allHits)
+            ScanResult(true, msg, allHits)
         } catch (e: Throwable) {
-            return ScanResult(false, "APK 扫描失败：${e.message}", emptyList())
+            ScanResult(false, "APK 扫描失败：${e.message}", emptyList())
         }
+    }
+
+    /**
+     * 并行 patch：对所有 DEX 并行反编译→修改 smali→回编译。
+     * 调用方需先自行提取 DEX 文件。
+     */
+    suspend fun patchAllDex(
+        dexFiles: List<Pair<String, File>>,
+        outputDir: File
+    ): String = coroutineScope {
+        val results = dexFiles.map { (name, tmp) ->
+            async(Dispatchers.IO) {
+                val scan = scanDex(tmp)
+                if (scan.success && scan.hits.isNotEmpty()) {
+                    val outDex = File(outputDir, name)
+                    val pr = patchDex(tmp, outDex, PatchMode.METHOD_RETURN_TRUE)
+                    "$name: ${scan.hits.size} 处调用点, ${pr.message}"
+                } else {
+                    "$name: 无校验调用点，跳过"
+                }
+            }
+        }.awaitAll().joinToString("\n")
     }
 
     private fun scanMethod(cls: ClassDef, method: Method, className: String, hits: MutableList<CheckHit>) {
