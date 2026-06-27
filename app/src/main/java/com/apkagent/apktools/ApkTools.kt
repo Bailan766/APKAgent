@@ -8,6 +8,7 @@ import com.apkagent.agent.boolProp
 import com.apkagent.agent.intProp
 import com.apkagent.agent.schemaObject
 import com.apkagent.agent.strProp
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import com.apkagent.shizuku.ShizukuManager
 import java.io.File
@@ -58,6 +59,10 @@ fun buildToolRegistry(): ToolRegistry {
     r.register(SmartPatchApply)
     // 安全风险扫描
     r.register(RiskScan)
+    // 脚本执行
+    r.register(RunPythonScript)
+    r.register(RunNodeScript)
+    r.register(GenerateFridaScript)
     return r
 }
 
@@ -1087,4 +1092,398 @@ object RiskScan : Tool {
         val result = RiskScanner.scan(apk)
         return ToolResult.ok(result.report)
     }
+}
+
+/* ───────── 脚本执行工具 ───────── */
+
+/** run_python_script — 执行预置或自定义 Python 分析脚本 */
+object RunPythonScript : Tool {
+    override val name = "run_python_script"
+    override val description = "执行 Python 脚本进行深度分析。可用预置脚本: androguard_analysis(类/方法/权限分析), find_secrets(搜索硬编码密钥), manifest_parser(解析Manifest), dex_class_list(列出所有类)。也可传入自定义脚本内容。"
+    override val parameters = schemaObject(mapOf(
+        "script_name" to strProp("预置脚本名: androguard_analysis / find_secrets / manifest_parser / dex_class_list，或留空用 script_content"),
+        "script_content" to strProp("自定义 Python 脚本内容（script_name 为空时使用）"),
+        "args" to strProp("传给脚本的参数，如 APK 路径"),
+        "timeout" to intProp("超时秒数，默认60")
+    ))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        if (!PythonRunner.isAvailable()) return ToolResult.err("Python 未安装，请在设置页安装")
+
+        val scriptName = args.str("script_name")
+        val scriptContent = args.str("script_content")
+        val scriptArgs = args.str("args") ?: ""
+        val timeout = args.int("timeout") ?: 60
+
+        val script = if (scriptName != null) {
+            // 生成预置脚本
+            val preset = PRESET_SCRIPTS[scriptName]
+                ?: return ToolResult.err("未知脚本: $scriptName\n可用: ${PRESET_SCRIPTS.keys.joinToString()}")
+            preset.replace("{ARGS}", scriptArgs)
+        } else if (scriptContent != null) {
+            scriptContent
+        } else {
+            return ToolResult.err("请提供 script_name 或 script_content")
+        }
+
+        // 写入临时文件执行
+        val tmpScript = File(ctx.workspace, "_tmp_script.py")
+        try {
+            tmpScript.writeText(script)
+            val result = PythonRunner.execute(tmpScript, timeout, ctx.workspace)
+            return if (result.success) ToolResult.ok(result.combined.take(8000))
+            else ToolResult.err(result.combined.take(4000))
+        } finally {
+            tmpScript.delete()
+        }
+    }
+
+    private val PRESET_SCRIPTS = mapOf(
+        "androguard_analysis" to """
+import sys, os
+try:
+    from androguard.misc import AnalyzeAPK
+except ImportError:
+    print("❌ 未安装 androguard，正在安装...")
+    os.system("pip3 install androguard")
+    from androguard.misc import AnalyzeAPK
+
+apk_path = "{ARGS}" or "imported.apk"
+if not os.path.exists(apk_path):
+    for f in os.listdir("."):
+        if f.endswith(".apk"):
+            apk_path = f; break
+
+print(f"📦 分析: {apk_path}")
+a, d, dx = AnalyzeAPK(apk_path)
+
+print(f"\n=== APK 基本信息 ===")
+print(f"包名: {a.get_package()}")
+print(f"版本: {a.get_androidversion_name()} ({a.get_androidversion_code()})")
+print(f"Min SDK: {a.get_min_sdk_version()}")
+print(f"Target SDK: {a.get_target_sdk_version()}")
+print(f"权限数: {len(a.get_permissions())}")
+
+print(f"\n=== 权限列表 ===")
+for p in sorted(a.get_permissions()):
+    print(f"  {p}")
+
+print(f"\n=== 组件统计 ===")
+print(f"Activities: {len(a.get_activities())}")
+print(f"Services: {len(a.get_services())}")
+print(f"Receivers: {len(a.get_receivers())}")
+print(f"Providers: {len(a.get_providers())}")
+
+print(f"\n=== DEX 统计 ===")
+for i, dex in enumerate(d):
+    classes = dex.get_classes()
+    methods = sum(len(c.get_methods()) for c in classes)
+    print(f"  DEX{i}: {len(list(classes))} 类, {methods} 方法")
+""".trimIndent(),
+
+        "find_secrets" to """
+import os, re
+
+apk_path = "{ARGS}" or "imported.apk"
+patterns = {
+    "API Key": r'(?i)(api[_-]?key|apikey)\s*[=:]\s*["\'][A-Za-z0-9_\-]{16,}["\']',
+    "Secret/Password": r'(?i)(secret|password|passwd)\s*[=:]\s*["\'][^"\']{6,}["\']',
+    "Token": r'(?i)token\s*[=:]\s*["\'][A-Za-z0-9_\-\.]{20,}["\']',
+    "AWS Key": r'AKIA[0-9A-Z]{16}',
+    "Private Key": r'-----BEGIN (RSA |EC )?PRIVATE KEY-----',
+    "URL with Auth": r'https?://[^:]+:[^@]+@',
+}
+
+import zipfile
+print(f"🔍 搜索密钥: {apk_path}")
+found = 0
+try:
+    with zipfile.ZipFile(apk_path) as z:
+        for entry in z.namelist():
+            if entry.endswith(('.dex', '.xml', '.json', '.properties', '.cfg')):
+                try:
+                    content = z.read(entry).decode('utf-8', errors='ignore')
+                    for name, pattern in patterns.items():
+                        matches = re.findall(pattern, content)
+                        if matches:
+                            for m in matches[:3]:
+                                print(f"  🔴 [{name}] {entry}: {str(m)[:80]}")
+                                found += 1
+                except: pass
+except Exception as e:
+    print(f"错误: {e}")
+print(f"\n扫描完成，发现 {found} 处潜在密钥")
+""".trimIndent(),
+
+        "dex_class_list" to """
+import os
+apk_path = "{ARGS}" or "imported.apk"
+try:
+    from androguard.misc import AnalyzeAPK
+except ImportError:
+    os.system("pip3 install androguard")
+    from androguard.misc import AnalyzeAPK
+
+a, d, dx = AnalyzeAPK(apk_path)
+print(f"=== DEX 类列表 ({apk_path}) ===\n")
+for i, dex in enumerate(d):
+    classes = list(dex.get_classes())
+    print(f"--- DEX{i}: {len(classes)} 类 ---")
+    for c in classes[:200]:
+        print(f"  {c.get_name()}")
+    if len(classes) > 200:
+        print(f"  ... 共 {len(classes)} 类")
+""".trimIndent()
+    )
+}
+
+/** run_node_script — 执行 Node.js 脚本 */
+object RunNodeScript : Tool {
+    override val name = "run_node_script"
+    override val description = "执行 Node.js 脚本。用于 Frida 脚本生成、JS 分析等。"
+    override val parameters = schemaObject(mapOf(
+        "script_content" to strProp("Node.js 脚本内容"),
+        "args" to strProp("传给脚本的参数"),
+        "timeout" to intProp("超时秒数，默认30")
+    ))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val script = args.str("script_content") ?: return ToolResult.err("缺少 script_content")
+        val timeout = args.int("timeout") ?: 30
+
+        // 查找 node
+        val nodePaths = listOf(
+            File(ctx.workspace.parentFile ?: ctx.workspace, "nodejs/bin/node").absolutePath,
+            "/data/data/com.termux/files/usr/bin/node",
+            "/system/bin/node"
+        )
+        val node = nodePaths.firstOrNull { File(it).canExecute() }
+            ?: return ToolResult.err("Node.js 未安装，请在设置页安装")
+
+        val tmpScript = File(ctx.workspace, "_tmp_script.js")
+        try {
+            tmpScript.writeText(script)
+            val pb = ProcessBuilder(node, tmpScript.absolutePath)
+            pb.directory(ctx.workspace)
+            pb.redirectErrorStream(true)
+            val proc = pb.start()
+            val out = withTimeoutOrNull(timeout * 1000L) {
+                proc.inputStream.bufferedReader().use { it.readText() }
+            } ?: return ToolResult.err("执行超时(${timeout}s)")
+            proc.waitFor()
+            return ToolResult.ok(out.take(8000))
+        } finally {
+            tmpScript.delete()
+        }
+    }
+}
+
+/** generate_frida_script — AI 生成 Frida JS hook 脚本 */
+object GenerateFridaScript : Tool {
+    override val name = "generate_frida_script"
+    override val description = "生成 Frida JS hook 脚本模板。支持: bypass_ssl(绕过SSL pinning), bypass_root(绕过Root检测), hook_method( hook指定方法), bypass_debug(绕过反调试), intercept_crypto(拦截加密调用)"
+    override val parameters = schemaObject(mapOf(
+        "template" to strProp("模板名: bypass_ssl / bypass_root / hook_method / bypass_debug / intercept_crypto"),
+        "target_class" to strProp("目标类名（hook_method 时必填）"),
+        "target_method" to strProp("目标方法名（hook_method 时可选）")
+    ), listOf("template"))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val template = args.str("template") ?: return ToolResult.err("缺少 template")
+        val targetClass = args.str("target_class") ?: ""
+        val targetMethod = args.str("target_method") ?: ""
+
+        val script = FRIDA_TEMPLATES[template]
+            ?: return ToolResult.err("未知模板: $template\n可用: ${FRIDA_TEMPLATES.keys.joinToString()}")
+
+        val final = script
+            .replace("{TARGET_CLASS}", targetClass)
+            .replace("{TARGET_METHOD}", targetMethod)
+
+        // 保存到工作区
+        val outFile = File(ctx.workspace, "frida_${template}.js")
+        outFile.writeText(final)
+
+        return ToolResult.ok("✅ Frida 脚本已生成: ${outFile.name}\n\n```javascript\n$final\n```\n\n使用方法: frida -U -f <包名> -l ${outFile.name}")
+    }
+
+    private val FRIDA_TEMPLATES = mapOf(
+        "bypass_ssl" to """
+// Frida: 绕过 SSL Pinning
+Java.perform(function() {
+    console.log("[+] SSL Unpin loaded");
+
+    // OkHttp3 CertificatePinner
+    try {
+        var CertPinner = Java.use("okhttp3.CertificatePinner");
+        CertPinner.check.overload('java.lang.String', 'java.util.List').implementation = function() {
+            console.log("[+] Bypassed SSL pin for: " + arguments[0]);
+            return;
+        };
+    } catch(e) { console.log("[-] OkHttp3 not found: " + e); }
+
+    // TrustManager
+    try {
+        var TrustManager = Java.use("javax.net.ssl.X509TrustManager");
+        var SSLContext = Java.use("javax.net.ssl.SSLContext");
+        var TrustMan = Java.registerClass({
+            name: "com.apkagent.BypassTrustManager",
+            implements: [TrustManager],
+            methods: {
+                checkClientTrusted: function(chain, authType) {},
+                checkServerTrusted: function(chain, authType) {},
+                getAcceptedIssuers: function() { return []; }
+            }
+        });
+        var ctx = SSLContext.getInstance("TLS");
+        ctx.init(null, [TrustMan.$new()], null);
+    } catch(e) { console.log("[-] TrustManager bypass failed: " + e); }
+
+    console.log("[✓] SSL Pinning bypassed");
+});
+""".trimIndent(),
+
+        "bypass_root" to """
+// Frida: 绕过 Root 检测
+Java.perform(function() {
+    console.log("[+] Root bypass loaded");
+
+    // 常见 Root 检测类
+    var rootClasses = [
+        "com.scottyab.rootbeer.RootBeer",
+        "com.thanosfisherman.elgoog.RootChecker",
+        "eu.chainfire.libsuperuser.Shell"
+    ];
+
+    rootClasses.forEach(function(cls) {
+        try {
+            var c = Java.use(cls);
+            ["isRooted", "isRootedWithBusyBox", "checkRoot", "detectRoot", "isSuPresent"].forEach(function(m) {
+                if (c[m]) {
+                    c[m].implementation = function() { return false; };
+                    console.log("[+] Hooked " + cls + "." + m);
+                }
+            });
+        } catch(e) {}
+    });
+
+    // Runtime.exec("su")
+    try {
+        var Runtime = Java.use("java.lang.Runtime");
+        Runtime.exec.overload('[Ljava.lang.String;').implementation = function(cmd) {
+            if (cmd[0] === "su") {
+                console.log("[+] Blocked su command");
+                throw Java.use("java.io.IOException").$new("su not found");
+            }
+            return this.exec(cmd);
+        };
+    } catch(e) {}
+
+    console.log("[✓] Root detection bypassed");
+});
+""".trimIndent(),
+
+        "bypass_debug" to """
+// Frida: 绕过反调试
+Java.perform(function() {
+    console.log("[+] Debug bypass loaded");
+
+    // Debug.isDebuggerConnected
+    try {
+        var Debug = Java.use("android.os.Debug");
+        Debug.isDebuggerConnected.implementation = function() { return false; };
+        console.log("[+] isDebuggerConnected -> false");
+    } catch(e) {}
+
+    // ApplicationInfo.FLAG_DEBUGGABLE
+    try {
+        var AppInfo = Java.use("android.content.pm.ApplicationInfo");
+        // 无法直接改，但可以 hook 检查点
+    } catch(e) {}
+
+    // TracerPid check
+    try {
+        var BufferedReader = Java.use("java.io.BufferedReader");
+        BufferedReader.readLine.implementation = function() {
+            var line = this.readLine();
+            if (line && line.indexOf("TracerPid") !== -1) {
+                return "TracerPid:\t0";
+            }
+            return line;
+        };
+        console.log("[+] TracerPid check bypassed");
+    } catch(e) {}
+
+    console.log("[✓] Debug detection bypassed");
+});
+""".trimIndent(),
+
+        "hook_method" to """
+// Frida: Hook 指定方法
+// 目标: {TARGET_CLASS}.{TARGET_METHOD}
+Java.perform(function() {
+    var targetClass = "{TARGET_CLASS}";
+    var targetMethod = "{TARGET_METHOD}";
+
+    try {
+        var cls = Java.use(targetClass);
+        var methods = targetMethod ? [targetMethod] : cls.class.getDeclaredMethods().map(function(m) { return m.getName(); });
+
+        methods.forEach(function(method) {
+            try {
+                cls[method].overloads.forEach(function(overload) {
+                    overload.implementation = function() {
+                        console.log("[+] Called " + targetClass + "." + method);
+                        for (var i = 0; i < arguments.length; i++) {
+                            console.log("    arg[" + i + "]: " + arguments[i]);
+                        }
+                        var result = this[method].apply(this, arguments);
+                        console.log("    return: " + result);
+                        return result;
+                    };
+                });
+                console.log("[+] Hooked: " + method);
+            } catch(e) {}
+        });
+    } catch(e) {
+        console.log("[-] Failed to hook: " + e);
+    }
+});
+""".trimIndent(),
+
+        "intercept_crypto" to """
+// Frida: 拦截加密调用
+Java.perform(function() {
+    console.log("[+] Crypto interceptor loaded");
+
+    // Cipher
+    try {
+        var Cipher = Java.use("javax.crypto.Cipher");
+        Cipher.doFinal.overload('[B').implementation = function(input) {
+            console.log("[Cipher.doFinal] input(" + input.length + "B): " + bytesToHex(input.slice(0, 32)));
+            var result = this.doFinal(input);
+            console.log("[Cipher.doFinal] output(" + result.length + "B): " + bytesToHex(result.slice(0, 32)));
+            return result;
+        };
+    } catch(e) {}
+
+    // MessageDigest
+    try {
+        var MD = Java.use("java.security.MessageDigest");
+        MD.digest.overload('[B').implementation = function(input) {
+            var result = this.digest(input);
+            console.log("[MD.digest] " + bytesToHex(result));
+            return result;
+        };
+    } catch(e) {}
+
+    function bytesToHex(bytes) {
+        var hex = [];
+        for (var i = 0; i < bytes.length; i++) {
+            hex.push((bytes[i] & 0xFF).toString(16).padStart(2, '0'));
+        }
+        return hex.join('');
+    }
+
+    console.log("[✓] Crypto interceptor ready");
+});
+""".trimIndent()
+    )
 }
