@@ -28,7 +28,7 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
-          packages: 'platforms;android-34 build-tools;34.0.0'
+          packages: 'platforms;android-36 build-tools;36.0.0'
 
       - name: Cache Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -52,7 +52,7 @@ jobs:
           retention-days: 30
 
       - name: Create Release
-        if: success() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: success() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v1
         with:
           tag_name: v${{ steps.version.outputs.version }}
