@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.util.UUID
@@ -57,7 +58,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     fun setOpenApk(file: File?) {
         agentApp.setOpenApk(file)
         _openApkName.value = file?.name
-        Logger.i("VM", "📁 APK: ${file?.name} (${file?.length() ?: 0} bytes)")
+        Logger.i("VM", "📁 APK: ${file?.name} size=${file?.length() ?: 0}")
     }
 
     fun send(text: String) {
@@ -71,25 +72,28 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         _isRunning.value = true
         currentAssistantId = null
 
-        Logger.i("VM", "🚀 用户输入: $text")
+        val t0 = System.currentTimeMillis()
+        Logger.i("VM", "━━━ 开始 ━━━ 用户: ${text.take(100)}")
+        Logger.heartbeat("VM")
 
         viewModelScope.launch(Dispatchers.IO) {
             ensureLoop(cfg)
             agentLoop?.ctx?.updateOpenApk(agentApp.openApk.value)
             try {
-                // 单次 Agent 运行最长 5 分钟，防止卡死
                 withTimeout(5 * 60 * 1000L) {
                     agentLoop?.run(text)
                 }
+                val elapsed = System.currentTimeMillis() - t0
+                Logger.i("VM", "━━━ 完成 ━━━ 耗时: ${elapsed}ms")
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                Logger.e("VM", "⏰ Agent 运行超时（5分钟）")
-                _messages.update { it + ChatItem(role = Role.ERROR, content = "⚠ 运行超时（5分钟），已自动中断。请尝试更具体的问题。") }
+                Logger.e("VM", "⏰ 超时（5分钟）")
+                _messages.update { it + ChatItem(role = Role.ERROR, content = "⚠ 运行超时（5分钟），已自动中断") }
             } catch (e: Throwable) {
-                Logger.e("VM", "运行异常", e)
+                Logger.e("VM", "异常", e)
                 _messages.update { it + ChatItem(role = Role.ERROR, content = "运行异常：${e.message}") }
             } finally {
                 _isRunning.value = false
-                Logger.i("VM", "✅ 本次运行结束")
+                Logger.heartbeat("VM")
             }
         }
     }
@@ -101,7 +105,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
             openApk = agentApp.openApk.value
         )
         if (agentLoop == null || lastConfig != cfg || lastConfig?.apiKey != cfg.apiKey) {
-            Logger.i("VM", "🔧 创建 AgentLoop: model=${cfg.model} baseUrl=${cfg.baseUrl}")
+            Logger.i("VM", "🔧 AgentLoop 创建: model=${cfg.model} url=${cfg.baseUrl}")
             val client = OpenAIClient(cfg.baseUrl, cfg.apiKey)
             agentLoop = AgentLoop(
                 client = client,
@@ -116,10 +120,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         }
     }
 
-    fun stop() {
-        Logger.i("VM", "⏹ 用户停止")
-    }
-
+    fun stop() { Logger.i("VM", "⏹ 用户停止") }
     fun clearChat() {
         agentLoop?.reset()
         agentLoop = null
@@ -127,7 +128,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         Logger.i("VM", "🧹 清空对话")
     }
 
-    // —— AgentCallbacks ——
+    // ── AgentCallbacks ──
+
     override fun onAssistantContentDelta(delta: String) {
         _messages.update { list ->
             val id = currentAssistantId
@@ -147,14 +149,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
             if (id != null) list.map { if (it.id == id) it.copy(streaming = false) else it } else list
         }
         currentAssistantId = null
+        Logger.i("VM", "🤖 AI: ${content.take(200)}${if (content.length > 200) "..." else ""}")
+        if (toolCalls.isNotEmpty()) {
+            Logger.i("VM", "🔧 本轮工具调用: ${toolCalls.size}个 → ${toolCalls.joinToString { it.name }}")
+        }
     }
 
     override fun onToolCallStart(call: PendingToolCall) {
-        Logger.i("VM", "🔨 工具调用: ${call.name} args=${call.arguments.take(200)}")
+        Logger.i("VM", "🔨 开始 ${call.name} args=${call.arguments.take(300)}")
         _messages.update { it + ChatItem(role = Role.TOOL, toolName = call.name, toolArgs = call.arguments, streaming = true) }
     }
 
-    /** 默认允许所有操作 */
     override suspend fun onConfirmToolCall(call: PendingToolCall): Boolean {
         Logger.i("VM", "🟢 自动授权: ${call.name}")
         return true
@@ -162,9 +167,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     override fun onToolCallComplete(call: ExecutedToolCall) {
         val status = if (call.success) "✅" else "❌"
-        Logger.i("VM", "🔨 工具完成: ${call.name} $status (${call.result.length} chars)")
+        val brief = call.result.take(300).replace('\n', ' ')
+        Logger.i("VM", "🔨 完成 ${call.name} $status (${call.result.length}字符) $brief")
         if (!call.success) {
-            Logger.w("VM", "工具失败: ${call.name} | ${call.result.take(500)}")
+            Logger.w("VM", "失败详情: ${call.name} | ${call.result.take(500)}")
         }
         _messages.update { list ->
             val idx = list.indexOfLast { it.role == Role.TOOL && it.streaming && it.toolName == call.name }
@@ -181,9 +187,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     override fun onFinished() {
         _isRunning.value = false
-        Logger.i("VM", "🏁 Agent 任务完成")
+        Logger.i("VM", "🏁 Agent 任务结束")
     }
 
-    /** 获取日志文件路径（供 UI 展示） */
     fun getLogPath(): String? = Logger.getLogPath()
 }
