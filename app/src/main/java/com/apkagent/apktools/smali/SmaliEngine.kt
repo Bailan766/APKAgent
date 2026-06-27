@@ -6,6 +6,10 @@ import com.android.tools.smali.dexlib2.DexFileFactory
 import com.android.tools.smali.dexlib2.Opcodes
 import com.android.tools.smali.smali.Smali
 import com.android.tools.smali.smali.SmaliOptions
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -31,23 +35,37 @@ object SmaliEngine {
         }
     }
 
-    /** 反编译 APK 内所有 DEX 到目录 */
-    fun disassembleApk(apkFile: File, outDir: File): DisasmResult {
-        return try {
+    /**
+     * 并行反编译 APK 内所有 DEX 到目录。
+     * 先串行提取 DEX（ZIP 顺序读取），再并行反编译。
+     */
+    suspend fun disassembleApk(apkFile: File, outDir: File): DisasmResult = coroutineScope {
+        try {
+            // 第一步：串行提取所有 DEX 到临时文件
+            val dexFiles = mutableListOf<Pair<String, File>>()
             ZipFile(apkFile).use { zip ->
                 val dexEntries = zip.entries().toList().filter { it.name.endsWith(".dex") }
                     .sortedBy { it.name }
-                var total = 0
                 for (entry in dexEntries) {
                     val tmp = File.createTempFile(entry.name.replace("/", "_"), ".dex")
                     zip.getInputStream(entry).use { it.copyTo(tmp.outputStream()) }
-                    val subDir = File(outDir, entry.name.removeSuffix(".dex"))
-                    val r = disassembleDex(tmp, subDir)
-                    if (r.success) total += r.classCount
-                    tmp.delete()
+                    dexFiles.add(entry.name to tmp)
                 }
-                DisasmResult(true, "反编译 ${dexEntries.size} 个 DEX，共 $total 个类", total)
             }
+
+            // 第二步：并行反编译所有 DEX
+            val results = dexFiles.map { (name, tmp) ->
+                async(Dispatchers.IO) {
+                    val subDir = File(outDir, name.removeSuffix(".dex"))
+                    val r = disassembleDex(tmp, subDir)
+                    try { tmp.delete() } catch (_: Throwable) {}
+                    r
+                }
+            }.awaitAll()
+
+            var total = 0
+            results.forEach { if (it.success) total += it.classCount }
+            DisasmResult(true, "反编译 ${dexFiles.size} 个 DEX，共 $total 个类", total)
         } catch (e: Throwable) {
             DisasmResult(false, "APK 反编译异常：${e.message}", 0)
         }
