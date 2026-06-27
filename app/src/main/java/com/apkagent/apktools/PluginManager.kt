@@ -82,7 +82,7 @@ object PluginManager {
                 conn.connectTimeout = 10000; conn.readTimeout = timeoutSeconds * 1000
                 conn.setRequestProperty("User-Agent", "APKAgent/3.0")
                 conn.connect()
-                if (conn.responseCode != 200) return@withContext "HTTP ${conn.responseCode}"
+                if (conn.responseCode != 200) return@withTimeout "HTTP ${conn.responseCode}"
                 conn.inputStream.use { input -> dest.outputStream().use { output -> input.copyTo(output) } }
                 // 如果是 zip，解压
                 if (name.endsWith(".zip")) {
@@ -177,7 +177,7 @@ Java.perform(function() {
             }
         });
         var ssl = sslCtx.getInstance("TLS");
-        ssl.init(null, [TrustMan.$new()], null);
+        ssl.init(null, [TrustMan.${"$"}new()], null);
     } catch(e) {}
     console.log("[√] SSL Unpin hooks installed");
 });
