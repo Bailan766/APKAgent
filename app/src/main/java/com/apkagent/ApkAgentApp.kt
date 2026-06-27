@@ -19,13 +19,11 @@ class ApkAgentApp : Application() {
     lateinit var toolRegistry: ToolRegistry
         private set
 
-    /** 工作区目录：Agent 所有可写文件操作的沙箱根 */
     val workspace: File by lazy {
         File(filesDir, "workspace").apply { if (!exists()) mkdirs() }
     }
 
     private val _openApk = MutableStateFlow<File?>(null)
-    /** 当前导入的 APK 文件（可空） */
     val openApk: StateFlow<File?> = _openApk.asStateFlow()
 
     fun setOpenApk(file: File?) { _openApk.value = file }
@@ -33,10 +31,12 @@ class ApkAgentApp : Application() {
     override fun onCreate() {
         super.onCreate()
         Logger.init()
-        Logger.i("App", "APKAgent v1.2.1 启动")
+        Logger.setupCrashHandler()
+        Logger.i("App", "APKAgent v1.2.4 启动 — SDK=${android.os.Build.VERSION.SDK_INT}")
         settingsStore = SettingsStore(this)
         toolRegistry = buildToolRegistry()
         ShizukuManager.init()
+        Logger.i("App", "初始化完成 — workspace=${workspace.absolutePath}")
     }
 
     override fun onTerminate() {
