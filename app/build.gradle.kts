@@ -13,8 +13,8 @@ android {
         applicationId = "com.apkagent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 27
-        versionName = "3.15.0"
+        versionCode = 28
+        versionName = "3.16.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
