@@ -76,7 +76,9 @@ class RunScriptTool : Tool {
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val scriptPath = args["scriptPath"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 scriptPath")
+            ?: args["script_path"]?.jsonPrimitive?.contentOrNull
+            ?: args["path"]?.jsonPrimitive?.contentOrNull
+            ?: return ToolResult.err("缺少 scriptPath（试传: scriptPath/script_path/path）")
         val scriptArgs = args["args"]?.jsonPrimitive?.contentOrNull ?: ""
         val timeout = (args["timeout"]?.jsonPrimitive?.intOrNull ?: 60) * 1000L
 
@@ -95,10 +97,21 @@ class RunScriptTool : Tool {
         }
         if (!scriptFile.exists()) return ToolResult.err("脚本不存在: ${scriptFile.absolutePath}")
 
-        // 确定解释器
+        // 确定解释器 — 使用完整路径，Shizuku shell PATH 很有限
         val interpreter = when {
-            scriptFile.name.endsWith(".py") -> "python3"
-            scriptFile.name.endsWith(".js") -> "node"
+            scriptFile.name.endsWith(".py") -> {
+                PythonRunner.findPython() ?: "python3"
+            }
+            scriptFile.name.endsWith(".js") -> {
+                // 优先找 NodeRunner 的路径
+                val nodePath = listOf(
+                    "/data/local/tmp/apkagent_node/bin/node",
+                    "/data/data/com.termux/files/usr/bin/node",
+                    "/data/data/com.termux.nix/files/usr/bin/node",
+                    "/sdcard/APKAgent/node/bin/node"
+                ).firstOrNull { File(it).exists() }
+                nodePath ?: "node"
+            }
             scriptFile.name.endsWith(".sh") || scriptFile.name.endsWith(".bash") -> "sh"
             scriptFile.canExecute() -> scriptFile.absolutePath
             else -> "sh"
