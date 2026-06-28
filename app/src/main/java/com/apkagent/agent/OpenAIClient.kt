@@ -64,48 +64,35 @@ class OpenAIClient(
     suspend fun fetchAvailableModels(): Result<List<String>> = withContext(Dispatchers.IO) {
         try {
             val models = circuitBreaker.execute<List<String>> {
-            var base = baseUrl.trim().trimEnd('/')
-            if (!base.endsWith("/v1")) {
-                if (!base.endsWith("/models")) base = "$base/v1"
-            }
-            val modelsUrl = "$base/models"
+                var base = baseUrl.trim().trimEnd('/')
+                if (!base.endsWith("/v1")) {
+                    if (!base.endsWith("/models")) base = "$base/v1"
+                }
+                val modelsUrl = "$base/models"
 
-            val req = Request.Builder()
-                .url(modelsUrl)
-                .header("Authorization", "Bearer $apiKey")
-                .header("Accept", "application/json")
-                .get()
-                .build()
+                val req = Request.Builder()
+                    .url(modelsUrl)
+                    .header("Authorization", "Bearer $apiKey")
+                    .header("Accept", "application/json")
+                    .get()
+                    .build()
 
-            val response = client.newCall(req).execute()
-            val respBody = response.body?.string() ?: ""
+                val response = client.newCall(req).execute()
+                val respBody = response.body?.string() ?: ""
 
-            if (!response.isSuccessful) {
-                val errorMsg = try {
-                    json.decodeFromString(ApiErrorBody.serializer(), respBody).error?.message
-                } catch (_: Throwable) { null } ?: "HTTP ${response.code}: ${respBody.take(200)}"
-                return@withContext Result.failure(Exception(errorMsg))
-            }
+                if (!response.isSuccessful) {
+                    val errorMsg = try {
+                        json.decodeFromString(ApiErrorBody.serializer(), respBody).error?.message
+                    } catch (_: Throwable) { null } ?: "HTTP ${response.code}: ${respBody.take(200)}"
+                    throw IllegalStateException(errorMsg)
+                }
 
-            // 解析响应，兼容 OpenAI 格式 { "data": [{ "id": "model-name" }] }
-            val models = try {
                 val jsonObj = json.parseToJsonElement(respBody) as? JsonObject
                 val dataArray = jsonObj?.get("data") as? kotlinx.serialization.json.JsonArray
                 dataArray?.mapNotNull { item ->
                     val obj = item as? JsonObject
                     obj?.get("id")?.toString()?.trim('"')
                 }?.sorted() ?: emptyList()
-            } catch (_: Throwable) {
-                // 尝试直接解析为字符串数组
-                try {
-                    val arr = json.parseToJsonElement(respBody) as? kotlinx.serialization.json.JsonArray
-                    arr?.mapNotNull { it.toString().trim('"') }?.sorted() ?: emptyList()
-                } catch (_: Throwable) {
-                    emptyList()
-                }
-            }
-
-            models
             }
             Result.success(models)
         } catch (e: CircuitOpenException) {
