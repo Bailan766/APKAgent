@@ -188,40 +188,16 @@ object EnhancedSigner : Tool {
 
                 // 签名方案信息
                 sb.appendLine("📋 签名方案:")
-                if (result.isV1SchemeVerified) sb.appendLine("  • v1 (JAR/PKCS#7) ✅")
-                if (result.isV2SchemeVerified) sb.appendLine("  • v2 (APK Signature Scheme v2) ✅")
-                if (result.isV3SchemeVerified) sb.appendLine("  • v3 (APK Signature Scheme v3) ✅")
-                if (result.isV4SchemeVerified) sb.appendLine("  • v4 (APK Signature Scheme v4) ✅")
-
-                // 证书信息
-                val signers = result.signers
-                if (signers.isNotEmpty()) {
-                    sb.appendLine()
-                    sb.appendLine("📜 证书信息:")
-                    signers.forEachIndexed { index, signer ->
-                        sb.appendLine("  签名者 ${index + 1}:")
-                        signer.certs.forEach { cert ->
-                            sb.appendLine("    颁发者: ${cert.issuerX500Principal.name}")
-                            sb.appendLine("    使用者: ${cert.subjectX500Principal.name}")
-                            sb.appendLine("    有效期: ${cert.notBefore} - ${cert.notAfter}")
-                        }
-                    }
-                }
-
-                // 警告信息
-                if (result.warnings.isNotEmpty()) {
-                    sb.appendLine()
-                    sb.appendLine("⚠️ 警告:")
-                    result.warnings.forEach { warning ->
-                        sb.appendLine("  • $warning")
-                    }
-                }
+                val schemes = mutableListOf<String>()
+                if (result.isVerifiedUsingV1Scheme) schemes.add("v1 (JAR/PKCS#7)")
+                if (result.isVerifiedUsingV2Scheme) schemes.add("v2 (APK Signature Scheme v2)")
+                if (result.isVerifiedUsingV3Scheme) schemes.add("v3 (APK Signature Scheme v3)")
+                if (result.isVerifiedUsingV4Scheme) schemes.add("v4 (APK Signature Scheme v4)")
+                schemes.forEach { sb.appendLine("  • $it ✅") }
 
                 ToolResult(true, sb.toString())
             } else {
                 sb.appendLine("❌ 签名验证失败")
-                sb.appendLine()
-                sb.appendLine("错误:")
                 result.errors.forEach { error ->
                     sb.appendLine("  • $error")
                 }

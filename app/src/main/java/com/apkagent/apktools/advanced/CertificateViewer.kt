@@ -19,7 +19,7 @@ import java.util.zip.ZipFile
  * 证书详情查看器：解析 APK 签名证书的详细信息。
  *
  * 功能：
- * 1. 读取 APK 的签名证书（META-INF/*.RSA/*.DSA/*.EC）
+ * 1. 读取 APK 的签名证书（META-INF/下的.RSA/.DSA/.EC文件）
  * 2. 解析 X.509 证书详细信息
  * 3. 显示颁发者、使用者、有效期、序列号、指纹等
  * 4. 检查证书是否过期
