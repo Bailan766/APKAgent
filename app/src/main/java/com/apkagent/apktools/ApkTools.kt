@@ -1372,14 +1372,22 @@ object RunNodeScript : Tool {
         try {
             tmpScript.writeText(script)
 
-            // Shizuku 优先 — chmod 内部 node 目录后直接执行
+            // Shizuku 优先 — 内部 node 复制到 /data/local/tmp/ 后执行
             if (ShizukuManager.isAuthorized()) {
                 val workDir = ctx.workspace.absolutePath
-                // 通过 Shizuku chmod 确保 node 二进制可执行
-                if (node.contains("/files/nodejs/")) {
-                    ShizukuManager.chmodR(node.substringBeforeLast("/bin/node"), "755")
+                // 内部 node 需要复制到 /data/local/tmp/（app 私有目录对 shell 不可访问）
+                val execNode = if (node.contains("/files/nodejs/")) {
+                    val tmpNode = "/data/local/tmp/apkagent_node"
+                    val srcNode = node
+                    val needCopy = !File(tmpNode).exists() || File(tmpNode).lastModified() < File(srcNode).lastModified()
+                    if (needCopy) {
+                        ShizukuManager.execAndGet("cp -f '$srcNode' '$tmpNode' && chmod 755 '$tmpNode'")
+                    }
+                    "'$tmpNode'"
+                } else {
+                    "'$node'"
                 }
-                val cmd = "cd '$workDir' && '$node' '${tmpScript.absolutePath}'"
+                val cmd = "cd '$workDir' && $execNode '${tmpScript.absolutePath}'"
                 val process = ShizukuManager.execShizuku(cmd)
                 if (process != null) {
                     val finished = process.waitFor(timeout.toLong(), java.util.concurrent.TimeUnit.SECONDS)
