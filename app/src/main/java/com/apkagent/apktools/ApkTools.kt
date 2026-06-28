@@ -21,6 +21,14 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.serialization.json.JsonObject
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.util.Logger
+import com.apkagent.apktools.advanced.ZipAlignTool
+import com.apkagent.apktools.advanced.SplitApkHandler
+import com.apkagent.apktools.advanced.ResourceTableDecoder
+import com.apkagent.apktools.advanced.ResourceExtractor
+import com.apkagent.apktools.advanced.CertificateViewer
+import com.apkagent.apktools.advanced.PermissionsViewer
+import com.apkagent.apktools.advanced.EnhancedSigner
+import com.apkagent.apktools.advanced.ApkInstaller
 import java.io.File
 import java.util.zip.ZipFile
 
@@ -85,6 +93,15 @@ fun buildToolRegistry(): ToolRegistry {
     // AI 自建脚本
     r.register(CreateScriptTool())
     r.register(RunScriptTool())
+    // 新增高级工具（来自 AEE 功能移植）
+    r.register(ZipAlignTool)
+    r.register(SplitApkHandler)
+    r.register(ResourceTableDecoder)
+    r.register(ResourceExtractor)
+    r.register(CertificateViewer)
+    r.register(PermissionsViewer)
+    r.register(EnhancedSigner)
+    r.register(ApkInstaller)
     return r
 }
 
