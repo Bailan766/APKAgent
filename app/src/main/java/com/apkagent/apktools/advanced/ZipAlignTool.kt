@@ -87,7 +87,7 @@ object ZipAlignTool : Tool {
 
                 // 检查是否需要对齐
                 var needsAlignment = false
-                raf.seek(centralDirOffset)
+                raf.seek(centralDirOffset.toLong())
                 val entryBuf = ByteArray(46)
                 for (i in 0 until totalEntries) {
                     val entryStart = raf.filePointer
