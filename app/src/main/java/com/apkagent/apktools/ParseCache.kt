@@ -72,7 +72,7 @@ object ParseCache {
     ): T {
         get<T>(file, parser)?.let { return it }
         val result = parseFn()
-        val mem = if (estimatedMemory > 0) estimatedMemory else estimateSize(result)
+        val mem = if (estimatedMemory > 0) estimatedMemory else estimateSize(result as Any)
         put(file, parser, result as Any, mem)
         return result
     }

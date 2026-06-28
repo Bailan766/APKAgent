@@ -63,7 +63,7 @@ class OpenAIClient(
      */
     suspend fun fetchAvailableModels(): Result<List<String>> = withContext(Dispatchers.IO) {
         try {
-            circuitBreaker.execute {
+            val models = circuitBreaker.execute<List<String>> {
             var base = baseUrl.trim().trimEnd('/')
             if (!base.endsWith("/v1")) {
                 if (!base.endsWith("/models")) base = "$base/v1"
@@ -105,8 +105,9 @@ class OpenAIClient(
                 }
             }
 
-            Result.success(models)
+            models
             }
+            Result.success(models)
         } catch (e: CircuitOpenException) {
             Result.failure(e)
         } catch (e: Exception) {

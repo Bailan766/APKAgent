@@ -38,9 +38,10 @@ object ContextManager {
         // 基于阶段的默认分组
         val base = when (phase) {
             ReversePhase.PREPARE -> setOf(ToolGroup.RECON, ToolGroup.FILE)
-            ReversePhase.ANALYZE -> setOf(ToolGroup.ANALYSIS, ToolGroup.FILE, ToolGroup.RECON)
-            ReversePhase.MODIFY -> setOf(ToolGroup.MODIFY, ToolGroup.SCRIPT, ToolGroup.FILE)
-            ReversePhase.DELIVER -> setOf(ToolGroup.FILE, ToolGroup.SYSTEM)
+            ReversePhase.STATIC_ANALYSIS -> setOf(ToolGroup.ANALYSIS, ToolGroup.FILE, ToolGroup.RECON)
+            ReversePhase.DYNAMIC -> setOf(ToolGroup.SCRIPT, ToolGroup.ANALYSIS)
+            ReversePhase.MODIFICATION -> setOf(ToolGroup.MODIFY, ToolGroup.SCRIPT, ToolGroup.FILE)
+            ReversePhase.REPACK -> setOf(ToolGroup.MODIFY, ToolGroup.SYSTEM)
             ReversePhase.DONE -> ToolGroup.entries.toSet()
         }
 

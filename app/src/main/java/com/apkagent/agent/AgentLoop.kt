@@ -244,7 +244,7 @@ class AgentLoop(
         }
         // DANGER 级工具：执行前创建快照
         var snapshot: SnapshotManager.Snapshot? = null
-        if (tool.riskLevel == ToolRiskLevel.DANGER) {
+        if (ToolRiskLevel.infer(call.name) == ToolRiskLevel.DANGER) {
             try {
                 val ws = ctx.workspace
                 if (ws != null && ws.exists()) {
@@ -260,7 +260,7 @@ class AgentLoop(
             tool.execute(args, ctx)
         } catch (e: Throwable) {
             // 如果有快照且执行失败，提示可回滚
-            val rollbackHint = if (snapshot != null) " (可使用快照 ${snapshot.id} 回滚)" else ""
+            val rollbackHint = if (snapshot != null) " (可使用快照 ${snapshot!!.id} 回滚)" else ""
             ToolResult.err("工具异常：${e.message ?: e.javaClass.simpleName}$rollbackHint")
         }
     }
