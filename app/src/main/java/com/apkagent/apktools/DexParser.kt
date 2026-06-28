@@ -12,6 +12,24 @@ class DexParser(private val data: ByteArray) {
 
     private val buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
 
+    companion object {
+        /**
+         * 带缓存的解析。相同内容的 DEX 文件只解析一次。
+         */
+        fun parseCached(file: java.io.File): DexInfo {
+            return ParseCache.getOrParse(file, "DexParser") {
+                DexParser(file.readBytes()).parse()
+            }
+        }
+
+        fun parseCached(data: ByteArray): DexInfo {
+            val key = ParseCache.contentHash(data)
+            return ParseCache.getOrParse(java.io.File("/virtual/$key"), "DexParser") {
+                DexParser(data).parse()
+            }
+        }
+    }
+
     data class DexInfo(
         val version: String,
         val fileSize: Long,

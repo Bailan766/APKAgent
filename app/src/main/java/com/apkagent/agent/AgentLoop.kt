@@ -9,6 +9,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
 
 interface AgentCallbacks {
     fun onAssistantContentDelta(delta: String)
@@ -114,6 +115,9 @@ class AgentLoop(
     suspend fun run(userText: String): Boolean {
         _state.value = AgentState(phase = ReversePhase.PREPARE, isRunning = true)
         callbacks.onPhaseChange(ReversePhase.PREPARE)
+        // 初始化审计日志
+        try { AuditLogger.init(ctx.workspace ?: File("/sdcard/Download/APKAgent")) } catch (_: Exception) {}
+        AuditLogger.newSession()
 
         val needContinue = runInternal(userText)
 
@@ -238,11 +242,26 @@ class AgentLoop(
         if (tool.sensitive && !callbacks.onConfirmToolCall(call)) {
             return ToolResult.err("拒绝执行")
         }
+        // DANGER 级工具：执行前创建快照
+        var snapshot: SnapshotManager.Snapshot? = null
+        if (tool.riskLevel == ToolRiskLevel.DANGER) {
+            try {
+                val ws = ctx.workspace
+                if (ws != null && ws.exists()) {
+                    val files = ws.listFiles()?.filter { it.isFile && !it.name.startsWith(".") } ?: emptyList()
+                    snapshot = SnapshotManager.create(call.name, files, ws)
+                }
+            } catch (e: Exception) {
+                // 快照失败不阻止执行
+            }
+        }
         return try {
             val args = call.parsedArgs ?: JsonObject(emptyMap())
             tool.execute(args, ctx)
         } catch (e: Throwable) {
-            ToolResult.err("工具异常：${e.message ?: e.javaClass.simpleName}")
+            // 如果有快照且执行失败，提示可回滚
+            val rollbackHint = if (snapshot != null) " (可使用快照 ${snapshot.id} 回滚)" else ""
+            ToolResult.err("工具异常：${e.message ?: e.javaClass.simpleName}$rollbackHint")
         }
     }
 

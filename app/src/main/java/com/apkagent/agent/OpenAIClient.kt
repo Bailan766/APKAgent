@@ -32,7 +32,8 @@ private data class AccToolCall(
  */
 class OpenAIClient(
     var baseUrl: String,
-    var apiKey: String
+    var apiKey: String,
+    private val circuitBreaker: CircuitBreaker = CircuitBreaker()
 ) {
     private val json = Json {
         ignoreUnknownKeys = true
@@ -62,6 +63,7 @@ class OpenAIClient(
      */
     suspend fun fetchAvailableModels(): Result<List<String>> = withContext(Dispatchers.IO) {
         try {
+            circuitBreaker.execute {
             var base = baseUrl.trim().trimEnd('/')
             if (!base.endsWith("/v1")) {
                 if (!base.endsWith("/models")) base = "$base/v1"
@@ -104,6 +106,9 @@ class OpenAIClient(
             }
 
             Result.success(models)
+            }
+        } catch (e: CircuitOpenException) {
+            Result.failure(e)
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -117,6 +122,7 @@ class OpenAIClient(
         request: ChatRequest,
         onContentDelta: (String) -> Unit
     ): StreamResult = withContext(Dispatchers.IO) {
+        circuitBreaker.retryWithBackoff(maxRetries = 3) {
         val body = json.encodeToString(ChatRequest.serializer(), request)
             .toRequestBody("application/json; charset=utf-8".toMediaType())
 
@@ -194,5 +200,6 @@ class OpenAIClient(
         }
 
         StreamResult(content.toString(), pending, finishReason)
+        }
     }
 }

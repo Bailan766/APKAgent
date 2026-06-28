@@ -92,4 +92,8 @@ dependencies {
     // Shizuku 系统级权限
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
+
+    // 单元测试
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")
 }
