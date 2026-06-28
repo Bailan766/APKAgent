@@ -21,10 +21,15 @@ class CreateScriptTool : Tool {
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        // 兼容 AI 传不同的参数名
         val filename = args["filename"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 filename")
+            ?: args["script_name"]?.jsonPrimitive?.contentOrNull
+            ?: args["name"]?.jsonPrimitive?.contentOrNull
+            ?: return ToolResult.err("缺少 filename（试传: filename/script_name/name）")
         val content = args["content"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 content")
+            ?: args["script_content"]?.jsonPrimitive?.contentOrNull
+            ?: args["code"]?.jsonPrimitive?.contentOrNull
+            ?: return ToolResult.err("缺少 content（试传: content/script_content/code）")
         val scriptType = args["scriptType"]?.jsonPrimitive?.contentOrNull ?: guessType(filename)
 
         val scriptDir = File(ctx.workspace, "scripts")
