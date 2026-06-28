@@ -11,11 +11,16 @@ import java.io.File
 import java.io.InputStreamReader
 
 /**
- * Python 执行引擎 — 优先 Shizuku shell 权限执行，回退普通 ProcessBuilder
+ * Python 执行引擎 — 通过 Shizuku shell 权限执行
+ *
+ * Android 11+ app 私有目录对 shell uid 不可访问（目录级权限），
+ * 必须将 Python 复制到 /data/local/tmp/apkagent_py/ 才能执行。
  */
 object PythonRunner {
 
     private var internalDir: File? = null
+    private const val TMP_PYTHON_DIR = "/data/local/tmp/apkagent_py"
+    private const val TMP_PYTHON_BIN = "$TMP_PYTHON_DIR/bin/python3"
 
     private val EXTERNAL_PATHS = listOf(
         "/data/data/com.termux/files/usr/bin/python3",
@@ -49,7 +54,14 @@ object PythonRunner {
             if (f.exists()) return custom
         }
 
-        // 内部安装
+        // 内部安装 — 先检查 /data/local/tmp/ 中已部署的副本
+        if (File(TMP_PYTHON_BIN).exists()) {
+            cachedPython = TMP_PYTHON_BIN
+            Logger.i("Py", "tmp: $TMP_PYTHON_BIN")
+            return cachedPython
+        }
+
+        // 内部安装 — 原始位置
         internalDir?.let { internal ->
             val internalPy = File(internal, "bin/python3")
             if (internalPy.exists()) {
@@ -121,35 +133,86 @@ object PythonRunner {
     }
 
     /**
+     * 确保 Python 已部署到 /data/local/tmp/ （只需做一次，除非源文件更新）
+     *
+     * Android 11+ /data/user/0/com.apkagent/ 对 shell uid 不可访问，
+     * 必须复制到 /data/local/tmp/apkagent_py/ 才能通过 Shizuku 执行。
+     */
+    private fun ensureDeployedToTmp(): String? {
+        val srcDir = internalDir ?: return null
+        val srcBin = File(srcDir, "bin/python3")
+        if (!srcBin.exists()) return null
+
+        val tmpBin = File(TMP_PYTHON_BIN)
+        val tmpDir = File(TMP_PYTHON_DIR)
+
+        // 如果已部署且源文件没有更新，直接返回
+        if (tmpBin.exists() && tmpBin.lastModified() >= srcBin.lastModified()) {
+            Logger.i("Py", "已部署到 tmp，跳过复制")
+            return TMP_PYTHON_BIN
+        }
+
+        // 通过 Shizuku 复制整个 python 目录到 /data/local/tmp/
+        Logger.i("Py", "部署 Python 到 $TMP_PYTHON_DIR ...")
+        ShizukuManager.execAndGet("rm -rf '$TMP_PYTHON_DIR'")
+        ShizukuManager.execAndGet("cp -a '${srcDir.absolutePath}' '$TMP_PYTHON_DIR'")
+        ShizukuManager.execAndGet("chmod -R 755 '$TMP_PYTHON_DIR'")
+
+        return if (tmpBin.exists()) {
+            Logger.i("Py", "部署成功: $TMP_PYTHON_BIN")
+            TMP_PYTHON_BIN
+        } else {
+            Logger.e("Py", "部署失败")
+            null
+        }
+    }
+
+    /**
+     * 获取可执行的 Python 路径。
+     * 内部安装的 Python 必须通过 /data/local/tmp/ 中转执行。
+     */
+    private fun getExecutablePython(): String? {
+        val python = findPython() ?: return null
+
+        // 外部 Python（Termux 等）可以直接执行
+        if (!python.startsWith(internalDir?.absolutePath ?: "\u0000")) {
+            return python
+        }
+
+        // 内部 Python 必须部署到 /data/local/tmp/
+        if (!ShizukuManager.isAuthorized()) {
+            Logger.w("Py", "内部 Python 需要 Shizuku 授权才能执行")
+            return null
+        }
+        return ensureDeployedToTmp()
+    }
+
+    /**
      * 执行 Python 脚本。
-     * 1) 优先尝试 Shizuku shell 权限执行（绕过权限限制）
-     * 2) 回退到普通 ProcessBuilder
+     * 通过 Shizuku shell 以 /data/local/tmp/ 中的 Python 副本执行。
      */
     suspend fun execute(script: File, timeoutSeconds: Int = 30, workDir: File? = null): ExecResult =
         withContext(Dispatchers.IO) {
-            val python = findPython() ?: return@withContext ExecResult(false, null, installGuide())
+            val python = getExecutablePython()
+                ?: return@withContext ExecResult(false, null, installGuide())
             if (!script.exists()) return@withContext ExecResult(false, null, "脚本不存在: ${script.absolutePath}")
 
-            Logger.i("Py", "执行: ${script.name} timeout=${timeoutSeconds}s")
+            Logger.i("Py", "执行: ${script.name} python=$python timeout=${timeoutSeconds}s")
 
-            // 构建命令
             val workDirPath = workDir?.absolutePath ?: script.parentFile?.absolutePath ?: "."
+            // PYTHONHOME 指向 tmp 中的副本（不是原始 filesDir）
+            val pyHome = if (python == TMP_PYTHON_BIN) TMP_PYTHON_DIR else internalDir?.absolutePath
             val env = buildString {
-                internalDir?.let {
-                    append("PYTHONHOME='${it.absolutePath}' ")
+                pyHome?.let {
+                    append("PYTHONHOME='$it' ")
                     val pyLib = File(it, "lib/python3")
                     if (pyLib.exists()) append("PYTHONPATH='${pyLib.absolutePath}' ")
                 }
-            }
-            // 通过 Shizuku chmod 确保 Python 二进制可执行
-            if (ShizukuManager.isAuthorized()) {
-                ensureExecutableShizuku(python)
             }
             val cmd = "cd '$workDirPath' && ${env}'${python}' '${script.absolutePath}'"
 
             try {
                 withTimeout(timeoutSeconds * 1000L) {
-                    // 优先用 Shizuku shell 权限
                     if (ShizukuManager.isAuthorized()) {
                         Logger.i("Py", "通过 Shizuku shell 执行")
                         val process = ShizukuManager.execShizuku(cmd)
@@ -166,12 +229,12 @@ object PythonRunner {
                         }
                     }
 
-                    // 回退到普通 ProcessBuilder
+                    // 回退到普通 ProcessBuilder（仅外部 Python 有效）
                     Logger.i("Py", "通过 ProcessBuilder 执行")
                     val pb = ProcessBuilder(python, script.absolutePath)
                     if (workDir?.isDirectory == true) pb.directory(workDir)
-                    internalDir?.let { pb.environment()["PYTHONHOME"] = it.absolutePath }
-                    pb.environment()["PYTHONPATH"] = File(internalDir, "lib/python3").let {
+                    pyHome?.let { pb.environment()["PYTHONHOME"] = it }
+                    pb.environment()["PYTHONPATH"] = File(pyHome ?: "", "lib/python3").let {
                         if (it.exists()) it.absolutePath else ""
                     }
                     pb.redirectErrorStream(false)
@@ -192,11 +255,9 @@ object PythonRunner {
         }
 
     suspend fun getVersion(): String? = withContext(Dispatchers.IO) {
-        val python = findPython() ?: return@withContext null
+        val python = getExecutablePython() ?: return@withContext null
         try {
-            // Shizuku 优先
             if (ShizukuManager.isAuthorized()) {
-                ensureExecutableShizuku(python)
                 val v = ShizukuManager.execAndGet("'${python}' --version 2>&1")?.trim()
                 if (!v.isNullOrBlank()) return@withContext v
             }
@@ -211,17 +272,18 @@ object PythonRunner {
     // ──── pip 包管理 ────
 
     suspend fun refreshInstalled(): List<String> = withContext(Dispatchers.IO) {
-        val python = findPython() ?: return@withContext emptyList()
+        val python = getExecutablePython() ?: return@withContext emptyList()
+        val pyHome = if (python == TMP_PYTHON_BIN) TMP_PYTHON_DIR else internalDir?.absolutePath
         try {
-            val cmd = internalDir?.let {
-                "PYTHONHOME='${it.absolutePath}' $python -m pip list --format=columns"
+            val cmd = pyHome?.let {
+                "PYTHONHOME='$it' $python -m pip list --format=columns"
             } ?: "$python -m pip list --format=columns"
 
             val out = if (ShizukuManager.isAuthorized()) {
                 ShizukuManager.execAndGet(cmd) ?: ""
             } else {
                 val pb = ProcessBuilder(python, "-m", "pip", "list", "--format=columns")
-                internalDir?.let { pb.environment()["PYTHONHOME"] = it.absolutePath }
+                pyHome?.let { pb.environment()["PYTHONHOME"] = it }
                 pb.redirectErrorStream(true)
                 val proc = pb.start()
                 proc.inputStream.bufferedReader().readText()
@@ -240,19 +302,21 @@ object PythonRunner {
 
     suspend fun pipInstall(vararg packages: String, timeoutSeconds: Int = 300): ExecResult =
         withContext(Dispatchers.IO) {
-            val python = findPython() ?: return@withContext ExecResult(false, null, installGuide())
+            val python = getExecutablePython()
+                ?: return@withContext ExecResult(false, null, installGuide())
+            val pyHome = if (python == TMP_PYTHON_BIN) TMP_PYTHON_DIR else internalDir?.absolutePath
             Logger.i("Py", "pip install ${packages.joinToString(" ")}")
             try {
                 withTimeout(timeoutSeconds * 1000L) {
-                    val cmd = internalDir?.let {
-                        "PYTHONHOME='${it.absolutePath}' $python -m pip install ${packages.joinToString(" ")} 2>&1"
+                    val cmd = pyHome?.let {
+                        "PYTHONHOME='$it' $python -m pip install ${packages.joinToString(" ")} 2>&1"
                     } ?: "$python -m pip install ${packages.joinToString(" ")} 2>&1"
 
                     val out = if (ShizukuManager.isAuthorized()) {
                         ShizukuManager.execAndGet(cmd) ?: "Shizuku 执行失败"
                     } else {
                         val pb = ProcessBuilder(python, "-m", "pip", "install", *packages)
-                        internalDir?.let { pb.environment()["PYTHONHOME"] = it.absolutePath }
+                        pyHome?.let { pb.environment()["PYTHONHOME"] = it }
                         pb.redirectErrorStream(true)
                         val proc = pb.start()
                         proc.inputStream.bufferedReader().readText()
@@ -267,17 +331,19 @@ object PythonRunner {
         }
 
     suspend fun pipList(): ExecResult = withContext(Dispatchers.IO) {
-        val python = findPython() ?: return@withContext ExecResult(false, null, installGuide())
+        val python = getExecutablePython()
+            ?: return@withContext ExecResult(false, null, installGuide())
+        val pyHome = if (python == TMP_PYTHON_BIN) TMP_PYTHON_DIR else internalDir?.absolutePath
         try {
-            val cmd = internalDir?.let {
-                "PYTHONHOME='${it.absolutePath}' $python -m pip list 2>&1"
+            val cmd = pyHome?.let {
+                "PYTHONHOME='$it' $python -m pip list 2>&1"
             } ?: "$python -m pip list 2>&1"
 
             val out = if (ShizukuManager.isAuthorized()) {
                 ShizukuManager.execAndGet(cmd) ?: "Shizuku 执行失败"
             } else {
                 val pb = ProcessBuilder(python, "-m", "pip", "list")
-                internalDir?.let { pb.environment()["PYTHONHOME"] = it.absolutePath }
+                pyHome?.let { pb.environment()["PYTHONHOME"] = it }
                 pb.redirectErrorStream(true)
                 val proc = pb.start()
                 proc.inputStream.bufferedReader().readText()
@@ -285,22 +351,6 @@ object PythonRunner {
             ExecResult(true, out.take(4000), null)
         } catch (e: Throwable) {
             ExecResult(false, null, "pip list 失败: ${e.message}")
-        }
-    }
-
-    /**
-     * 通过 Shizuku 确保 Python 二进制及依赖库有执行权限（chmod -R 755）
-     * 在 execute() 前调用一次，之后 shell uid 即可直接执行
-     */
-    private fun ensureExecutableShizuku(pythonPath: String) {
-        try {
-            // chmod 整个 python 目录（bin/、lib/ 等）
-            internalDir?.let { dir ->
-                ShizukuManager.chmodR(dir.absolutePath, "755")
-                Logger.i("Py", "Shizuku chmod -R 755: ${dir.absolutePath}")
-            }
-        } catch (e: Exception) {
-            Logger.w("Py", "Shizuku chmod 失败: ${e.message}")
         }
     }
 }
