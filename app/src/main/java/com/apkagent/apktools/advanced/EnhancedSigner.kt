@@ -114,7 +114,7 @@ object EnhancedSigner : Tool {
             } else {
                 // 使用内置调试密钥
                 val debugKey = DebugKeyProvider.getOrCreate()
-                ks = java.security.KeyStore.getInstance(debugKey.file, debugKey.storePass.toCharArray())
+                ks = java.security.KeyStore.getInstance(debugKey.keystoreFile, debugKey.storePass.toCharArray())
                 alias = debugKey.alias
                 kPass = debugKey.keyPass
                 ksPass = debugKey.storePass
