@@ -55,6 +55,7 @@ jobs:
           retention-days: 30
 
       - name: Create Release
+        id: create_release
         if: success() && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
@@ -64,6 +65,32 @@ jobs:
           prerelease: false
           make_latest: true
           files: app/build/outputs/apk/debug/app-debug.apk
+          fail_on_unmatched_files: true
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify Release Asset
+        if: success() && steps.create_release.conclusion == 'success' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          API: https://api.github.com/repos/${{ github.repository }}/releases/tags/v${{ steps.version.outputs.version }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.request
+          api = os.environ['API']
+          token = os.environ['GITHUB_TOKEN']
+          req = urllib.request.Request(api, headers={
+              'Authorization': f'Bearer {token}',
+              'Accept': 'application/vnd.github+json',
+              'User-Agent': 'github-actions'
+          })
+          with urllib.request.urlopen(req, timeout=60) as r:
+              rel = json.loads(r.read().decode())
+          assets = rel.get('assets', [])
+          if not assets:
+              raise SystemExit('Release asset missing after Create Release step')
+          print('release asset count:', len(assets))
+          for asset in assets:
+              print(asset.get('name'), asset.get('browser_download_url'))
+          PY
