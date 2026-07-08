@@ -22,6 +22,8 @@ class ProjectAnalyzerTest {
         val project = ReverseProject(
             id = "p1",
             name = "Broken",
+            sourceType = ProjectSourceType.APK_FILE,
+            sourcePath = tmp.absolutePath,
             importedApkPath = tmp.absolutePath
         )
 
