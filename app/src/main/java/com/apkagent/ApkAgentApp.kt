@@ -47,6 +47,15 @@ class ApkAgentApp : Application() {
         _currentProject.value = project
     }
 
+    fun setOpenApk(file: File?) {
+        if (file == null) {
+            _currentProject.value = null
+            return
+        }
+        val project = projectStore.createProjectFromApk(file)
+        _currentProject.value = project
+    }
+
     fun currentOpenApk(): File? = currentProject.value?.importedApkPath?.let(::File)?.takeIf { it.exists() }
 
     override fun onCreate() {
