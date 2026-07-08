@@ -1,1 +1,70 @@
-cGFja2FnZSBjb20uYXBrYWdlbnQKCmltcG9ydCBhbmRyb2lkLmFwcC5BcHBsaWNhdGlvbgppbXBvcnQgY29tLmFwa2FnZW50LmFnZW50LlRvb2xSZWdpc3RyeQppbXBvcnQgY29tLmFwa2FnZW50LmFwa3Rvb2xzLlB5dGhvblJ1bm5lcgppbXBvcnQgY29tLmFwa2FnZW50LmFwa3Rvb2xzLmJ1aWxkVG9vbFJlZ2lzdHJ5CmltcG9ydCBjb20uYXBrYWdlbnQucHJvamVjdC5Qcm9qZWN0U3RvcmUKaW1wb3J0IGNvbS5hcGthZ2VudC5wcm9qZWN0LlJldmVyc2VQcm9qZWN0CmltcG9ydCBjb20uYXBrYWdlbnQuc2hpenVrdS5TaGl6dWt1TWFuYWdlcgppbXBvcnQgY29tLmFwa2FnZW50LnN0b3JlLlNldHRpbmdzU3RvcmUKaW1wb3J0IGNvbS5hcGthZ2VudC51dGlsLkxvZ2dlcgppbXBvcnQga290bGlueC5jb3JvdXRpbmVzLmZsb3cuTXV0YWJsZVN0YXRlRmxvdwppbXBvcnQga290bGlueC5jb3JvdXRpbmVzLmZsb3cuU3RhdGVGbG93CmltcG9ydCBrb3RsaW54LmNvcm91dGluZXMuZmxvdy5hc1N0YXRlRmxvdwppbXBvcnQgamF2YS5pby5GaWxlCgpjbGFzcyBBcGtBZ2VudEFwcCA6IEFwcGxpY2F0aW9uKCkgewoKICAgIGxhdGVpbml0IHZhciBzZXR0aW5nc1N0b3JlOiBTZXR0aW5nc1N0b3JlCiAgICAgICAgcHJpdmF0ZSBzZXQKCiAgICBsYXRlaW5pdCB2YXIgdG9vbFJlZ2lzdHJ5OiBUb29sUmVnaXN0cnkKICAgICAgICBwcml2YXRlIHNldAoKICAgIGxhdGVpbml0IHZhciBwcm9qZWN0U3RvcmU6IFByb2plY3RTdG9yZQogICAgICAgIHByaXZhdGUgc2V0CgogICAgLy8g5bel5L2c5Yy65pS+5ZyoIC9zZGNhcmQvRG93bmxvYWQvQVBLQWdlbnQv77yI5aSW6YOo5a2Y5YKo77yMc2hlbGwgdWlkIOWPr+iuv+mXru+8jOeUqOaIt+WPr+inge+8iQogICAgdmFsIHdvcmtzcGFjZTogRmlsZSBieSBsYXp5IHsKICAgICAgICB2YWwgZXh0ID0gZ2V0RXh0ZXJuYWxGaWxlc0RpcihudWxsKQogICAgICAgIHZhbCBkb3dubG9hZFdzID0gRmlsZSgiL3NkY2FyZC9Eb3dubG9hZC9BUEtBZ2VudCIpCiAgICAgICAgdmFsIHdzID0gaWYgKGV4dCAhPSBudWxsKSB7CiAgICAgICAgICAgIHRyeSB7CiAgICAgICAgICAgICAgICBkb3dubG9hZFdzLmFwcGx5IHsgbWtkaXJzKCkgfQogICAgICAgICAgICAgICAgaWYgKGRvd25sb2FkV3MuY2FuV3JpdGUoKSkgZG93bmxvYWRXcyBlbHNlIEZpbGUoZmlsZXNEaXIsICJ3b3Jrc3BhY2UiKQogICAgICAgICAgICB9IGNhdGNoIChfOiBUaHJvd2FibGUpIHsKICAgICAgICAgICAgICAgIEZpbGUoZmlsZXNEaXIsICJ3b3Jrc3BhY2UiKQogICAgICAgICAgICB9CiAgICAgICAgfSBlbHNlIEZpbGUoZmlsZXNEaXIsICJ3b3Jrc3BhY2UiKQogICAgICAgIHdzLmFwcGx5IHsgaWYgKCFleGlzdHMoKSkgbWtkaXJzKCkgfQogICAgfQoKICAgIHByaXZhdGUgdmFsIF9jdXJyZW50UHJvamVjdCA9IE11dGFibGVTdGF0ZUZsb3c8UmV2ZXJzZVByb2plY3Q/PihudWxsKQogICAgdmFsIGN1cnJlbnRQcm9qZWN0OiBTdGF0ZUZsb3c8UmV2ZXJzZVByb2plY3Q/PiA9IF9jdXJyZW50UHJvamVjdC5hc1N0YXRlRmxvdygpCgogICAgZnVuIHNldEN1cnJlbnRQcm9qZWN0KHByb2plY3Q6IFJldmVyc2VQcm9qZWN0PykgewogICAgICAgIF9jdXJyZW50UHJvamVjdC52YWx1ZSA9IHByb2plY3QKICAgIH0KCiAgICBmdW4gY3VycmVudE9wZW5BcGsoKTogRmlsZT8gPSBjdXJyZW50UHJvamVjdC52YWx1ZT8uaW1wb3J0ZWRBcGtQYXRoPy5sZXQoOjpGaWxlKT8udGFrZUlmIHsgaXQuZXhpc3RzKCkgfQoKICAgIG92ZXJyaWRlIGZ1biBvbkNyZWF0ZSgpIHsKICAgICAgICBzdXBlci5vbkNyZWF0ZSgpCiAgICAgICAgTG9nZ2VyLmluaXQoKQogICAgICAgIExvZ2dlci5zZXR1cENyYXNoSGFuZGxlcigpCiAgICAgICAgTG9nZ2VyLmkoIkFwcCIsICJBUEtBZ2VudCB2My41LjAg5ZCv5YqoIOKAlCBTREs9JHthbmRyb2lkLm9zLkJ1aWxkLlZFUlNJT04uU0RLX0lOVH0iKQogICAgICAgIHNldHRpbmdzU3RvcmUgPSBTZXR0aW5nc1N0b3JlKHRoaXMpCiAgICAgICAgcHJvamVjdFN0b3JlID0gUHJvamVjdFN0b3JlKHRoaXMsIHdvcmtzcGFjZSkKICAgICAgICBQeXRob25SdW5uZXIuaW5pdCh0aGlzKQogICAgICAgIHRvb2xSZWdpc3RyeSA9IGJ1aWxkVG9vbFJlZ2lzdHJ5KCkKICAgICAgICBTaGl6dWt1TWFuYWdlci5pbml0KCkKICAgICAgICBMb2dnZXIuaSgiQXBwIiwgIuWIneWni+WMluWujOaIkCDigJQgd29ya3NwYWNlPSR7d29ya3NwYWNlLmFic29sdXRlUGF0aH0iKQogICAgfQoKICAgIG92ZXJyaWRlIGZ1biBvblRlcm1pbmF0ZSgpIHsKICAgICAgICBzdXBlci5vblRlcm1pbmF0ZSgpCiAgICAgICAgU2hpenVrdU1hbmFnZXIuZGVzdHJveSgpCiAgICAgICAgTG9nZ2VyLmNsb3NlKCkKICAgIH0KfQo=
+package com.apkagent
+
+import android.app.Application
+import com.apkagent.agent.ToolRegistry
+import com.apkagent.apktools.PythonRunner
+import com.apkagent.apktools.buildToolRegistry
+import com.apkagent.project.ProjectStore
+import com.apkagent.project.ReverseProject
+import com.apkagent.shizuku.ShizukuManager
+import com.apkagent.store.SettingsStore
+import com.apkagent.util.Logger
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import java.io.File
+
+class ApkAgentApp : Application() {
+
+    lateinit var settingsStore: SettingsStore
+        private set
+
+    lateinit var toolRegistry: ToolRegistry
+        private set
+
+    lateinit var projectStore: ProjectStore
+        private set
+
+    // 工作区放在 /sdcard/Download/APKAgent/（外部存储，shell uid 可访问，用户可见）
+    val workspace: File by lazy {
+        val ext = getExternalFilesDir(null)
+        val downloadWs = File("/sdcard/Download/APKAgent")
+        val ws = if (ext != null) {
+            try {
+                downloadWs.apply { mkdirs() }
+                if (downloadWs.canWrite()) downloadWs else File(filesDir, "workspace")
+            } catch (_: Throwable) {
+                File(filesDir, "workspace")
+            }
+        } else File(filesDir, "workspace")
+        ws.apply { if (!exists()) mkdirs() }
+    }
+
+    private val _currentProject = MutableStateFlow<ReverseProject?>(null)
+    val currentProject: StateFlow<ReverseProject?> = _currentProject.asStateFlow()
+
+    fun setCurrentProject(project: ReverseProject?) {
+        _currentProject.value = project
+    }
+
+    fun currentOpenApk(): File? = currentProject.value?.importedApkPath?.let(::File)?.takeIf { it.exists() }
+
+    override fun onCreate() {
+        super.onCreate()
+        Logger.init()
+        Logger.setupCrashHandler()
+        Logger.i("App", "APKAgent v3.5.0 启动 — SDK=${android.os.Build.VERSION.SDK_INT}")
+        settingsStore = SettingsStore(this)
+        projectStore = ProjectStore(this, workspace)
+        PythonRunner.init(this)
+        toolRegistry = buildToolRegistry()
+        ShizukuManager.init()
+        Logger.i("App", "初始化完成 — workspace=${workspace.absolutePath}")
+    }
+
+    override fun onTerminate() {
+        super.onTerminate()
+        ShizukuManager.destroy()
+        Logger.close()
+    }
+}
