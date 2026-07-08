@@ -38,7 +38,16 @@ jobs:
       - name: Get Version
         id: version
         run: |
-          VERSION=$(grep 'versionName' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')
+          VERSION=$(python3 - <<'PY'
+          import re
+          from pathlib import Path
+          text = Path('app/build.gradle.kts').read_text(encoding='utf-8')
+          m = re.search(r'versionName\s*=\s*"([^"]+)"', text)
+          if not m:
+              raise SystemExit('versionName not found')
+          print(m.group(1))
+          PY
+          )
           echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Run Unit Tests
