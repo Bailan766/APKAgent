@@ -298,7 +298,7 @@ object ApkExtractEntry : Tool {
         val entry = args.str("entry") ?: return ToolResult.err("缺少 entry")
         val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
         val destName = args.str("dest_name") ?: File(entry).name
-        val dest = File(ctx.workspace, destName)
+        val dest = Sandbox.resolve(File(destName), ctx.workspace)
         Sandbox.assertWritable(dest, ctx.workspace)
         ZipFile(apk).use { zip ->
             val e = zip.getEntry(entry) ?: return ToolResult.err("APK 内未找到条目：$entry")
@@ -393,7 +393,7 @@ object FileList : Tool {
 
 object FileWrite : Tool {
     override val name = "file_write"
-    override val description = "向工作区内写入/覆盖文本文件。仅限工作区目录。"
+    override val description = "写入/覆盖文本文件。相对路径自动解析到工作区，绝对路径直接使用。"
     override val sensitive = true
     override val parameters = schemaObject(
         mapOf(
@@ -405,7 +405,7 @@ object FileWrite : Tool {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val path = args.str("path") ?: return ToolResult.err("缺少 path")
         val content = args.str("content") ?: return ToolResult.err("缺少 content")
-        val f = File(path)
+        val f = Sandbox.resolve(File(path), ctx.workspace)
         Sandbox.assertWritable(f, ctx.workspace)
         f.parentFile?.mkdirs()
         f.writeText(content)
@@ -413,7 +413,7 @@ object FileWrite : Tool {
     }
 }
 
-/* ---------------- 高级功能：框架接口（待实现） ---------------- */
+/* ---------------- 高级功能 ---------------- */
 
 object ApkRemoveSignatureCheck : Tool {
     override val name = "apk_remove_signature_check"
@@ -709,7 +709,7 @@ object ShizukuFileAccess : Tool {
             "copy_to_workspace" -> {
                 val src = File(path)
                 val destName = args.str("dest_name") ?: src.name
-                val dest = File(ctx.workspace, destName)
+                val dest = Sandbox.resolve(File(destName), ctx.workspace)
                 Sandbox.assertWritable(dest, ctx.workspace)
                 val ok = ShizukuManager.copyFileShizuku(src, dest)
                 if (ok) {
@@ -745,7 +745,7 @@ object PythonExec : Tool {
 
         // 尝试用 Python 执行
         val pyFile = if (saveAs != null) {
-            File(ctx.workspace, saveAs)
+            Sandbox.resolve(File(saveAs), ctx.workspace)
         } else {
             File(ctx.workspace, "_py_${System.currentTimeMillis()}.py")
         }
