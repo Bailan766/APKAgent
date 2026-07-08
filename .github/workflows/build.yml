@@ -38,17 +38,18 @@ jobs:
       - name: Get Version
         id: version
         run: |
-          VERSION=$(python3 - <<'PY'
+          python3 - <<'PY'
           import re
           from pathlib import Path
           text = Path('app/build.gradle.kts').read_text(encoding='utf-8')
           m = re.search(r'versionName\s*=\s*"([^"]+)"', text)
           if not m:
               raise SystemExit('versionName not found')
-          print(m.group(1))
+          version = m.group(1)
+          print(f"version={version}")
+          with open("$GITHUB_OUTPUT", "a", encoding="utf-8") as f:
+              f.write(f"version={version}\\n")
           PY
-          )
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
 
       - name: Run Unit Tests
         run: ./gradlew testDebugUnitTest --stacktrace
