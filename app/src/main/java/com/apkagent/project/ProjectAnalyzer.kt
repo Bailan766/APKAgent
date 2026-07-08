@@ -8,7 +8,9 @@ import java.util.zip.ZipFile
 
 object ProjectAnalyzer {
 
-    fun analyze(project: ReverseProject): ProjectAnalysisSummary {
+    fun analyze(project: ReverseProject): ProjectAnalysisSummary = analyzeQuick(project)
+
+    fun analyzeQuick(project: ReverseProject): ProjectAnalysisSummary {
         val apk = File(project.importedApkPath)
         val manifestXml = runCatching { readManifest(apk) }.getOrDefault("")
         val packageName = extractAttr(manifestXml, "package") ?: project.packageName
@@ -136,4 +138,12 @@ object ProjectAnalyzer {
         if (risks.isEmpty()) risks += "未发现明显高危特征，建议继续查看权限、DEX 和证书信息"
         return risks.joinToString("\n")
     }
+
+    fun intelligenceHooks(): List<String> = listOf(
+        "string_index",
+        "url_token_extraction",
+        "sdk_fingerprint",
+        "native_entry_scan",
+        "anti_tamper_detection"
+    )
 }

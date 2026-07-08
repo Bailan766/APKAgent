@@ -1,215 +1,197 @@
 # APKAgent
 
 <p align="center">
-  <img src="app/src/main/res/drawable/ic_launcher_foreground.xml" width="120" alt="APKAgent Logo"/>
-</p>
-
-<p align="center">
-  <b>AI 驱动的 Android APK 逆向分析工具</b><br>
-  用自然语言对话，让 AI 自动完成 APK 分析、反编译、签名检测与修改
+  <b>项目化 APK 逆向工作台</b><br>
+  面向中文用户的原生 Android APK 分析、项目管理、AI 协作与补丁导出工具
 </p>
 
 <p align="center">
   <img alt="Android" src="https://img.shields.io/badge/Android-8.0%2B-green"/>
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.0-blue"/>
   <img alt="Compose" src="https://img.shields.io/badge/Jetpack%20Compose-Material3-purple"/>
-  <img alt="License" src="https://img.shields.io/badge/License-MIT-orange"/>
+  <img alt="Version" src="https://img.shields.io/badge/version-4.0.0-orange"/>
 </p>
 
 ---
 
 ## 简介
 
-APKAgent 是一款**原生 Android 应用**，将 MT 管理器式的 APK 逆向能力与 AI Agent 对话操控深度融合。你只需用自然语言描述需求，AI 便会自动调用内置工具完成 APK 分析、反编译、签名检测与 patch。
+APKAgent 不是单纯的“APK 聊天工具”，而是一个**项目化 APK 逆向工作台**：
 
-**核心理念：** 不需要记忆命令，不需要懂 smali 语法，用中文告诉 AI 你想做什么，它自己搞定。
+- 导入 APK 或已安装应用后，自动创建独立项目目录
+- 自动生成预分析摘要，避免 AI 在空上下文下瞎猜
+- 通过 Agent + Tool Calling 执行 APK 分析、反编译、patch、重打包、签名
+- 提供项目历史、项目文件、脚本运行环境、导出 APK 闭环
 
----
-
-## 功能特性
-
-### 🤖 AI Agent 对话操控
-- 兼容 **OpenAI 协议**的任意 API（DeepSeek、Qwen、Claude、本地 Ollama 等）
-- **自定义 API Base URL、API Key、模型名、温度**
-- 流式 SSE 输出，实时显示 AI 推理过程
-- **Function Calling** 驱动的 Agent 循环：AI 决策 → 调用工具 → 结果回传 → 继续推理
-- 敏感操作弹窗确认，AI 不会静默修改文件
-
-### 🔍 APK 分析
-| 工具 | 功能 |
-|------|------|
-| `apk_apk_info` | APK 概览（包名、版本、SDK、DEX 数、权限、组件） |
-| `apk_list_files` | 浏览 APK 内部 ZIP 结构 |
-| `apk_read_manifest` | 解析二进制 AndroidManifest.xml |
-| `apk_read_signer` | 检测 v1/v2/v3 签名方案，提取 X.509 证书 |
-| `apk_read_dex` | 解析 DEX 头 + 列出所有类名 |
-| `apk_hex_view` | 十六进制查看任意文件或 APK 内条目 |
-| `apk_extract_entry` | 从 APK 提取指定文件到工作区 |
-
-### 🔧 逆向工程
-| 工具 | 功能 |
-|------|------|
-| `dex_disasm` | DEX → smali 反编译（Google baksmali 3.0.9） |
-| `dex_assemble` | smali → DEX 回编译（Google smali 3.0.9） |
-| `dex_edit` | 查看 smali 方法/字段列表，在线编辑 |
-| `apk_remove_signature_check` | 扫描签名校验调用点 + 自动 patch（返回 true） |
-| `apk_unpack` | 解包 APK 到工作区目录 |
-| `apk_repack` | 重打包修改后的目录为 APK |
-| `apk_sign` | v1(PKCS#7) + v2(APK Sig Scheme v2) 重签名 |
-
-### 📁 文件管理
-| 工具 | 功能 |
-|------|------|
-| `file_read_text` | 读取工作区文本文件 |
-| `file_list` | 列出工作区目录 |
-| `file_write` | 写入工作区文件（带沙箱保护） |
-
-### ✏️ 可视化编辑器
-- 工作区目录树浏览
-- smali / XML / 文本文件在线查看与编辑
-- 保存修改直接写回文件
-
-### 🛡️ 沙箱安全
-- 所有文件工具路径限制在 App 工作区内，拒绝越权访问
-- 敏感操作（写/改/提取/签名）需用户弹窗确认
+核心目标：**让 APK 逆向从一次性操作，升级为可持续管理的项目流程。**
 
 ---
 
-## 技术栈
+## 当前产品形态
 
-| 模块 | 技术 |
-|------|------|
-| UI | Kotlin 2.0 + Jetpack Compose (Material3) |
-| AI 通信 | OkHttp 4.12 SSE 流式 + Function Calling |
-| Smali 引擎 | Google smali/baksmali/dexlib2 3.0.9 |
-| APK 签名 | Google apksig 8.7.0 |
-| 证书生成 | BouncyCastle 1.78.1 |
-| 配置存储 | EncryptedSharedPreferences（AES256-GCM，降级容错） |
-| AXML 解析 | 纯 Kotlin 自实现（无外部依赖） |
-| DEX 解析 | 纯 Kotlin 自实现 + dexlib2 |
-| 签名读取 | JarFile(v1) + 手动解析 APK Signing Block(v2/v3) |
+### 1. 项目化工作区
+每个导入对象都会创建独立项目目录，典型结构包括：
 
----
+- `source/`：原始 APK
+- `analysis/`：预分析结果
+- `chat/`：项目内 AI 历史
+- `exports/`：导出产物
+- `patches/`：补丁相关文件
+- `scripts/`：项目脚本
 
-## 安装要求
+### 2. 预分析优先
+导入后会生成项目摘要，供 AI 对话注入上下文，包括：
 
-- Android 8.0+（API 26）
-- 架构：arm64-v8a / armeabi-v7a / x86_64
+- 包名 / 版本 / SDK
+- 权限与组件摘要
+- DEX / Native so / assets 概览
+- 证书摘要
+- 基础风险提示
 
----
+### 3. AI Agent + Tool Calling
+支持 OpenAI 兼容接口，AI 可以调用内置工具进行：
 
-## 快速开始
+- Manifest / DEX / 签名读取
+- 反编译 / 回编译 / patch
+- 文件读写 / 搜索 / 脚本执行
+- 导出重打包并签名
 
-### 1. 安装
-下载 `APKAgent-debug.apk` 安装，允许"来自未知来源"。
+### 4. 运行时环境
+项目支持：
 
-### 2. 配置 AI
-点击右上角 ⚙ 进入设置：
-```
-API Base URL : https://api.deepseek.com/v1
-API Key      : sk-xxxxxxxxxxxx
-模型名        : deepseek-chat
-温度          : 0.6
-```
-支持任何 OpenAI 兼容接口。
+- Python 运行环境
+- Node.js 运行环境
+- Shizuku 提权执行
+- 内置终端
 
-### 3. 导入 APK
-点击顶栏 📁 选择目标 APK 文件。
+当前已引入 `RuntimeManager` 作为统一运行时入口，逐步收敛分散的检测/执行逻辑。
 
-### 4. 对话分析
-直接用中文提需求，例如：
+### 5. 真实敏感操作确认
+敏感工具调用不再默认自动放行。现在会进入确认队列，由 UI 展示：
 
-```
-分析这个 APK 的签名信息
-列出 AndroidManifest 里的所有权限
-把 classes.dex 反编译成 smali 并列出类
-扫描签名校验调用点并 patch
-```
+- 工具名
+- 风险级别
+- 参数摘要
+
+用户允许后才继续执行。
 
 ---
 
-## 完整逆向流程示例
+## 核心能力
 
-以"去除签名校验"为例，只需告诉 AI：
+### APK 项目导入
+- 导入本地 APK
+- 导入已安装应用
+- 为每个目标创建独立项目
+- 自动预分析并生成项目摘要
 
-> **"分析这个 APK，找出签名校验的地方，帮我 patch 掉"**
+### 静态分析
+- APK 基本信息
+- AndroidManifest 解析
+- 签名信息读取
+- DEX / smali 分析
+- 文件/字符串搜索
+- 基础风险扫描
 
-AI 会自动执行：
-1. `apk_apk_info` — 了解 APK 基本信息
-2. `apk_read_signer` — 读取签名方案
-3. `apk_remove_signature_check` (scan) — 扫描校验调用点
-4. `apk_remove_signature_check` (patch) — 反编译+插入 return true+回编译
-5. `apk_repack` — 重新打包
-6. `apk_sign` — v1+v2 重签名
+### 修改与导出
+- 自动 patch
+- DEX / smali 修改
+- APK 解包 / 重打包
+- APK 重签名
+- 导出 patched APK
 
-全程 AI 自动推进，你只需在敏感操作弹窗点"允许"。
+### 项目协作
+- 项目内 AI 历史
+- 项目文件浏览与编辑
+- 项目化工作区
+- 可扩展深分析入口
 
 ---
 
-## 项目结构
+## 权限模型
 
-```
-APKAgent/
-├── app/src/main/java/com/apkagent/
-│   ├── MainActivity.kt              # 入口 + 导航
-│   ├── ApkAgentApp.kt               # Application 类
-│   ├── agent/
-│   │   ├── Models.kt                # OpenAI 数据模型
-│   │   ├── OpenAIClient.kt          # 流式 SSE + Function Calling
-│   │   ├── AgentLoop.kt             # Agent 推理循环
-│   │   ├── Tool.kt                  # 工具接口定义
-│   │   └── ToolRegistry.kt          # 工具注册表
-│   ├── apktools/
-│   │   ├── AxmlParser.kt            # 二进制 XML 解析器
-│   │   ├── DexParser.kt             # DEX 头解析器
-│   │   ├── HexView.kt               # 十六进制查看
-│   │   ├── SignatureReader.kt        # v1/v2/v3 签名读取
-│   │   ├── Sandbox.kt               # 路径沙箱
-│   │   ├── ApkTools.kt              # 17 个工具实现
-│   │   └── smali/
-│   │       ├── SmaliEngine.kt        # 反编译/回编译引擎
-│   │       ├── SignatureCheckerScanner.kt  # 签名校验扫描+patch
-│   │       ├── ApkRepackSigner.kt    # 重打包+签名
-│   │       ├── DebugKeyProvider.kt   # 调试密钥生成
-│   │       └── SelfSignedCertGenerator.kt  # 证书生成
-│   ├── store/
-│   │   └── SettingsStore.kt         # 加密配置存储
-│   └── ui/
-│       ├── ChatScreen.kt            # 主聊天界面
-│       ├── ChatViewModel.kt         # 聊天逻辑
-│       ├── SettingsScreen.kt        # 设置页
-│       ├── EditorScreen.kt          # 可视化编辑器
-│       ├── MarkdownText.kt          # Markdown 渲染
-│       ├── Components.kt            # 工具卡片、权限弹窗
-│       └── Theme.kt                 # 主题配置
-├── app/build.gradle.kts
-├── gradle/libs.versions.toml
-└── settings.gradle.kts
-```
+APKAgent 是工具型 App，不追求沙盒极简，而追求“能干活”。因此会使用较强权限能力：
+
+- `MANAGE_EXTERNAL_STORAGE`：访问项目与导出目录
+- `QUERY_ALL_PACKAGES`：导入已安装应用
+- `REQUEST_INSTALL_PACKAGES`：安装导出 APK
+- `FOREGROUND_SERVICE` / `WAKE_LOCK`：长任务保活
+- `Shizuku`：执行高权限 shell / runtime 操作
+
+> 这类权限适合逆向工具，但不适合常规上架型产品。
+
+---
+
+## 安全与确认模型
+
+### 工具风险等级
+- `SAFE`：只读操作
+- `CAUTION`：可能读取敏感内容或产生中等副作用
+- `DANGER`：patch、写入、签名、安装、重打包等高副作用操作
+
+### 当前访问策略
+当前 `Sandbox` 更准确地说是“路径解析与访问策略占位层”，主要职责是：
+
+- 相对路径基于工作区解析
+- 预留未来接入真实文件访问策略层的 seam
+
+它**不是传统严格沙箱**。
+
+---
+
+## 架构概览
+
+主要模块：
+
+- `agent/`：AgentLoop、OpenAIClient、ToolRegistry、确认机制
+- `apktools/`：APK 分析、smali、签名、patch、脚本工具
+- `project/`：项目模型、项目存储、快速预分析
+- `runtime/`：运行时状态与执行入口（新）
+- `chat/`：聊天历史管理（新）
+- `export/`：APK 导出管理（新）
+- `ui/`：Compose 界面
+- `shizuku/`：提权执行
+
+相关文档：
+- `docs/architecture/apkagent-refactor-overview.md`
+- `docs/architecture/runtime-and-confirmation.md`
+- `docs/plans/2026-07-08-apkagent-perfect-refactor.md`
 
 ---
 
 ## 构建
 
 ```bash
-# 环境要求：JDK 17+，Android SDK 34
-git clone <repo>
 cd APKAgent
+./gradlew test
 ./gradlew assembleDebug
-# 产物：app/build/outputs/apk/debug/app-debug.apk
+```
+
+产物通常位于：
+
+```text
+app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ---
 
-## 注意事项
+## 已知限制
 
-- APK 仅使用 debug 签名，安装需允许未知来源
-- API Key 通过 AES256-GCM 加密存储于本机，不上传任何服务器
-- 所有文件操作限制在 App 私有工作区，不影响其他应用
-- 逆向工具仅供安全研究、漏洞分析、合法授权测试使用
+- 深分析能力目前仍以“快速摘要 + 工具逐步展开”为主，重型索引还在扩展中
+- Android ROM 差异会影响存储权限、Shizuku、外部 runtime 的表现
+- 这是面向研究与改造流程的工具，不是面向商店审核的轻权限 App
+
+---
+
+## 适用场景
+
+- Android APK 静态分析
+- 逆向研究与补丁验证
+- 项目化 APK 工作流管理
+- 借助 AI 进行中文化逆向协作
 
 ---
 
 ## License
 
-MIT License — 详见 [LICENSE](LICENSE)
+MIT License

@@ -5,6 +5,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.apkagent.ApkAgentApp
 import com.apkagent.agent.*
+import com.apkagent.chat.ChatHistoryManager
+import com.apkagent.export.ApkExportManager
 import com.apkagent.project.ReverseProject
 import com.apkagent.store.AgentConfig
 import com.apkagent.util.Logger
@@ -62,6 +64,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     private val agentApp get() = getApplication<ApkAgentApp>()
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }
+    private val confirmationManager = ToolConfirmationManager()
+    private val historyManager by lazy { ChatHistoryManager(agentApp.workspace, agentApp.projectStore, json) }
+    private val exportManager by lazy { ApkExportManager() }
 
     private val _messages = MutableStateFlow<List<ChatItem>>(emptyList())
     val messages: StateFlow<List<ChatItem>> = _messages.asStateFlow()
@@ -80,6 +85,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     private val _historyList = MutableStateFlow<List<HistoryItem>>(emptyList())
     val historyList: StateFlow<List<HistoryItem>> = _historyList.asStateFlow()
+
+    val pendingConfirmation: StateFlow<ToolConfirmationManager.ConfirmationRequest?> = confirmationManager.pendingRequest
 
     private var agentLoop: AgentLoop? = null
     private var lastConfig: AgentConfig? = null
@@ -154,8 +161,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         }
     }
 
-    fun stop() { Logger.i("VM", "停止") }
-    fun clearChat() { agentLoop?.reset(); agentLoop = null; _messages.value = emptyList(); Logger.i("VM", "清空") }
+    fun stop() { Logger.i("VM", "停止"); confirmationManager.clearPending() }
+    fun clearChat() { agentLoop?.reset(); agentLoop = null; _messages.value = emptyList(); confirmationManager.clearPending(); Logger.i("VM", "清空") }
 
     // ── Export ──
     fun exportPatchedApk(onResult: (Boolean, String) -> Unit) {
@@ -165,46 +172,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val ws = agentApp.currentWorkspace()
-                val original = agentApp.currentOpenApk() ?: File(ws, "source/base.apk")
-                if (!original.exists()) { withContext(Dispatchers.Main) { onResult(false, "未找到原始 APK") }; return@launch }
-
-                val patched = ws.listFiles { f -> f.isDirectory && f.name.startsWith("patched_") }?.sortedByDescending { it.lastModified() }
-                val smali = ws.listFiles { f -> f.isDirectory && f.name.startsWith("smali_out_") }?.sortedByDescending { it.lastModified() }
-
-                if (patched.isNullOrEmpty() && smali.isNullOrEmpty()) {
-                    withContext(Dispatchers.Main) { onResult(false, "未找到破解产物。请先让 AI 执行签名校验 patch。") }; return@launch
-                }
-
-                val unpackDir = File(ws, "_export").apply { if (exists()) deleteRecursively() }
-                com.apkagent.apktools.smali.ApkRepackSigner.unpackApk(original, unpackDir)
-
-                patched?.forEach { d -> d.listFiles()?.filter { it.extension == "dex" }?.forEach { it.copyTo(File(unpackDir, it.name), overwrite = true) } }
-                smali?.forEach { d -> com.apkagent.apktools.smali.SmaliEngine.assembleSmali(d, File(unpackDir, "classes.dex")) }
-
-                val repacked = File(ws, "_unsigned.apk")
-                com.apkagent.apktools.smali.ApkRepackSigner.repack(unpackDir, repacked)
-
-                val dl = File(android.os.Environment.getExternalStorageDirectory(), "APKAgent/build")
-                val out = File(dl, "${original.nameWithoutExtension}_patched.apk").apply { parentFile?.mkdirs() }
-                val sign = com.apkagent.apktools.smali.ApkRepackSigner.signApk(repacked, out, true, true)
-                unpackDir.deleteRecursively(); repacked.delete()
-
-                if (sign.success) {
-                    val msg = "导出成功\n${out.absolutePath}\n${out.length()/1024}KB | ${sign.schemes?.joinToString("+") ?: "v1+v2"}"
-                    Logger.i("VM", msg); withContext(Dispatchers.Main) { onResult(true, msg) }
-                } else { withContext(Dispatchers.Main) { onResult(false, sign.message) } }
+                val result = exportManager.export(ws, agentApp.currentOpenApk())
+                withContext(Dispatchers.Main) { onResult(result.success, result.message) }
             } catch (e: Throwable) {
-                Logger.e("VM", "导出失败", e); withContext(Dispatchers.Main) { onResult(false, "导出失败: ${e.message}") }
-            } finally { _isExporting.value = false }
+                Logger.e("VM", "导出失败", e)
+                withContext(Dispatchers.Main) { onResult(false, "导出失败: ${e.message}") }
+            } finally {
+                _isExporting.value = false
+            }
         }
     }
 
     // ── History ──
-    private fun historyDir(): File {
-        val project = agentApp.currentProject.value
-        return if (project != null) agentApp.projectStore.getChatDir(project.id)
-        else File(agentApp.workspace, "history").apply { if (!exists()) mkdirs() }
-    }
+    private fun historyDir(): File = historyManager.historyDir(agentApp.currentProject.value)
 
     private fun buildProjectAwarePrompt(userText: String): String {
         val project = agentApp.currentProject.value ?: return userText
@@ -228,13 +208,7 @@ $userText
     fun loadHistoryList() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val list = historyDir().listFiles { f -> f.extension == "json" }
-                    ?.sortedByDescending { it.lastModified() }
-                    ?.take(50)
-                    ?.mapNotNull { f ->
-                        try { json.decodeFromString<HistoryItem>(f.readText()) } catch (_: Throwable) { null }
-                    } ?: emptyList()
-                _historyList.value = list
+                _historyList.value = historyManager.loadHistoryList(agentApp.currentProject.value)
             } catch (_: Throwable) {}
         }
     }
@@ -242,9 +216,7 @@ $userText
     fun loadHistory(id: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val chatFile = File(historyDir(), "${id}_chat.json")
-                if (!chatFile.exists()) return@launch
-                val items = json.decodeFromString<List<SerializableChatItem>>(chatFile.readText())
+                val items = historyManager.loadHistory(agentApp.currentProject.value, id) ?: return@launch
                 val restored = items.map { m ->
                     ChatItem(
                         id = m.id, role = Role.valueOf(m.role), content = m.content,
@@ -253,7 +225,6 @@ $userText
                     )
                 }
                 _messages.value = restored
-                File(historyDir(), "last_id.txt").writeText(id)
                 Logger.i("VM", "加载历史: $id (${restored.size}条)")
             } catch (_: Throwable) {}
         }
@@ -270,12 +241,6 @@ $userText
                     userInput = userInput.take(80),
                     messageCount = msgs.size
                 )
-                val historyDir = historyDir()
-                // 保存元数据
-                val metaFile = File(historyDir, "${item.id}.json")
-                metaFile.writeText(json.encodeToString(item))
-                // 保存完整对话
-                val chatFile = File(historyDir, "${item.id}_chat.json")
                 val serializable = msgs.map { m ->
                     SerializableChatItem(
                         id = m.id, role = m.role.name, content = m.content,
@@ -283,9 +248,7 @@ $userText
                         toolArgs = m.toolArgs, toolResult = m.toolResult, toolSuccess = m.toolSuccess
                     )
                 }
-                chatFile.writeText(json.encodeToString(serializable))
-                // 保存"最近对话"指针
-                File(historyDir, "last_id.txt").writeText(item.id)
+                historyManager.saveConversation(agentApp.currentProject.value, item, serializable)
                 _historyList.update { listOf(item) + it }
                 Logger.i("VM", "历史已保存: ${item.messageCount}条消息")
             } catch (e: Throwable) {
@@ -297,16 +260,7 @@ $userText
     private fun restoreLastConversation() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val historyDir = historyDir()
-                val lastIdFile = File(historyDir, "last_id.txt")
-                if (!lastIdFile.exists()) return@launch
-                val lastId = lastIdFile.readText().trim()
-                if (lastId.isBlank()) return@launch
-
-                val chatFile = File(historyDir, "${lastId}_chat.json")
-                if (!chatFile.exists()) return@launch
-
-                val items = json.decodeFromString<List<SerializableChatItem>>(chatFile.readText())
+                val items = historyManager.restoreLastConversation(agentApp.currentProject.value) ?: return@launch
                 val restored = items.map { m ->
                     ChatItem(
                         id = m.id, role = Role.valueOf(m.role), content = m.content,
@@ -361,7 +315,10 @@ $userText
         KeepAliveManager.updateTask("轮次 ${KeepAliveService.roundCount} · ${call.name}")
         _messages.update { it + ChatItem(role = Role.TOOL, toolCallId = call.id, toolName = call.name, toolArgs = call.arguments, streaming = true) }
     }
-    override suspend fun onConfirmToolCall(call: PendingToolCall): Boolean = true
+    override suspend fun onConfirmToolCall(call: PendingToolCall): Boolean {
+        val risk = ToolRiskLevel.infer(call.name)
+        return confirmationManager.awaitDecision(call, risk)
+    }
     override fun onToolCallComplete(call: ExecutedToolCall) {
         val ok = if (call.success) "OK" else "FAIL"
         Logger.i("VM", "[${call.name}] $ok (${call.result.length}chars)")
@@ -380,4 +337,7 @@ $userText
         Logger.i("VM", "Phase: $phase")
         _messages.update { it + ChatItem(role = Role.SYSTEM, content = phase.displayText()) }
     }
+
+    fun approvePendingToolCall() = confirmationManager.approve()
+    fun denyPendingToolCall() = confirmationManager.deny()
 }

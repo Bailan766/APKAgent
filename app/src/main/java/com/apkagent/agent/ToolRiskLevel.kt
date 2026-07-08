@@ -3,8 +3,8 @@ package com.apkagent.agent
 /**
  * 工具安全风险等级。
  * SAFE    — 只读操作，可自动执行
- * CAUTION — 写操作，需要用户确认（可通过设置跳过）
- * DANGER  — 不可逆操作（删除、签名、安装），始终确认
+ * CAUTION — 可能访问敏感内容或产生中等副作用，建议确认
+ * DANGER  — 写入、安装、签名、patch、重打包等强副作用操作，必须确认
  */
 enum class ToolRiskLevel {
     SAFE, CAUTION, DANGER;

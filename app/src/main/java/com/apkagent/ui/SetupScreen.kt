@@ -29,8 +29,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
-import com.apkagent.apktools.PythonRunner
+import com.apkagent.ApkAgentApp
 import com.apkagent.installer.InternalInstaller
+import com.apkagent.runtime.RuntimeManager
 import com.apkagent.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -56,6 +57,8 @@ private fun hasStoragePermission(context: android.content.Context): Boolean {
 fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
+    val app = remember { context.applicationContext as ApkAgentApp }
+    val runtimeManager = remember(app) { app.runtimeManager }
 
     var pythonStatus by remember { mutableStateOf(InstallStatus.CHECKING) }
     var nodeStatus by remember { mutableStateOf(InstallStatus.CHECKING) }
@@ -83,52 +86,31 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
     LaunchedEffect(Unit) {
         delay(300)
         storageGranted = hasStoragePermission(context)
+        val status = runtimeManager.getStatus()
 
-        // ── Python ──
-        statusMessage = "检测 Python 环境..."
-        PythonRunner.init(context)
-        val pyPath = PythonRunner.findPython()
-        if (pyPath != null) {
-            pythonVersion = PythonRunner.getVersion() ?: "unknown"
-            pythonStatus = InstallStatus.INSTALLED
-            statusMessage = "✅ Python 已就绪: $pyPath"
-            progress = 0.4f
-        } else {
-            val linked = InternalInstaller.linkTermuxPython()
-            if (linked != null) {
-                pythonVersion = PythonRunner.getVersion() ?: "unknown"
-                pythonStatus = InstallStatus.INSTALLED
-                statusMessage = "✅ 已链接 Termux Python: $linked"
-                progress = 0.4f
-            } else {
-                pythonStatus = InstallStatus.NOT_INSTALLED
-                statusMessage = "未检测到 Python，点击安装"
-            }
+        pythonVersion = status.pythonVersion ?: ""
+        pythonStatus = when {
+            status.pythonInstalled -> InstallStatus.INSTALLED
+            else -> InstallStatus.NOT_INSTALLED
         }
 
-        delay(200)
-        // ── Node.js ──
-        statusMessage = "检测 Node.js 环境..."
-        nodeStatus = try {
-            val paths = listOf(
-                File(context.filesDir, "nodejs/bin/node").absolutePath,
-                "/data/data/com.termux/files/usr/bin/node",
-            )
-            val found = paths.any { File(it).canExecute() }
-            if (found) {
-                nodeVersion = try {
-                    val p = ProcessBuilder("node", "--version").start()
-                    val v = p.inputStream.bufferedReader().readLine()?.trim() ?: ""
-                    p.waitFor(); v
-                } catch (_: Exception) { "" }
-                InstallStatus.INSTALLED
-            } else InstallStatus.NOT_INSTALLED
-        } catch (_: Exception) { InstallStatus.NOT_INSTALLED }
+        nodeVersion = status.nodeVersion ?: ""
+        nodeStatus = when {
+            status.nodeInstalled -> InstallStatus.INSTALLED
+            else -> InstallStatus.NOT_INSTALLED
+        }
 
-        progress = if (pythonStatus == InstallStatus.INSTALLED) 0.6f else 0.1f
-        statusMessage = if (pythonStatus == InstallStatus.INSTALLED && nodeStatus == InstallStatus.INSTALLED)
-            "✅ 环境就绪" else if (pythonStatus == InstallStatus.INSTALLED)
-            "Python 就绪，Node.js 可选安装" else "点击下方按钮安装 Python"
+        progress = when {
+            status.pythonInstalled && status.nodeInstalled -> 1.0f
+            status.pythonInstalled -> 0.6f
+            else -> 0.1f
+        }
+
+        statusMessage = when {
+            status.pythonInstalled && status.nodeInstalled -> "✅ 环境就绪"
+            status.pythonInstalled -> "Python 就绪，Node.js 可选安装"
+            else -> "点击下方按钮安装 Python"
+        }
     }
 
     Box(
@@ -230,7 +212,8 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                                 }
 
                                 pythonStatus = if (ok) {
-                                    pythonVersion = PythonRunner.getVersion() ?: ""
+                                    val refreshed = runtimeManager.getStatus()
+                                    pythonVersion = refreshed.pythonVersion ?: ""
                                     InstallStatus.INSTALLED
                                 } else {
                                     InstallStatus.FAILED
@@ -265,7 +248,11 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                                     progress = 0.6f + p.progress * 0.3f
                                 }
 
-                                nodeStatus = if (ok) InstallStatus.INSTALLED else InstallStatus.FAILED
+                                nodeStatus = if (ok) {
+                                    val refreshed = runtimeManager.getStatus()
+                                    nodeVersion = refreshed.nodeVersion ?: nodeVersion
+                                    InstallStatus.INSTALLED
+                                } else InstallStatus.FAILED
                                 isInstalling = false
                             }
                         }

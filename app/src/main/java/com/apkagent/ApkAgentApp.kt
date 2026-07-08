@@ -8,6 +8,7 @@ import com.apkagent.project.InstalledAppItem
 import com.apkagent.project.ProjectAnalyzer
 import com.apkagent.project.ProjectStore
 import com.apkagent.project.ReverseProject
+import com.apkagent.runtime.RuntimeManager
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.SettingsStore
 import com.apkagent.util.Logger
@@ -25,6 +26,9 @@ class ApkAgentApp : Application() {
         private set
 
     lateinit var projectStore: ProjectStore
+        private set
+
+    lateinit var runtimeManager: RuntimeManager
         private set
 
     // 工作区放在 /sdcard/Download/APKAgent/（外部存储，shell uid 可访问，用户可见）
@@ -90,9 +94,10 @@ class ApkAgentApp : Application() {
         super.onCreate()
         Logger.init()
         Logger.setupCrashHandler()
-        Logger.i("App", "APKAgent v3.5.0 启动 — SDK=${android.os.Build.VERSION.SDK_INT}")
+        Logger.i("App", "APKAgent v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) 启动 — SDK=${android.os.Build.VERSION.SDK_INT}")
         settingsStore = SettingsStore(this)
         projectStore = ProjectStore(this, workspace)
+        runtimeManager = RuntimeManager(this)
         PythonRunner.init(this)
         toolRegistry = buildToolRegistry()
         ShizukuManager.init()

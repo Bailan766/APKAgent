@@ -3,11 +3,11 @@ package com.apkagent.apktools
 import java.io.File
 
 /**
- * 文件操作：路径解析工具（无沙箱限制）
+ * 路径解析与访问策略占位层。
  *
- * 所有路径规则：
- * - 绝对路径 → 直接使用
- * - 相对路径 → 以 workspace 为基准解析
+ * 当前实现不做沙箱拦截，只负责：
+ * - 相对路径基于 workspace 解析
+ * - 保留未来接入真正 FileAccessPolicy 的 seam
  */
 object Sandbox {
 

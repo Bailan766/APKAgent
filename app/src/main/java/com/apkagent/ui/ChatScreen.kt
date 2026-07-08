@@ -80,6 +80,7 @@ fun ChatScreen(
     val isExporting by vm.isExporting.collectAsStateWithLifecycle()
     val openApkName by vm.openApkName.collectAsStateWithLifecycle()
     val historyList by vm.historyList.collectAsStateWithLifecycle()
+    val pendingConfirmation by vm.pendingConfirmation.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
@@ -286,6 +287,52 @@ fun ChatScreen(
             confirmButton = { TextButton(onClick = { showHistory = false }) { Text("关闭") } }
         )
     }
+
+    pendingConfirmation?.let { request ->
+        ToolConfirmationDialog(
+            request = request,
+            onApprove = { vm.approvePendingToolCall() },
+            onDeny = { vm.denyPendingToolCall() }
+        )
+    }
+}
+
+@Composable
+private fun ToolConfirmationDialog(
+    request: com.apkagent.agent.ToolConfirmationManager.ConfirmationRequest,
+    onApprove: () -> Unit,
+    onDeny: () -> Unit
+) {
+    val riskColor = when (request.riskLevel) {
+        com.apkagent.agent.ToolRiskLevel.DANGER -> Color(0xFFE53935)
+        com.apkagent.agent.ToolRiskLevel.CAUTION -> Color(0xFFFF9800)
+        com.apkagent.agent.ToolRiskLevel.SAFE -> Color(0xFF4CAF50)
+    }
+    AlertDialog(
+        onDismissRequest = onDeny,
+        title = {
+            Text("确认敏感操作")
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("AI 请求执行敏感工具，请确认后继续。")
+                Text("工具：${request.call.name}", fontWeight = FontWeight.SemiBold)
+                Text("风险级别：${request.riskLevel.name}", color = riskColor)
+                Text(
+                    text = request.summary.ifBlank { "无参数" },
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onApprove) { Text("允许", color = riskColor) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDeny) { Text("拒绝") }
+        }
+    )
 }
 
 // ═══════════════════════════════════════

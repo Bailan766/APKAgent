@@ -7,7 +7,7 @@ import java.io.File
 /**
  * 工具执行上下文：提供给工具所需的运行环境。
  * - appContext：Android Context
- * - workspace：工作区目录（沙箱根），所有可写文件操作必须在此目录内
+ * - workspace：工作区目录（当前项目工作根）
  * - openApk：当前用户导入的 APK 文件（可空，动态更新不依赖创建时快照）
  */
 class ToolContext(
