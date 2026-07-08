@@ -1,12 +1,13 @@
 package com.apkagent.agent
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import kotlinx.coroutines.async
-import kotlinx.coroutines.runBlocking
 
 class ToolConfirmationManagerTest {
 
@@ -21,9 +22,7 @@ class ToolConfirmationManagerTest {
         )
 
         val waiting = async { manager.awaitDecision(call, ToolRiskLevel.DANGER) }
-        while (manager.pendingRequest.value == null) {
-            Thread.sleep(10)
-        }
+        delay(20)
 
         val request = manager.pendingRequest.value
         assertNotNull(request)
@@ -46,10 +45,9 @@ class ToolConfirmationManagerTest {
         )
 
         val waiting = async { manager.awaitDecision(call, ToolRiskLevel.DANGER) }
-        while (manager.pendingRequest.value == null) {
-            Thread.sleep(10)
-        }
+        delay(20)
 
+        assertNotNull(manager.pendingRequest.value)
         manager.deny()
         assertFalse(waiting.await())
         assertEquals(null, manager.pendingRequest.value)
