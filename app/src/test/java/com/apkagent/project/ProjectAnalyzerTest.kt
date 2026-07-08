@@ -18,7 +18,16 @@ class ProjectAnalyzerTest {
     @Test
     fun analyze_quick_handles_invalid_apk_with_fallback_summary() {
         val tmp = kotlin.io.path.createTempFile("apkagent-test", ".apk").toFile()
-        tmp.writeText("not a zip")
+        tmp.writeBytes(
+            byteArrayOf(
+                0x50, 0x4B, 0x05, 0x06,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00, 0x00, 0x00,
+                0x00, 0x00
+            )
+        )
         val project = ReverseProject(
             id = "p1",
             name = "Broken",
