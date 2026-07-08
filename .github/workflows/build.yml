@@ -38,7 +38,8 @@ jobs:
       - name: Get Version
         id: version
         run: |
-          VERSION=$(python3 -c 'import re, pathlib; text = pathlib.Path("app/build.gradle.kts").read_text(encoding="utf-8"); m = re.search(r'''"'"'versionName\\s*=\\s*\"([^\"]+)\"'"'"''', text); assert m, "versionName not found"; print(m.group(1), end="")')
+          VERSION=$(sed -n 's/^[[:space:]]*versionName[[:space:]]*=[[:space:]]*"\([^"]*\)"/\1/p' app/build.gradle.kts | head -n 1)
+          test -n "$VERSION"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "resolved version: $VERSION"
 
