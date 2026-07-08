@@ -5,6 +5,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.apkagent.ApkAgentApp
 import com.apkagent.agent.*
+import com.apkagent.project.ReverseProject
 import com.apkagent.store.AgentConfig
 import com.apkagent.util.Logger
 import kotlinx.coroutines.Dispatchers
@@ -71,6 +72,9 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     private val _openApkName = MutableStateFlow<String?>(null)
     val openApkName: StateFlow<String?> = _openApkName.asStateFlow()
 
+    private val _currentProject = MutableStateFlow<ReverseProject?>(agentApp.currentProject.value)
+    val currentProject: StateFlow<ReverseProject?> = _currentProject.asStateFlow()
+
     private val _isExporting = MutableStateFlow(false)
     val isExporting: StateFlow<Boolean> = _isExporting.asStateFlow()
 
@@ -86,11 +90,24 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     val config: StateFlow<AgentConfig> get() = agentApp.settingsStore.config
 
-    init { loadHistoryList(); restoreLastConversation() }
+    init {
+        selectProject(agentApp.currentProject.value)
+    }
+
+    fun selectProject(project: ReverseProject?) {
+        agentApp.setCurrentProject(project)
+        _currentProject.value = project
+        _openApkName.value = project?.name ?: project?.importedApkPath?.let { File(it).name }
+        agentLoop?.reset()
+        agentLoop = null
+        _messages.value = emptyList()
+        loadHistoryList()
+        restoreLastConversation()
+    }
 
     fun setOpenApk(file: File?) {
         agentApp.setOpenApk(file)
-        _openApkName.value = file?.name
+        selectProject(agentApp.currentProject.value)
         Logger.i("VM", "APK: ${file?.name} size=${file?.length() ?: 0}")
     }
 
@@ -112,7 +129,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
             ensureLoop(cfg)
             agentLoop?.ctx?.updateOpenApk(agentApp.currentOpenApk())
             try {
-                withTimeout(5 * 60 * 1000L) { agentLoop?.run(text) }
+                withTimeout(5 * 60 * 1000L) { agentLoop?.run(buildProjectAwarePrompt(text)) }
                 Logger.i("VM", "完成")
                 saveHistory(text)
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
@@ -129,7 +146,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     private fun ensureLoop(cfg: AgentConfig) {
-        val ctx = ToolContext(appContext = agentApp, workspace = agentApp.workspace, openApk = agentApp.currentOpenApk())
+        val ctx = ToolContext(appContext = agentApp, workspace = agentApp.currentWorkspace(), openApk = agentApp.currentOpenApk())
         if (agentLoop == null || lastConfig != cfg) {
             Logger.i("VM", "AgentLoop: ${cfg.providerId}/${cfg.model}")
             agentLoop = AgentLoop(OpenAIClient(cfg.baseUrl, cfg.apiKey), agentApp.toolRegistry, cfg.model, cfg.temperature, ctx, this, maxRounds = cfg.maxRounds)
@@ -147,8 +164,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         Logger.i("VM", "导出开始")
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val ws = agentApp.workspace
-                val original = File(ws, "imported.apk")
+                val ws = agentApp.currentWorkspace()
+                val original = agentApp.currentOpenApk() ?: File(ws, "source/base.apk")
                 if (!original.exists()) { withContext(Dispatchers.Main) { onResult(false, "未找到原始 APK") }; return@launch }
 
                 val patched = ws.listFiles { f -> f.isDirectory && f.name.startsWith("patched_") }?.sortedByDescending { it.lastModified() }
@@ -183,7 +200,30 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     // ── History ──
-    private fun historyDir(): File = File(agentApp.workspace, "history").apply { if (!exists()) mkdirs() }
+    private fun historyDir(): File {
+        val project = agentApp.currentProject.value
+        return if (project != null) agentApp.projectStore.getChatDir(project.id)
+        else File(agentApp.workspace, "history").apply { if (!exists()) mkdirs() }
+    }
+
+    private fun buildProjectAwarePrompt(userText: String): String {
+        val project = agentApp.currentProject.value ?: return userText
+        val summaryFile = agentApp.projectStore.getAnalysisMarkdownFile(project.id)
+        val summary = runCatching { if (summaryFile.exists()) summaryFile.readText().take(12000) else "" }.getOrDefault("")
+        if (summary.isBlank()) return userText
+        return """
+当前逆向项目：${project.name}
+项目目录：${agentApp.projectStore.getProjectDir(project.id).absolutePath}
+APK路径：${project.importedApkPath}
+
+以下是导入后自动预分析结果。回答和工具调用必须基于这些真实上下文，不要瞎猜；如信息不足，先调用工具读取项目文件再判断。
+
+$summary
+
+用户任务：
+$userText
+""".trimIndent()
+    }
 
     fun loadHistoryList() {
         viewModelScope.launch(Dispatchers.IO) {

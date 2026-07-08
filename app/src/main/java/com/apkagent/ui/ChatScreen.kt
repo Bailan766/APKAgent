@@ -68,19 +68,28 @@ private object TgColors {
 fun ChatScreen(
     onOpenSettings: () -> Unit,
     onOpenEditor: () -> Unit,
+    onOpenProjects: () -> Unit,
     vm: ChatViewModel = viewModel()
 ) {
     val context = LocalContext.current
+    val app = remember { context.applicationContext as ApkAgentApp }
     val focusManager = LocalFocusManager.current
+    val activeProject by app.currentProject.collectAsStateWithLifecycle()
     val messages by vm.messages.collectAsStateWithLifecycle()
     val isRunning by vm.isRunning.collectAsStateWithLifecycle()
     val isExporting by vm.isExporting.collectAsStateWithLifecycle()
     val openApkName by vm.openApkName.collectAsStateWithLifecycle()
+    val historyList by vm.historyList.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
+    var showHistory by remember { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(activeProject?.id) {
+        vm.selectProject(activeProject)
+    }
 
     // 平滑滚动到底部
     LaunchedEffect(messages.size, messages.lastOrNull()?.streaming) {
@@ -94,8 +103,7 @@ fun ChatScreen(
         if (uri != null) {
             coroutineScope.launch(Dispatchers.IO) {
                 try {
-                    val app = context.applicationContext as ApkAgentApp
-                    val dest = File(app.workspace, "imported.apk")
+                    val dest = File(context.cacheDir, "import_${System.currentTimeMillis()}.apk")
                     val ins = context.contentResolver.openInputStream(uri)
                     if (ins == null) {
                         withContext(Dispatchers.Main) {
@@ -105,8 +113,9 @@ fun ChatScreen(
                     }
                     ins.use { src -> dest.outputStream().use { dst -> src.copyTo(dst) } }
                     vm.setOpenApk(dest)
+                    dest.delete()
                     withContext(Dispatchers.Main) {
-                        snackbarHostState.showSnackbar("✅ 已导入 ${dest.name}")
+                        snackbarHostState.showSnackbar("✅ 已创建独立项目并完成预分析")
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
@@ -145,9 +154,12 @@ fun ChatScreen(
                         }
                     },
                     actions = {
-                        // 导入 APK
+                        IconButton(onClick = onOpenProjects) {
+                            Icon(Icons.Default.Apps, "项目", tint = Color.White)
+                        }
+                        // 导入 APK（备用入口）
                         IconButton(onClick = {
-                            apkLauncher.launch(arrayOf("application/vnd.android.package-archive"))
+                            apkLauncher.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream"))
                         }) {
                             Icon(Icons.Default.FolderOpen, "导入", tint = Color.White)
                         }
@@ -175,9 +187,19 @@ fun ChatScreen(
                         }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                             DropdownMenuItem(
-                                text = { Text("编辑器") },
+                                text = { Text("逆向项目") },
+                                onClick = { showMenu = false; onOpenProjects() },
+                                leadingIcon = { Icon(Icons.Default.Apps, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("项目文件") },
                                 onClick = { showMenu = false; onOpenEditor() },
                                 leadingIcon = { Icon(Icons.Default.Edit, null) }
+                            )
+                            DropdownMenuItem(
+                                text = { Text("历史记录") },
+                                onClick = { showMenu = false; showHistory = true; vm.loadHistoryList() },
+                                leadingIcon = { Icon(Icons.Default.History, null) }
                             )
                             DropdownMenuItem(
                                 text = { Text("设置") },
@@ -233,6 +255,36 @@ fun ChatScreen(
                 item { Spacer(Modifier.height(4.dp)) }
             }
         }
+    }
+
+    if (showHistory) {
+        AlertDialog(
+            onDismissRequest = { showHistory = false },
+            title = { Text("项目 AI 历史") },
+            text = {
+                if (historyList.isEmpty()) {
+                    Text("当前项目还没有历史对话")
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        items(historyList, key = { it.id }) { item ->
+                            ListItem(
+                                headlineContent = { Text(item.userInput.ifBlank { "未命名对话" }, maxLines = 1) },
+                                supportingContent = { Text("${item.apkName.ifBlank { openApkName ?: "当前项目" }} · ${item.messageCount} 条消息") },
+                                leadingContent = { Icon(Icons.Default.History, null) },
+                                modifier = Modifier.clickable {
+                                    vm.loadHistory(item.id)
+                                    showHistory = false
+                                }
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showHistory = false }) { Text("关闭") } }
+        )
     }
 }
 
@@ -659,7 +711,7 @@ private fun TgWelcomeScreen(padding: PaddingValues, isDark: Boolean) {
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "导入 APK 后，在下方输入框开始分析",
+                "先在逆向项目页导入应用或 APK；导入后会自动预分析，再进入项目 AI 对话",
                 fontSize = 12.sp,
                 color = TgColors.timeText,
                 textAlign = TextAlign.Center

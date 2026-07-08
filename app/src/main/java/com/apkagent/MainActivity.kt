@@ -108,7 +108,7 @@ private fun AppNav(onOpenTerminal: () -> Unit = {}) {
     
     NavHost(
         navController = nav, 
-        startDestination = "chat",
+        startDestination = "projects",
         // Android 16 预测性返回手势动画
         enterTransition = {
             slideInHorizontally(
@@ -135,10 +135,18 @@ private fun AppNav(onOpenTerminal: () -> Unit = {}) {
             ) + fadeOut(animationSpec = tween(200))
         }
     ) {
+        composable("projects") {
+            com.apkagent.ui.ProjectScreen(
+                onOpenProjectChat = { nav.navigate("chat") },
+                onOpenProjectEditor = { nav.navigate("editor") },
+                onOpenSettings = { nav.navigate("settings") }
+            )
+        }
         composable("chat") {
             com.apkagent.ui.ChatScreen(
                 onOpenSettings = { nav.navigate("settings") },
-                onOpenEditor = { nav.navigate("editor") }
+                onOpenEditor = { nav.navigate("editor") },
+                onOpenProjects = { nav.navigate("projects") }
             )
         }
         composable("settings") {
@@ -151,7 +159,7 @@ private fun AppNav(onOpenTerminal: () -> Unit = {}) {
         composable("editor") {
             val ctx = LocalContext.current
             val app = ctx.applicationContext as? ApkAgentApp
-            if (app != null) com.apkagent.ui.EditorScreen(rootDir = app.workspace, onBack = { nav.popBackStack() })
+            if (app != null) com.apkagent.ui.EditorScreen(rootDir = app.currentWorkspace(), onBack = { nav.popBackStack() })
         }
         composable("about") { com.apkagent.ui.AboutScreen(onBack = { nav.popBackStack() }) }
         composable("terminal") { com.apkagent.ui.TerminalScreen(onBack = { nav.popBackStack() }) }
