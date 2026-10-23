@@ -1,16 +1,18 @@
 package com.apkagent.agent
 
+import com.apkagent.i18n.L
+
 /**
  * 逆向分析阶段状态机
  * 严格按顺序执行，不可跳步
  */
 enum class ReversePhase(val label: String, val icon: String) {
-    PREPARE("侦察准备", "🔍"),
-    STATIC_ANALYSIS("深度静态分析", "🔬"),
-    DYNAMIC("动态验证", "🎯"),
-    MODIFICATION("智能自动修改", "🔧"),
-    REPACK("重打包签名", "📦"),
-    DONE("完成", "✅");
+    PREPARE(L("侦察准备", "Reconnaissance ready."), "🔍"),
+    STATIC_ANALYSIS(L("深度静态分析", "Depth static analysis"), "🔬"),
+    DYNAMIC(L("动态验证", "Dynamic Validation"), "🎯"),
+    MODIFICATION(L("智能自动修改", "Smart Automodify"), "🔧"),
+    REPACK(L("重打包签名", "Repackage Signature"), "📦"),
+    DONE(L("完成", "Done"), "✅");
 
     fun next(): ReversePhase = when (this) {
         PREPARE -> STATIC_ANALYSIS

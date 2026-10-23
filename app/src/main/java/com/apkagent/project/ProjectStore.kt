@@ -1,5 +1,7 @@
 package com.apkagent.project
 
+import com.apkagent.i18n.L
+
 import android.content.Context
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
@@ -198,10 +200,10 @@ private fun ProjectAnalysisSummary.toMarkdown(): String = buildString {
     appendLine("- 版本: ${versionName ?: "未知"} (${versionCode ?: "?"})")
     appendLine("- SDK: min=${minSdk ?: "?"}, target=${targetSdk ?: "?"}")
     appendLine()
-    appendLine("## 权限")
+    appendLine(L("## 权限", "Permissions"))
     permissions.take(20).forEach { appendLine("- $it") }
     appendLine()
-    appendLine("## 组件")
+    appendLine(L("## 组件", "# Component"))
     appendLine("- Activity: ${activities.size}")
     appendLine("- Service: ${services.size}")
     appendLine("- Receiver: ${receivers.size}")
@@ -211,9 +213,9 @@ private fun ProjectAnalysisSummary.toMarkdown(): String = buildString {
     dexEntries.forEach { appendLine("- DEX: $it") }
     nativeLibs.take(20).forEach { appendLine("- SO: $it") }
     appendLine()
-    appendLine("## 证书")
-    appendLine(certificateSummary.ifBlank { "无" })
+    appendLine(L("## 证书", "Certificate"))
+    appendLine(certificateSummary.ifBlank { L("无", "None") })
     appendLine()
-    appendLine("## 风险摘要")
-    appendLine(riskSummary.ifBlank { "无" })
+    appendLine(L("## 风险摘要", "# Risk summary"))
+    appendLine(riskSummary.ifBlank { L("无", "None") })
 }

@@ -1,5 +1,7 @@
 package com.apkagent.terminal
 
+import com.apkagent.i18n.L
+
 import com.apkagent.util.Logger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -62,15 +64,15 @@ class TerminalSession(
                         }
                     }
                 } catch (e: Exception) {
-                    Logger.e("Terminal", "读取输出失败", e)
+                    Logger.e("Terminal", L("读取输出失败", "Reading output failed"), e)
                 }
                 _isRunning.value = false
             }
 
-            Logger.i("Terminal", "会话启动: ${workDir.absolutePath}")
+            Logger.i("Terminal", L("会话启动: ${workDir.absolutePath}", "Session started: ${workDir.absolutePath}"))
             true
         } catch (e: Exception) {
-            Logger.e("Terminal", "启动失败", e)
+            Logger.e("Terminal", L("启动失败", "Starting Failed"), e)
             false
         }
     }
@@ -82,7 +84,7 @@ class TerminalSession(
             w.flush()
             Logger.d("Terminal", "执行: $command")
         } catch (e: Exception) {
-            Logger.e("Terminal", "写入失败", e)
+            Logger.e("Terminal", L("写入失败", "Writing Failed"), e)
         }
     }
 
@@ -128,7 +130,7 @@ object CommandExecutor {
         } catch (e: TimeoutCancellationException) {
             ExecResult(false, null, "超时(${timeoutSeconds}s)")
         } catch (e: Exception) {
-            ExecResult(false, null, e.message ?: "执行失败")
+            ExecResult(false, null, e.message ?: L("执行失败", "Execution failed"))
         }
     }
 

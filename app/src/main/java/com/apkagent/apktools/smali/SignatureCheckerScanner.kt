@@ -1,5 +1,7 @@
 package com.apkagent.apktools.smali
 
+import com.apkagent.i18n.L
+
 import com.android.tools.smali.dexlib2.DexFileFactory
 import com.android.tools.smali.dexlib2.Opcodes
 import com.android.tools.smali.dexlib2.iface.ClassDef
@@ -75,7 +77,7 @@ object SignatureCheckerScanner {
     private const val GET_SIGNING_CERTIFICATES = 0x08000000
 
     fun scanDex(dexFile: File): ScanResult {
-        if (!dexFile.exists()) return ScanResult(false, "DEX 文件不存在", emptyList())
+        if (!dexFile.exists()) return ScanResult(false, L("DEX 文件不存在", "DEX file does not exist"), emptyList())
         return try {
             val dex = DexFileFactory.loadDexFile(dexFile, Opcodes.getDefault())
             val hits = mutableListOf<CheckHit>()
@@ -85,7 +87,7 @@ object SignatureCheckerScanner {
                     scanMethod(cls, method, className, hits)
                 }
             }
-            val msg = if (hits.isEmpty()) "未发现签名校验调用点"
+            val msg = if (hits.isEmpty()) L("未发现签名校验调用点", "No signature-check call sites found")
             else "发现 ${hits.size} 处疑似签名校验调用点"
             ScanResult(true, msg, hits, dexFile)
         } catch (e: Throwable) {
@@ -180,11 +182,11 @@ object SignatureCheckerScanner {
                 val fref = inst.reference as FieldReference
                 if (fref.name == "signatures" && fref.definingClass == "Landroid/content/pm/PackageInfo;") {
                     hits.add(CheckHit(className, method.name, "SIG_FIELD",
-                        "访问 PackageInfo.signatures 字段", patchable = true))
+                        L("访问 PackageInfo.signatures 字段", "Access PackageInfo.signatures fields"), patchable = true))
                 }
                 if (fref.name == "signingInfo") {
                     hits.add(CheckHit(className, method.name, "SIGINFO_FIELD",
-                        "访问 PackageInfo.signingInfo 字段", patchable = true))
+                        L("访问 PackageInfo.signingInfo 字段", "Access PackageInfo. signingInfo fields"), patchable = true))
                 }
             }
         }
@@ -200,7 +202,7 @@ object SignatureCheckerScanner {
         return try {
             val scan = scanDex(dexFile)
             if (!scan.success) return PatchResult(false, scan.message, 0)
-            if (scan.hits.isEmpty()) return PatchResult(false, "无校验调用点，无需 patch", 0)
+            if (scan.hits.isEmpty()) return PatchResult(false, L("无校验调用点，无需 patch", "No checkup, no check"), 0)
 
             // 反编译 → 修改 smali → 回编译
             val tmpDir = File(dexFile.parentFile, "_smali_patch_${System.currentTimeMillis()}")
@@ -208,7 +210,7 @@ object SignatureCheckerScanner {
             val disasm = SmaliEngine.disassembleDex(dexFile, tmpDir)
             if (!disasm.success) {
                 tmpDir.deleteRecursively()
-                return PatchResult(false, "反编译失败：${disasm.message}", 0)
+                return PatchResult(false, L("反编译失败：${disasm.message}", "Inversion failed: ${disasm.message}"), 0)
             }
 
             // 收集需要 patch 的类+方法

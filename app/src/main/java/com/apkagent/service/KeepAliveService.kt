@@ -1,5 +1,7 @@
 package com.apkagent.service
 
+import com.apkagent.i18n.L
+
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -29,7 +31,7 @@ class KeepAliveService : Service() {
         private const val TAG = "KeepAlive"
 
         /** 当前任务状态（供流体云显示） */
-        @Volatile var currentTask: String = "就绪"
+        @Volatile var currentTask: String = L("就绪", "Ready")
         @Volatile var taskProgress: Int = -1  // -1 = 不确定, 0-100 = 进度
         @Volatile var roundCount: Int = 0
 
@@ -50,9 +52,9 @@ class KeepAliveService : Service() {
     override fun onCreate() {
         super.onCreate()
         createNotificationChannel()
-        startForeground(NOTIFICATION_ID, buildNotification("就绪"))
+        startForeground(NOTIFICATION_ID, buildNotification(L("就绪", "Ready")))
         KeepAliveManager.onServiceCreated(this)
-        Logger.i(TAG, "前台服务已启动（流体云兼容模式）")
+        Logger.i(TAG, L("前台服务已启动（流体云兼容模式）", "Front desk service started."))
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -61,7 +63,7 @@ class KeepAliveService : Service() {
 
     override fun onDestroy() {
         KeepAliveManager.onServiceDestroyed(this)
-        Logger.i(TAG, "前台服务已停止")
+        Logger.i(TAG, L("前台服务已停止", "Front desk service stopped."))
         super.onDestroy()
     }
 
@@ -86,10 +88,10 @@ class KeepAliveService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 CHANNEL_ID,
-                "APKAgent 任务状态",
+                L("APKAgent 任务状态", "A Acknowledging Task Status"),
                 NotificationManager.IMPORTANCE_HIGH  // 流体云需要 HIGH
             ).apply {
-                description = "实时显示 APKAgent 逆向分析任务进度"
+                description = L("实时显示 APKAgent 逆向分析任务进度", "Show AAKAgent reverse task progress in real time")
                 setShowBadge(true)
                 enableVibration(false)
                 setSound(null, null)
@@ -117,7 +119,7 @@ class KeepAliveService : Service() {
 
         val builder = NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("APKAgent 分析中")
+            .setContentTitle(L("APKAgent 分析中", "AAKAgent Analysis"))
             .setContentText(buildRichText(text))
             .setSubText("轮次 $roundCount")
             .setPriority(NotificationCompat.PRIORITY_HIGH)
@@ -144,7 +146,7 @@ class KeepAliveService : Service() {
 
     private fun buildRichText(task: String): String {
         return when {
-            task == "就绪" -> "等待指令..."
+            task == L("就绪", "Ready") -> L("等待指令...", "Waiting for instructions...")
             task.startsWith("dex_") -> "⚙️ DEX 操作: $task"
             task.startsWith("apk_") -> "📦 APK 操作: $task"
             task.startsWith("shizuku") -> "🔧 系统操作: $task"

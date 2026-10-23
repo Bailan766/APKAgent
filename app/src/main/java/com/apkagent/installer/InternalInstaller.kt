@@ -1,5 +1,7 @@
 package com.apkagent.installer
 
+import com.apkagent.i18n.L
+
 import android.content.Context
 import com.apkagent.apktools.PythonRunner
 import com.apkagent.util.Logger
@@ -69,14 +71,14 @@ object InternalInstaller {
 
         // 已安装？
         if (pythonBin.exists() && pythonBin.canExecute()) {
-            onProgress(InstallProgress("done", 1.0f, "Python 已安装"))
+            onProgress(InstallProgress("done", 1.0f, L("Python 已安装", "Python installed")))
             PythonRunner.pythonPath = pythonBin.absolutePath
             return@withContext true
         }
 
         try {
             // 1. 检测架构
-            onProgress(InstallProgress("arch", 0.05f, "检测设备架构..."))
+            onProgress(InstallProgress("arch", 0.05f, L("检测设备架构...", "Test Device Structure...")))
             val arch = getArch()
             Logger.i("Installer", "架构: $arch")
 
@@ -100,12 +102,12 @@ object InternalInstaller {
             }
 
             // 3. 解压
-            onProgress(InstallProgress("extract", 0.65f, "解压中..."))
+            onProgress(InstallProgress("extract", 0.65f, L("解压中...", "Unpressure...")))
             targetDir.mkdirs()
             extractTarGz(cacheFile, targetDir)
 
             // 4. 设置权限
-            onProgress(InstallProgress("chmod", 0.85f, "设置执行权限..."))
+            onProgress(InstallProgress("chmod", 0.85f, L("设置执行权限...", "Set execution permissions...")))
             setExecutable(binDir)
 
             // 4.5 显式 chmod（Android SELinux 需要）
@@ -120,21 +122,21 @@ object InternalInstaller {
             }
 
             // 5. 验证
-            onProgress(InstallProgress("verify", 0.9f, "验证安装..."))
+            onProgress(InstallProgress("verify", 0.9f, L("验证安装...", "Validate installation...")))
             if (pythonBin.exists()) {
                 pythonBin.setExecutable(true)
                 PythonRunner.pythonPath = pythonBin.absolutePath
-                Logger.i("Installer", "Python 安装成功: ${pythonBin.absolutePath}")
+                Logger.i("Installer", L("Python 安装成功: ${pythonBin.absolutePath}", "Python installed successfully: ${pythonBin.absolutePath}"))
 
                 cacheFile.delete()
-                onProgress(InstallProgress("done", 1.0f, "✅ Python 安装成功"))
+                onProgress(InstallProgress("done", 1.0f, L("✅ Python 安装成功", "Python installed successfully")))
                 true
             } else {
-                onProgress(InstallProgress("error", 0f, "❌ 安装失败：文件不存在"))
+                onProgress(InstallProgress("error", 0f, L("❌ 安装失败：文件不存在", "❌ Installationing failed: file does not exist")))
                 false
             }
         } catch (e: Exception) {
-            Logger.e("Installer", "Python 安装失败", e)
+            Logger.e("Installer", L("Python 安装失败", "Python install failed"), e)
             onProgress(InstallProgress("error", 0f, "❌ 安装失败: ${e.message}"))
             false
         }
@@ -151,7 +153,7 @@ object InternalInstaller {
         val nodeBin = File(targetDir, "bin/node")
 
         if (nodeBin.exists() && nodeBin.canExecute()) {
-            onProgress(InstallProgress("done", 1.0f, "Node.js 已安装"))
+            onProgress(InstallProgress("done", 1.0f, L("Node.js 已安装", "Node.js installed")))
             return@withContext true
         }
 
@@ -177,24 +179,24 @@ object InternalInstaller {
                 }
             }
 
-            onProgress(InstallProgress("extract", 0.65f, "解压中..."))
+            onProgress(InstallProgress("extract", 0.65f, L("解压中...", "Unpressure...")))
             targetDir.mkdirs()
             extractTarGz(cacheFile, targetDir)
 
-            onProgress(InstallProgress("chmod", 0.85f, "设置权限..."))
+            onProgress(InstallProgress("chmod", 0.85f, L("设置权限...", "Set Permissions...")))
             setExecutable(File(targetDir, "bin"))
 
             if (nodeBin.exists()) {
                 nodeBin.setExecutable(true)
                 cacheFile.delete()
-                onProgress(InstallProgress("done", 1.0f, "✅ Node.js 安装成功"))
+                onProgress(InstallProgress("done", 1.0f, L("✅ Node.js 安装成功", "✅Node.js installed successfully")))
                 true
             } else {
-                onProgress(InstallProgress("error", 0f, "❌ 安装失败"))
+                onProgress(InstallProgress("error", 0f, L("❌ 安装失败", "Installation failed")))
                 false
             }
         } catch (e: Exception) {
-            Logger.e("Installer", "Node.js 安装失败", e)
+            Logger.e("Installer", L("Node.js 安装失败", "No Ordinary.js installation failed"), e)
             onProgress(InstallProgress("error", 0f, "❌ 安装失败: ${e.message}"))
             false
         }
@@ -246,7 +248,7 @@ object InternalInstaller {
                 dest.delete()
             }
         }
-        throw lastError ?: IOException("所有下载源均失败")
+        throw lastError ?: IOException(L("所有下载源均失败", "All download sources failed"))
     }
 
     private fun downloadFile(urlStr: String, dest: File, onProgress: (Long, Long) -> Unit) {

@@ -1,28 +1,30 @@
 package com.apkagent.tools
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.*
 import kotlinx.serialization.json.*
 import java.io.File
 
 class SmartSearchTool : Tool {
     override val name = "smart_search"
-    override val description = "全局智能搜索：在 APK 工作区内多维度搜索。参数：pattern（正则）、searchType（all/strings/classes/methods/resources/urls/keys）。可搜索 URL、密钥、算法名、类名模式等。"
+    override val description get() = L("全局智能搜索：在 APK 工作区内多维度搜索。参数：pattern（正则）、searchType（all/strings/classes/methods/resources/urls/keys）。可搜索 URL、密钥、算法名、类名模式等。", "Global intelligence search: Search in the AAPK area with multiple dimensions. Parameters: pattern (regular), searchType (all/strings/classes/methods/resources/urls/keys). Searches for URLs, keys, algorithms, class names, etc.")
     override val parameters: JsonObject = schemaObject(
         properties = mapOf(
-            "pattern" to strProp("搜索模式（正则表达式）"),
-            "searchType" to strProp("搜索类型", listOf("all", "strings", "classes", "methods", "resources", "urls", "keys"))
+            "pattern" to strProp(L("搜索模式（正则表达式）", "Search pattern (regular expression)")),
+            "searchType" to strProp(L("搜索类型", "Search Type"), listOf("all", "strings", "classes", "methods", "resources", "urls", "keys"))
         ),
         required = listOf("pattern")
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val pattern = args["pattern"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 pattern 参数")
+            ?: return ToolResult.err(L("缺少 pattern 参数", "Synchronising folder"))
         val searchType = args["searchType"]?.jsonPrimitive?.contentOrNull ?: "all"
 
         return try {
             val workspace = ctx.workspace
-            if (!workspace.exists()) return ToolResult.err("工作区不存在")
+            if (!workspace.exists()) return ToolResult.err(L("工作区不存在", "Workspace does not exist"))
 
             val results = mutableListOf<String>()
             val regex = Regex(pattern, RegexOption.IGNORE_CASE)
@@ -56,7 +58,7 @@ class SmartSearchTool : Tool {
             }
 
             if (results.isEmpty()) {
-                ToolResult.ok("未找到匹配: $pattern")
+                ToolResult.ok(L("未找到匹配: $pattern", "No match found: $pattern"))
             } else {
                 ToolResult.ok("搜索结果（${results.size} 条）:\n${results.take(50).joinToString("\n")}")
             }

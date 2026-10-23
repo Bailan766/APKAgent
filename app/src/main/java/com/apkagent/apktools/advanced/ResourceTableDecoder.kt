@@ -1,5 +1,7 @@
 package com.apkagent.apktools.advanced
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
@@ -28,17 +30,17 @@ import java.util.zip.ZipFile
  */
 object ResourceTableDecoder : Tool {
     override val name = "apk_decode_resources"
-    override val description = "解码 APK 的 resources.arsc 资源表，列出所有资源定义、字符串、配置变体。"
-    override val parameters = schemaObject(
+    override val description get() = L("解码 APK 的 resources.arsc 资源表，列出所有资源定义、字符串、配置变体。", "Decoding Developments Progresses.arsc resource tables for APK, listing all resource definitions, strings, configuration variants.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径"),
-            "resource_name" to strProp("查询指定资源名称（可选）"),
-            "resource_type" to strProp("查询指定资源类型（如 string/drawable/layout，可选）")
+            "apk_path" to strProp(L("APK 文件路径", "AAK File Path")),
+            "resource_name" to strProp(L("查询指定资源名称（可选）", "Query specified resource name (optional)")),
+            "resource_type" to strProp(L("查询指定资源类型（如 string/drawable/layout，可选）", "Query specified resource type (e. g. string/drawable/layout, optional)"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, "缺少 apk_path")
+        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path", "Missing ack Countries"))
         val resourceName = args.str("resource_name")
         val resourceType = args.str("resource_type")
 
@@ -48,7 +50,7 @@ object ResourceTableDecoder : Tool {
         return try {
             // 从 APK 中提取 resources.arsc
             val arscData = extractResourceTable(apkFile)
-                ?: return ToolResult(false, "APK 中未找到 resources.arsc")
+                ?: return ToolResult(false, L("APK 中未找到 resources.arsc", "No resourcees.arsc found in APK"))
 
             val decoder = ResourceTableParser(arscData)
             val table = decoder.parse()
@@ -68,7 +70,7 @@ object ResourceTableDecoder : Tool {
 
     private fun formatResult(table: ResourceTable, resourceName: String?, resourceType: String?): ToolResult {
         val sb = StringBuilder()
-        sb.appendLine("📋 资源表解码结果：")
+        sb.appendLine(L("📋 资源表解码结果：", "Resource table decoded results:"))
         sb.appendLine()
 
         // 包信息

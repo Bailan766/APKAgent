@@ -1,5 +1,7 @@
 package com.apkagent.export
 
+import com.apkagent.i18n.L
+
 import android.os.Environment
 import com.apkagent.apktools.smali.ApkRepackSigner
 import com.apkagent.apktools.smali.SmaliEngine
@@ -15,7 +17,7 @@ class ApkExportManager {
 
     fun export(workspace: File, originalApk: File?): ExportResult {
         val original = originalApk ?: File(workspace, "source/base.apk")
-        if (!original.exists()) return ExportResult(false, "未找到原始 APK")
+        if (!original.exists()) return ExportResult(false, L("未找到原始 APK", "Original APK not found"))
 
         val patched = workspace.listFiles { f -> f.isDirectory && f.name.startsWith("patched_") }
             ?.sortedByDescending { it.lastModified() }
@@ -23,7 +25,7 @@ class ApkExportManager {
             ?.sortedByDescending { it.lastModified() }
 
         if (patched.isNullOrEmpty() && smali.isNullOrEmpty()) {
-            return ExportResult(false, "未找到破解产物。请先让 AI 执行签名校验 patch。")
+            return ExportResult(false, L("未找到破解产物。请先让 AI 执行签名校验 patch。", "No decomposition products were found. Please let AI perform signature check first."))
         }
 
         val unpackDir = File(workspace, "_export").apply { if (exists()) deleteRecursively() }

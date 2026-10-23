@@ -1,5 +1,7 @@
 package com.apkagent.apktools.advanced
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
@@ -24,18 +26,18 @@ import java.util.zip.ZipFile
  */
 object SplitApkHandler : Tool {
     override val name = "apk_split_handler"
-    override val description = "处理 Split APK / App Bundle（.apks/.apkm/.xapk）。可列出分片、提取分片、合并为单个 APK。"
-    override val parameters = schemaObject(
+    override val description get() = L("处理 Split APK / App Bundle（.apks/.apkm/.xapk）。可列出分片、提取分片、合并为单个 APK。", "Process Sprit APK / App Bundle (.apks/.apkm/. xapk). You can list the fractions, extract the fractions, and merge them into a single APK.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "bundle_path" to strProp("Bundle 文件路径（.apks/.apkm/.xapk）"),
-            "action" to strProp("操作：list（列出分片）/ extract（提取）/ merge（合并为单个 APK）"),
-            "output_dir" to strProp("输出目录（extract/merge 时需要）"),
-            "target_apk" to strProp("提取指定分片名称（可选，默认全部）")
+            "bundle_path" to strProp(L("Bundle 文件路径（.apks/.apkm/.xapk）", "Bundle file path (.apks/.apkm/.xapk)")),
+            "action" to strProp(L("操作：list（列出分片）/ extract（提取）/ merge（合并为单个 APK）", "Operation: list(specify)/extract (extract)/merge (consolidated into a single APK)")),
+            "output_dir" to strProp(L("输出目录（extract/merge 时需要）", "Output directory (required for extract/merge)")),
+            "target_apk" to strProp(L("提取指定分片名称（可选，默认全部）", "Extract the ibidit Name (optional, default all Societies)"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val bundlePath = args.str("bundle_path") ?: return ToolResult(false, "缺少 bundle_path")
+        val bundlePath = args.str("bundle_path") ?: return ToolResult(false, L("缺少 bundle_path", "Missing bundle path"))
         val action = args.str("action") ?: "list"
         val outputDir = args.str("output_dir")
         val targetApk = args.str("target_apk")
@@ -46,11 +48,11 @@ object SplitApkHandler : Tool {
         return when (action) {
             "list" -> listSplits(bundleFile)
             "extract" -> {
-                if (outputDir == null) return ToolResult(false, "extract 操作需要 output_dir 参数")
+                if (outputDir == null) return ToolResult(false, L("extract 操作需要 output_dir 参数", "EXtrac operation requires output dir parameters"))
                 extractSplits(bundleFile, File(outputDir), targetApk)
             }
             "merge" -> {
-                if (outputDir == null) return ToolResult(false, "merge 操作需要 output_dir 参数")
+                if (outputDir == null) return ToolResult(false, L("merge 操作需要 output_dir 参数", "Merge operation requires output dir arguments"))
                 mergeSplits(bundleFile, File(outputDir))
             }
             else -> ToolResult(false, "未知操作: $action，支持 list/extract/merge")
@@ -71,7 +73,7 @@ object SplitApkHandler : Tool {
             }
 
             if (splits.isEmpty()) {
-                return ToolResult(false, "Bundle 内未找到 APK 分片")
+                return ToolResult(false, L("Bundle 内未找到 APK 分片", "Bundle cannot find APK fractions"))
             }
 
             val sb = StringBuilder()
@@ -110,7 +112,7 @@ object SplitApkHandler : Tool {
             }
 
             if (count == 0) {
-                ToolResult(false, "未找到匹配的 APK 分片")
+                ToolResult(false, L("未找到匹配的 APK 分片", "No matching APK fraction found"))
             } else {
                 ToolResult(true, "✅ 提取完成：$count 个分片\n输出目录: ${outputDir.absolutePath}")
             }
@@ -131,7 +133,7 @@ object SplitApkHandler : Tool {
 
             // 查找 base.apk
             val baseApk = tempDir.listFiles()?.find { it.name == "base.apk" }
-                ?: return ToolResult(false, "未找到 base.apk，无法合并")
+                ?: return ToolResult(false, L("未找到 base.apk，无法合并", "Base.apk not found, merge not possible"))
 
             // 合并方案：将所有分片的资源合并到 base.apk
             // 注意：这是一个简化实现，完整的合并需要处理资源冲突
@@ -147,18 +149,18 @@ object SplitApkHandler : Tool {
 
             // 提示用户：完整合并需要使用 bundletool 或 apkanalyzer
             val sb = StringBuilder()
-            sb.appendLine("⚠️ Split APK 合并说明：")
+            sb.appendLine(L("⚠️ Split APK 合并说明：", "⚠️Spit AAPK merger description:"))
             sb.appendLine()
             sb.appendLine("已提取 ${splits.size + 1} 个分片到: ${tempDir.absolutePath}")
             sb.appendLine()
             sb.appendLine("基础 APK: ${baseApk.name}")
-            sb.appendLine("配置分片:")
+            sb.appendLine(L("配置分片:", "Profile:"))
             splits.forEach { sb.appendLine("  • ${it.name}") }
             sb.appendLine()
-            sb.appendLine("💡 建议：")
-            sb.appendLine("  1. 直接安装分片：使用 apk_install 工具安装所有分片")
-            sb.appendLine("  2. 完整合并：使用 bundletool 或 apkanalyzer 命令行工具")
-            sb.appendLine("  3. 仅修改 base.apk：大多数情况下只需修改 base.apk")
+            sb.appendLine(L("💡 建议：", "Recommendations:"))
+            sb.appendLine(L("  1. 直接安装分片：使用 apk_install 工具安装所有分片", "1. Directly install fractions: install all fractions using apk install tools"))
+            sb.appendLine(L("  2. 完整合并：使用 bundletool 或 apkanalyzer 命令行工具", "Complete consolidation: use a bundletool or arkanalyzer command line tool"))
+            sb.appendLine(L("  3. 仅修改 base.apk：大多数情况下只需修改 base.apk", "Change only base.apk: in most cases only base.apk"))
 
             ToolResult(true, sb.toString())
         } catch (e: Exception) {

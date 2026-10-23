@@ -1,5 +1,7 @@
 package com.apkagent.apktools
 
+import com.apkagent.i18n.L
+
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -43,7 +45,7 @@ class DexParser(private val data: ByteArray) {
     )
 
     fun parse(): DexInfo {
-        if (data.size < 0x70) throw IllegalStateException("文件太小，不是合法 DEX")
+        if (data.size < 0x70) throw IllegalStateException(L("文件太小，不是合法 DEX", "It's too small. It's not legal DEX."))
         val magic = String(data, 0, 8, Charsets.US_ASCII)
         if (!magic.startsWith("dex\n")) throw IllegalStateException("非 DEX 文件: magic=${magic.take(8)}")
         val version = magic.substring(4, 7)

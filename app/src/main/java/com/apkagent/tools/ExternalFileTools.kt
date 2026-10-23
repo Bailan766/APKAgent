@@ -1,5 +1,7 @@
 package com.apkagent.tools
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.*
 import com.apkagent.shizuku.ShizukuManager
 import kotlinx.serialization.json.*
@@ -10,18 +12,18 @@ import java.io.File
  */
 class ExternalFileReadTool : Tool {
     override val name = "ext_file_read"
-    override val description = "读取设备上任意位置的文件（通过 Shizuku shell 权限）。可读 /sdcard/、/data/、系统文件等。参数：path（绝对路径）、max_chars（最大字符数）。"
+    override val description get() = L("读取设备上任意位置的文件（通过 Shizuku shell 权限）。可读 /sdcard/、/data/、系统文件等。参数：path（绝对路径）、max_chars（最大字符数）。", "Reads any location on the device (through Shizuku shell permission). Readable/sdcard/,/data/, system files, etc. Parameters: path (absolute path), max chars (maximum number of characters).")
     override val parameters: JsonObject = schemaObject(
         properties = mapOf(
-            "path" to strProp("文件绝对路径（如 /sdcard/Download/test.txt）"),
-            "max_chars" to intProp("最大读取字符数，默认 10000")
+            "path" to strProp(L("文件绝对路径（如 /sdcard/Download/test.txt）", "File absolute path (e. g. /sdcard/Download/test.txt)")),
+            "max_chars" to intProp(L("最大读取字符数，默认 10000", "Maximum number of characters read, default 10000"))
         ),
         required = listOf("path")
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val path = args["path"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 path 参数")
+            ?: return ToolResult.err(L("缺少 path 参数", "Missing path parameter"))
         val maxChars = args["max_chars"]?.jsonPrimitive?.intOrNull ?: 10000
 
         // 优先用 Shizuku shell 权限读取
@@ -40,7 +42,7 @@ class ExternalFileReadTool : Tool {
         // 回退到直接读取
         val file = File(path)
         if (!file.exists()) return ToolResult.err("文件不存在: $path")
-        if (file.isDirectory) return ToolResult.err("是目录不是文件: $path")
+        if (file.isDirectory) return ToolResult.err(L("是目录不是文件: $path", "Is directory not file: $path"))
         if (!file.canRead()) return ToolResult.err("无读取权限（建议安装 Shizuku 获取 shell 权限）: $path")
 
         return try {
@@ -48,7 +50,7 @@ class ExternalFileReadTool : Tool {
             val output = if (text.length > maxChars) text.take(maxChars) + "\n...(共 ${text.length} 字符，已截断)" else text
             ToolResult.ok("\ud83d\udcc4 ${file.name} (${file.length()} 字节):\n\n$output")
         } catch (e: Exception) {
-            ToolResult.err("读取失败: ${e.message}")
+            ToolResult.err(L("读取失败: ${e.message}", "Reading failed: ${e.message}"))
         }
     }
 }
@@ -58,21 +60,21 @@ class ExternalFileReadTool : Tool {
  */
 class ExternalFileWriteTool : Tool {
     override val name = "ext_file_write"
-    override val description = "向设备上任意位置写入文件（通过 Shizuku shell 权限）。可写 /sdcard/、/data/、系统目录等。参数：path（绝对路径）、content（文本内容）。"
+    override val description get() = L("向设备上任意位置写入文件（通过 Shizuku shell 权限）。可写 /sdcard/、/data/、系统目录等。参数：path（绝对路径）、content（文本内容）。", "Writes any location on the device to a file (through Shizuku shell privileges). Writeable /sdcard/,/data/, catalogue of systems, etc. Parameters: path (absolute path), content (text content).")
     override val sensitive = true
     override val parameters: JsonObject = schemaObject(
         properties = mapOf(
-            "path" to strProp("目标文件绝对路径"),
-            "content" to strProp("要写入的文本内容")
+            "path" to strProp(L("目标文件绝对路径", "Target file absolute path")),
+            "content" to strProp(L("要写入的文本内容", "Text content to write"))
         ),
         required = listOf("path", "content")
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val path = args["path"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 path 参数")
+            ?: return ToolResult.err(L("缺少 path 参数", "Missing path parameter"))
         val content = args["content"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 content 参数")
+            ?: return ToolResult.err(L("缺少 content 参数", "Synchronising folder"))
 
         // 优先用 Shizuku shell 权限写入
         if (ShizukuManager.isAuthorized()) {
@@ -103,17 +105,17 @@ class ExternalFileWriteTool : Tool {
  */
 class ExternalFileListTool : Tool {
     override val name = "ext_file_list"
-    override val description = "列出设备上任意目录的文件（通过 Shizuku shell 权限）。参数：path（目录绝对路径）。"
+    override val description get() = L("列出设备上任意目录的文件（通过 Shizuku shell 权限）。参数：path（目录绝对路径）。", "Lists any files on the device (through Shizuku shell permission). Parameter: Path (absolute directory path).")
     override val parameters: JsonObject = schemaObject(
         properties = mapOf(
-            "path" to strProp("目录绝对路径（如 /sdcard/、/data/data/、/）")
+            "path" to strProp(L("目录绝对路径（如 /sdcard/、/data/data/、/）", "Absolute directory path (e.g./sdcard/,/data/data/,/)"))
         ),
         required = listOf("path")
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val path = args["path"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 path 参数")
+            ?: return ToolResult.err(L("缺少 path 参数", "Missing path parameter"))
 
         // 优先用 Shizuku shell 权限
         if (ShizukuManager.isAuthorized()) {
@@ -130,8 +132,8 @@ class ExternalFileListTool : Tool {
         // 回退
         val dir = File(path)
         if (!dir.exists()) return ToolResult.err("目录不存在: $path")
-        if (!dir.isDirectory) return ToolResult.err("不是目录: $path")
-        if (!dir.canRead()) return ToolResult.err("无读取权限（建议安装 Shizuku）: $path")
+        if (!dir.isDirectory) return ToolResult.err(L("不是目录: $path", "Not directory: $path"))
+        if (!dir.canRead()) return ToolResult.err(L("无读取权限（建议安装 Shizuku）: $path", "No read permission (recommended to install Shizuku): $path"))
 
         val sb = StringBuilder()
         sb.appendLine("\ud83d\udcc1 ${dir.absolutePath}")
@@ -140,7 +142,7 @@ class ExternalFileListTool : Tool {
             val icon = if (f.isDirectory) "\ud83d\udcc1" else "\ud83d\udcc4"
             val size = if (f.isFile) " ${f.length()}B" else ""
             sb.appendLine("$icon ${f.name}$size")
-        } ?: sb.appendLine("(空目录或无权限)")
+        } ?: sb.appendLine(L("(空目录或无权限)", "(empty directory or unauthorized)"))
         return ToolResult.ok(sb.toString())
     }
 }

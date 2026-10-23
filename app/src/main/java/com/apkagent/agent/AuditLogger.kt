@@ -1,5 +1,7 @@
 package com.apkagent.agent
 
+import com.apkagent.i18n.L
+
 import android.util.Log
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -81,7 +83,7 @@ object AuditLogger {
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "写入审计日志失败: ${e.message}")
+            Log.w(TAG, L("写入审计日志失败: ${e.message}", "Writing to Audit Log failed: ${e.message}"))
         }
     }
 

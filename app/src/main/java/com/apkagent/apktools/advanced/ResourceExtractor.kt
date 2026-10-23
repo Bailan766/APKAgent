@@ -1,5 +1,7 @@
 package com.apkagent.apktools.advanced
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
@@ -24,20 +26,20 @@ import java.util.zip.ZipFile
  */
 object ResourceExtractor : Tool {
     override val name = "apk_resources"
-    override val description = "提取或替换 APK 内的资源文件（图标、布局、XML 等）。"
-    override val parameters = schemaObject(
+    override val description get() = L("提取或替换 APK 内的资源文件（图标、布局、XML 等）。", "Extracts or replaces the resource files (in icons, layouts, XML, etc.) in APK.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径"),
-            "action" to strProp("操作：list（列出资源）/ extract（提取）/ replace（替换）"),
-            "output_dir" to strProp("输出目录（extract 时需要）"),
-            "resource_path" to strProp("资源路径（如 res/drawable/icon.png）"),
-            "resource_type" to strProp("资源类型过滤（如 drawable/layout/xml/anim/color 等）"),
-            "new_file_path" to strProp("替换文件路径（replace 时需要）")
+            "apk_path" to strProp(L("APK 文件路径", "AAK File Path")),
+            "action" to strProp(L("操作：list（列出资源）/ extract（提取）/ replace（替换）", "Operation:/8)/extract/replace")),
+            "output_dir" to strProp(L("输出目录（extract 时需要）", "Output directory (required when extract)")),
+            "resource_path" to strProp(L("资源路径（如 res/drawable/icon.png）", "Resource path (e.g. res/drawable/icon.png)")),
+            "resource_type" to strProp(L("资源类型过滤（如 drawable/layout/xml/anim/color 等）", "Resource type filter (e. g. drew/ playout/xml/ anim/ color)")),
+            "new_file_path" to strProp(L("替换文件路径（replace 时需要）", "Replace file path (replace required)"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, "缺少 apk_path")
+        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path", "Missing ack Countries"))
         val action = args.str("action") ?: "list"
         val outputDir = args.str("output_dir")
         val resourcePath = args.str("resource_path")
@@ -50,12 +52,12 @@ object ResourceExtractor : Tool {
         return when (action) {
             "list" -> listResources(apkFile, resourceType)
             "extract" -> {
-                if (outputDir == null) return ToolResult(false, "extract 操作需要 output_dir 参数")
+                if (outputDir == null) return ToolResult(false, L("extract 操作需要 output_dir 参数", "EXtrac operation requires output dir parameters"))
                 extractResources(apkFile, File(outputDir), resourcePath, resourceType)
             }
             "replace" -> {
                 if (resourcePath == null || newFilePath == null) {
-                    return ToolResult(false, "replace 操作需要 resource_path 和 new_file_path 参数")
+                    return ToolResult(false, L("replace 操作需要 resource_path 和 new_file_path 参数", "Replace operations require resource path and new file path arguments"))
                 }
                 replaceResource(apkFile, resourcePath, File(newFilePath))
             }
@@ -136,7 +138,7 @@ object ResourceExtractor : Tool {
             }
 
             if (count == 0) {
-                ToolResult(false, "未找到匹配的资源")
+                ToolResult(false, L("未找到匹配的资源", "No matching resources found"))
             } else {
                 ToolResult(true, "✅ 提取完成\n资源数量: $count\n总大小: ${formatSize(totalSize)}\n输出目录: ${outputDir.absolutePath}")
             }
@@ -183,7 +185,7 @@ object ResourceExtractor : Tool {
 
             ToolResult(true, "✅ 资源替换成功\n资源: $resourcePath\n新文件: ${newFile.name}")
         } catch (e: Exception) {
-            ToolResult(false, "替换失败: ${e.message}")
+            ToolResult(false, L("替换失败: ${e.message}", "Replaced: ${e.message}"))
         }
     }
 

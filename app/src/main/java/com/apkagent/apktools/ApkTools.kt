@@ -1,5 +1,7 @@
 package com.apkagent.apktools
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolRegistry
@@ -120,15 +122,15 @@ private fun resolveApk(args: JsonObject, ctx: ToolContext): File? {
 /** apk.list_files — 列出 APK 内部结构 */
 object ApkListFiles : Tool {
     override val name = "apk_list_files"
-    override val description = "列出 APK 内部文件结构（ZIP 条目），包含大小/压缩大小/类型。可指定子目录前缀过滤。"
-    override val parameters = schemaObject(
+    override val description get() = L("列出 APK 内部文件结构（ZIP 条目），包含大小/压缩大小/类型。可指定子目录前缀过滤。", "List APK internal file structure (ZIP entries), including size/compressed size/type. Optional path-prefix filter.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"),
-            "prefix" to strProp("只列出路径以该前缀开头的条目，例如 'res/' 或 'assets/'")
+            "apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")),
+            "prefix" to strProp(L("只列出路径以该前缀开头的条目，例如 'res/' 或 'assets/'", "Only list entries whose path starts with this prefix, e.g. 'res/' or 'assets/'"))
         )
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK，且当前没有导入的 APK。请先用 apk.apk_info 或在界面导入 APK。")
+        val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK，且当前没有导入的 APK。请先用 apk.apk_info 或在界面导入 APK。", "No APK specified, and none is imported. Use apk.apk_info or import an APK in the UI first."))
         val prefix = args.str("prefix") ?: ""
         val sb = StringBuilder()
         sb.appendLine("APK 内部结构：${apk.name}（${apk.length()} 字节）")
@@ -137,7 +139,7 @@ object ApkListFiles : Tool {
                 .filter { it.name.startsWith(prefix) }
                 .sortedBy { it.name }
             sb.appendLine("共 ${entries.size} 个条目（前缀 '$prefix'）\n")
-            sb.appendLine("%-48s %12s %12s  %s".format("路径", "大小", "压缩", "类型"))
+            sb.appendLine("%-48s %12s %12s  %s".format(L("路径", "Path"), L("大小", "Size"), L("压缩", "Compressed"), L("类型", "Type")))
             sb.appendLine("-".repeat(90))
             for (e in entries) {
                 val type = guessType(e.name)
@@ -153,33 +155,33 @@ object ApkListFiles : Tool {
 private fun guessType(name: String): String {
     val lower = name.lowercase()
     return when {
-        name.endsWith("/") -> "目录"
-        name == "AndroidManifest.xml" -> "二进制XML"
+        name.endsWith("/") -> L("目录", "Directory")
+        name == "AndroidManifest.xml" -> L("二进制XML", "Binary XML")
         lower.endsWith(".dex") -> "DEX"
-        lower.endsWith(".arsc") -> "资源表"
+        lower.endsWith(".arsc") -> L("资源表", "Resource table")
         lower.endsWith(".xml") -> "XML"
-        lower.endsWith(".so") -> "Native库"
-        lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".webp") -> "图片"
-        lower.endsWith(".json") || lower.endsWith(".txt") || lower.endsWith(".properties") -> "文本"
-        else -> "文件"
+        lower.endsWith(".so") -> L("Native库", "Native lib")
+        lower.endsWith(".png") || lower.endsWith(".jpg") || lower.endsWith(".webp") -> L("图片", "Image")
+        lower.endsWith(".json") || lower.endsWith(".txt") || lower.endsWith(".properties") -> L("文本", "Text")
+        else -> L("文件", "File")
     }
 }
 
 /** apk.read_manifest — 解析 AndroidManifest.xml */
 object ApkReadManifest : Tool {
     override val name = "apk_read_manifest"
-    override val description = "解析 APK 内二进制 AndroidManifest.xml，还原为可读 XML 文本（包名、权限、组件、SDK 版本等）。"
-    override val parameters = schemaObject(
-        mapOf("apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"))
+    override val description get() = L("解析 APK 内二进制 AndroidManifest.xml，还原为可读 XML 文本（包名、权限、组件、SDK 版本等）。", "Parse the binary AndroidManifest.xml inside the APK into readable XML (package, permissions, components, SDK, etc.).")
+    override val parameters get() = schemaObject(
+        mapOf("apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")))
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
+        val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
         ZipFile(apk).use { zip ->
             val entry = zip.getEntry("AndroidManifest.xml")
-                ?: return ToolResult.err("APK 内未找到 AndroidManifest.xml")
+                ?: return ToolResult.err(L("APK 内未找到 AndroidManifest.xml", "AndroidManifest.xml not found in APK"))
             val bytes = zip.getInputStream(entry).use { it.readBytes() }
             val xml = try { AxmlParser(bytes).parse() }
-            catch (e: Throwable) { return ToolResult.err("解析失败：${e.message}") }
+            catch (e: Throwable) { return ToolResult.err(L("解析失败：${e.message}", "Parse failed: ${e.message}")) }
             return ToolResult.ok(xml)
         }
     }
@@ -188,12 +190,12 @@ object ApkReadManifest : Tool {
 /** apk.read_signer — 读取签名信息 */
 object ApkReadSigner : Tool {
     override val name = "apk_read_signer"
-    override val description = "读取 APK 的签名信息：检测 v1/v2/v3 签名方案，提取 X.509 证书（Subject/Issuer/Serial/算法/有效期）。"
-    override val parameters = schemaObject(
-        mapOf("apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"))
+    override val description get() = L("读取 APK 的签名信息：检测 v1/v2/v3 签名方案，提取 X.509 证书（Subject/Issuer/Serial/算法/有效期）。", "Read APK signing info: detect v1/v2/v3 schemes and extract X.509 certificates (Subject/Issuer/Serial/algorithm/validity).")
+    override val parameters get() = schemaObject(
+        mapOf("apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")))
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
+        val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
         return ToolResult.ok(SignatureReader.read(apk))
     }
 }
@@ -201,13 +203,13 @@ object ApkReadSigner : Tool {
 /** apk.read_dex — 解析 DEX 头 + 类名 */
 object ApkReadDex : Tool {
     override val name = "apk_read_dex"
-    override val description = "解析 DEX 文件：版本、头统计（字符串/类型/方法/字段/类数量），并列出所有类名。可读工作区内 .dex，或直接读 APK 内的 DEX 条目。"
-    override val parameters = schemaObject(
+    override val description get() = L("解析 DEX 文件：版本、头统计（字符串/类型/方法/字段/类数量），并列出所有类名。可读工作区内 .dex，或直接读 APK 内的 DEX 条目。", "Parse a DEX file: version, header stats (strings/types/methods/fields/classes), and list class names. Reads workspace .dex or DEX entries inside an APK.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "path" to strProp("工作区内 .dex 文件路径"),
-            "entry_in_apk" to strProp("若要从 APK 内读取 DEX，填条目名如 classes.dex / classes2.dex（此时 path 可留空）"),
-            "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"),
-            "max_classes" to intProp("最多列出的类数量，默认 200")
+            "path" to strProp(L("工作区内 .dex 文件路径", "Workspace .dex file path")),
+            "entry_in_apk" to strProp(L("若要从 APK 内读取 DEX，填条目名如 classes.dex / classes2.dex（此时 path 可留空）", "To read DEX from APK, enter an entry name like Casses.ex / Casses2.dex (Path to leave empty)")),
+            "apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")),
+            "max_classes" to intProp(L("最多列出的类数量，默认 200", "Maximum number of classes listed, default 200"))
         )
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
@@ -215,21 +217,21 @@ object ApkReadDex : Tool {
         val bytes: ByteArray = try {
             val entry = args.str("entry_in_apk")
             if (entry != null) {
-                val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
+                val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
                 ZipFile(apk).use { zip ->
                     val e = zip.getEntry(entry) ?: return@use null
                     zip.getInputStream(e).use { it.readBytes() }
                 } ?: return ToolResult.err("APK 内未找到条目：$entry")
             } else {
-                val p = args.str("path") ?: return ToolResult.err("需提供 path 或 entry_in_apk。")
+                val p = args.str("path") ?: return ToolResult.err(L("需提供 path 或 entry_in_apk。", "Provide path or entry_in_apk."))
                 val f = Sandbox.resolve(File(p), ctx.workspace)
                 Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
                 f.readBytes()
             }
-        } catch (e: SecurityException) { return ToolResult.err(e.message ?: "权限拒绝") }
+        } catch (e: SecurityException) { return ToolResult.err(e.message ?: L("权限拒绝", "Permission denied")) }
 
         val info = try { DexParser(bytes).parse() }
-        catch (e: Throwable) { return ToolResult.err("DEX 解析失败：${e.message}") }
+        catch (e: Throwable) { return ToolResult.err(L("DEX 解析失败：${e.message}", "DEX parse failed: ${e.message}")) }
 
         val sb = StringBuilder()
         sb.appendLine("DEX 版本：0${info.version}")
@@ -251,23 +253,23 @@ object ApkReadDex : Tool {
 /** apk.hex_view — 十六进制查看 */
 object ApkHexView : Tool {
     override val name = "apk_hex_view"
-    override val description = "十六进制查看文件内容。target 可以是工作区内文件路径，或 'apk://条目名'（如 apk://classes.dex）读取 APK 内条目。"
-    override val parameters = schemaObject(
+    override val description get() = L("十六进制查看文件内容。target 可以是工作区内文件路径，或 'apk://条目名'（如 apk://classes.dex）读取 APK 内条目。", "Hexadecimal viewes the contents of the document. target may be the path to a file in the working area, or 'apk://entry' (e. g. apk://classes.dex) to read entries in APK.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "target" to strProp("目标：工作区文件路径，或 'apk://条目名'"),
-            "apk_path" to strProp("APK 文件路径（用于 apk:// 条目）；留空则用当前导入的 APK"),
-            "offset" to intProp("起始字节偏移，默认 0"),
-            "length" to intProp("读取字节数，默认 4096")
+            "target" to strProp(L("目标：工作区文件路径，或 'apk://条目名'", "Target: Workspace file path, or 'apk://entry'")),
+            "apk_path" to strProp(L("APK 文件路径（用于 apk:// 条目）；留空则用当前导入的 APK", "AAPK File Path (for apk:// entries); leave empty with currently imported AAPK")),
+            "offset" to intProp(L("起始字节偏移，默认 0", "Start byte offset, default 0")),
+            "length" to intProp(L("读取字节数，默认 4096", "Read bytes, default 4096"))
         ),
         listOf("target")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val target = args.str("target") ?: return ToolResult.err("缺少 target")
+        val target = args.str("target") ?: return ToolResult.err(L("缺少 target", "Missing target"))
         val offset = args.int("offset") ?: 0
         val length = args.int("length") ?: 4096
         val bytes: ByteArray = if (target.startsWith("apk://")) {
             val entryName = target.removePrefix("apk://")
-            val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
+            val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
             ZipFile(apk).use { zip ->
                 val e = zip.getEntry(entryName) ?: return@use null
                 zip.getInputStream(e).use { it.readBytes() }
@@ -284,19 +286,19 @@ object ApkHexView : Tool {
 /** apk.extract_entry — 提取 APK 内文件到工作区（敏感） */
 object ApkExtractEntry : Tool {
     override val name = "apk_extract_entry"
-    override val description = "从 APK 中提取指定条目到工作区目录，便于后续分析/修改。"
+    override val description get() = L("从 APK 中提取指定条目到工作区目录，便于后续分析/修改。", "Extracts the specified entry from APK to the workspace directory for subsequent analysis/modification.")
     override val sensitive = true
-    override val parameters = schemaObject(
+    override val parameters get() = schemaObject(
         mapOf(
-            "entry" to strProp("APK 内条目名，如 classes.dex / AndroidManifest.xml"),
-            "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"),
-            "dest_name" to strProp("提取后保存的文件名（默认用条目 basename）")
+            "entry" to strProp(L("APK 内条目名，如 classes.dex / AndroidManifest.xml", "This is the following:")),
+            "apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")),
+            "dest_name" to strProp(L("提取后保存的文件名（默认用条目 basename）", "Filename saved after extraction (default entry basename)"))
         ),
         listOf("entry")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val entry = args.str("entry") ?: return ToolResult.err("缺少 entry")
-        val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
+        val entry = args.str("entry") ?: return ToolResult.err(L("缺少 entry", "Missing"))
+        val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
         val destName = args.str("dest_name") ?: File(entry).name
         val dest = Sandbox.resolve(File(destName), ctx.workspace)
         Sandbox.assertWritable(dest, ctx.workspace)
@@ -313,12 +315,12 @@ object ApkExtractEntry : Tool {
 /** apk.apk_info — APK 概览 */
 object ApkApkInfo : Tool {
     override val name = "apk_apk_info"
-    override val description = "获取 APK 概览：包名、版本、SDK、权限、组件数、DEX 数等（来自 Manifest + 结构扫描）。"
-    override val parameters = schemaObject(
-        mapOf("apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"))
+    override val description get() = L("获取 APK 概览：包名、版本、SDK、权限、组件数、DEX 数等（来自 Manifest + 结构扫描）。", "Access APK Overview: Package name, version, SDK, permission, number of components, DEX number, etc. (from Manifest + structural scan).")
+    override val parameters get() = schemaObject(
+        mapOf("apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")))
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
+        val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
         val sb = StringBuilder()
         sb.appendLine("APK 概览：${apk.name}")
         sb.appendLine("路径：${apk.absolutePath}")
@@ -337,7 +339,7 @@ object ApkApkInfo : Tool {
             if (manifestEntry != null) {
                 val bytes = zip.getInputStream(manifestEntry).use { it.readBytes() }
                 val xml = try { AxmlParser(bytes).parse() } catch (_: Throwable) { "" }
-                sb.appendLine("── AndroidManifest.xml（节选）──")
+                sb.appendLine(L("── AndroidManifest.xml（节选）──", "─ Android Manifest.xml (extract) ─"))
                 sb.appendLine(xml.lines().take(60).joinToString("\n"))
             }
         }
@@ -349,20 +351,20 @@ object ApkApkInfo : Tool {
 
 object FileReadText : Tool {
     override val name = "file_read_text"
-    override val description = "以文本形式读取工作区内文件内容。仅限工作区目录。"
-    override val parameters = schemaObject(
+    override val description get() = L("以文本形式读取工作区内文件内容。仅限工作区目录。", "Reads the contents of documents in the working area in text. Only workspace directories.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "path" to strProp("工作区内文件路径"),
-            "max_chars" to intProp("最多读取字符数，默认 8000")
+            "path" to strProp(L("工作区内文件路径", "File path in the working area")),
+            "max_chars" to intProp(L("最多读取字符数，默认 8000", "Multiplely read characters, default 8000"))
         ),
         listOf("path")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val path = args.str("path") ?: return ToolResult.err("缺少 path")
+        val path = args.str("path") ?: return ToolResult.err(L("缺少 path", "Missing path"))
         val max = args.int("max_chars") ?: 8000
         val f = Sandbox.resolve(File(path), ctx.workspace)
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
-        if (!f.exists()) return ToolResult.err("文件不存在：$path")
+        if (!f.exists()) return ToolResult.err(L("文件不存在：$path", "File not found: $path"))
         if (f.isDirectory) return ToolResult.err("目标是目录：$path")
         val text = f.readText()
         return ToolResult.ok(if (text.length > max) text.take(max) + "\n…(共 ${text.length} 字符，已截断)" else text)
@@ -371,16 +373,16 @@ object FileReadText : Tool {
 
 object FileList : Tool {
     override val name = "file_list"
-    override val description = "列出工作区内某目录的文件/子目录。path 留空列工作区根。"
-    override val parameters = schemaObject(
-        mapOf("path" to strProp("工作区内目录路径，留空列工作区根"))
+    override val description get() = L("列出工作区内某目录的文件/子目录。path 留空列工作区根。", "Lists the files/subdirectories of a directory in the working area. path leaves empty field roots.")
+    override val parameters get() = schemaObject(
+        mapOf("path" to strProp(L("工作区内目录路径，留空列工作区根", "Workspace directory path, leave empty field root")))
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val p = args.str("path")
         val dir = if (p.isNullOrBlank()) ctx.workspace else Sandbox.resolve(File(p), ctx.workspace)
         Sandbox.assertReadable(dir, ctx.workspace, ctx.openApk)
         if (!dir.exists()) return ToolResult.err("路径不存在：${dir.path}")
-        if (!dir.isDirectory) return ToolResult.err("不是目录：${dir.path}")
+        if (!dir.isDirectory) return ToolResult.err(L("不是目录：${dir.path}", "Not directory: ${dir.path}"))
         val sb = StringBuilder()
         sb.appendLine("目录：${dir.absolutePath}")
         dir.listFiles()?.sortedBy { it.name }?.forEach {
@@ -393,18 +395,18 @@ object FileList : Tool {
 
 object FileWrite : Tool {
     override val name = "file_write"
-    override val description = "写入/覆盖文本文件。相对路径自动解析到工作区，绝对路径直接使用。"
+    override val description get() = L("写入/覆盖文本文件。相对路径自动解析到工作区，绝对路径直接使用。", "Writes/covers text files. Relative path automatically resolves to the workspace, using absolute path directly.")
     override val sensitive = true
-    override val parameters = schemaObject(
+    override val parameters get() = schemaObject(
         mapOf(
-            "path" to strProp("工作区内目标文件路径"),
-            "content" to strProp("要写入的文本内容")
+            "path" to strProp(L("工作区内目标文件路径", "Target file path inside the workspace")),
+            "content" to strProp(L("要写入的文本内容", "Text content to write"))
         ),
         listOf("path", "content")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val path = args.str("path") ?: return ToolResult.err("缺少 path")
-        val content = args.str("content") ?: return ToolResult.err("缺少 content")
+        val path = args.str("path") ?: return ToolResult.err(L("缺少 path", "Missing path"))
+        val content = args.str("content") ?: return ToolResult.err(L("缺少 content", "Missing content"))
         val f = Sandbox.resolve(File(path), ctx.workspace)
         Sandbox.assertWritable(f, ctx.workspace)
         f.parentFile?.mkdirs()
@@ -417,38 +419,38 @@ object FileWrite : Tool {
 
 object ApkRemoveSignatureCheck : Tool {
     override val name = "apk_remove_signature_check"
-    override val description = "扫描 APK 内 DEX 中的签名校验调用点（getPackageInfo+GET_SIGNATURES、PackageInfo.signatures、signingInfo、hasSignature、签名 equals 比对等），列出位置并可选 patch。基于 baksmali 反编译 + 模式匹配实现。"
+    override val description get() = L("扫描 APK 内 DEX 中的签名校验调用点（getPackageInfo+GET_SIGNATURES、PackageInfo.signatures、signingInfo、hasSignature、签名 equals 比对等），列出位置并可选 patch。基于 baksmali 反编译 + 模式匹配实现。", "Rapid signature check points (getPackageInfo+GET SIGNATURES, PackageInfo.signatures, signingInfo, HasSignature, signatures match) in the ANK, list the locations and select the matches. Based on baksmali inverted + mode matching.")
     override val sensitive = true
-    override val parameters = schemaObject(
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"),
-            "action" to strProp("操作：scan（仅扫描列出）/ patch（扫描并尝试 patch 后输出新 DEX）", enum = listOf("scan", "patch")),
-            "output_dir" to strProp("patch 模式下输出目录（工作区内），存放 patched DEX")
+            "apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")),
+            "action" to strProp(L("操作：scan（仅扫描列出）/ patch（扫描并尝试 patch 后输出新 DEX）", "Operation: scan (scan list only) / Patch (scan and try catch after output of new DEX)"), enum = listOf("scan", "patch")),
+            "output_dir" to strProp(L("patch 模式下输出目录（工作区内），存放 patched DEX", "Watched DEX"))
         )
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
+        val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
         val action = args.str("action") ?: "scan"
         return when (action) {
             "scan" -> {
                 val r = com.apkagent.apktools.smali.SignatureCheckerScanner.scanApk(apk)
                 if (!r.success) return ToolResult.err(r.message)
                 val sb = StringBuilder()
-                sb.appendLine("签名校验扫描：${apk.name}")
+                sb.appendLine(L("签名校验扫描：${apk.name}", "Signing Scan: ${apk.name}"))
                 sb.appendLine(r.message)
                 sb.appendLine()
                 if (r.hits.isEmpty()) {
-                    sb.appendLine("✅ 未检测到明显的签名校验调用点。")
-                    sb.appendLine("（注：JNI 层 .so 校验、加固壳校验无法通过 DEX 扫描发现）")
+                    sb.appendLine(L("✅ 未检测到明显的签名校验调用点。", "✅ No visible signature checkpoint detected."))
+                    sb.appendLine(L("（注：JNI 层 .so 校验、加固壳校验无法通过 DEX 扫描发现）", "(Note: JNI Layer.so verification, solid shell verification cannot be detected through DEX scan)"))
                 } else {
-                    sb.appendLine("── 发现的调用点 ──")
+                    sb.appendLine(L("── 发现的调用点 ──", "Found call point ─"))
                     r.hits.forEachIndexed { i, h ->
                         sb.appendLine("${i + 1}. [${h.pattern}] ${h.className}.${h.methodName}")
                         sb.appendLine("   ${h.detail}")
                         sb.appendLine("   ${if (h.patchable) "可 patch" else "需人工判断"}")
                     }
                     sb.appendLine()
-                    sb.appendLine("可调用 action=patch 进行自动 patch（将校验返回值改为 true）。")
+                    sb.appendLine(L("可调用 action=patch 进行自动 patch（将校验返回值改为 true）。", "An action = Patch can be called for an automatic patch (revert the checkback value to true)."))
                 }
                 ToolResult.ok(sb.toString())
             }
@@ -458,7 +460,7 @@ object ApkRemoveSignatureCheck : Tool {
                 Sandbox.assertWritable(outDir, ctx.workspace)
                 outDir.mkdirs()
                 val sb = StringBuilder()
-                sb.appendLine("签名校验 Patch：${apk.name}")
+                sb.appendLine(L("签名校验 Patch：${apk.name}", "Sign check: ${apk.name}"))
                 // 提取所有 DEX + 并行 patch
                 val dexFiles = mutableListOf<Pair<String, File>>()
                 java.util.zip.ZipFile(apk).use { zip ->
@@ -475,7 +477,7 @@ object ApkRemoveSignatureCheck : Tool {
                 sb.appendLine(report)
                 sb.appendLine()
                 sb.appendLine("Patch 输出目录：${outDir.absolutePath}")
-                sb.appendLine("下一步：用 apk.repack + apk.sign 重打包签名。")
+                sb.appendLine(L("下一步：用 apk.repack + apk.sign 重打包签名。", "Next: Repack your signature Either apk. repack 1986, or apk. sign."))
                 ToolResult.ok(sb.toString())
             }
             else -> ToolResult.err("未知 action：$action")
@@ -485,20 +487,20 @@ object ApkRemoveSignatureCheck : Tool {
 
 object ApkRepack : Tool {
     override val name = "apk_repack"
-    override val description = "将工作区内解包后的 APK 目录重新打包为 APK（自动排除 META-INF 旧签名）。配合 apk.unpack 和 apk.sign 使用完成完整重打包流程。"
+    override val description get() = L("将工作区内解包后的 APK 目录重新打包为 APK（自动排除 META-INF 旧签名）。配合 apk.unpack 和 apk.sign 使用完成完整重打包流程。", "Repacking the AAPK directory after the area has been unpacked to APK (avoiding the previous signature of META-INF). Complements apk.unpack and apk.sign with complete repackaging process.")
     override val sensitive = true
-    override val parameters = schemaObject(
+    override val parameters get() = schemaObject(
         mapOf(
-            "src_dir" to strProp("工作区内解包后的 APK 目录", ),
-            "output" to strProp("输出 APK 路径（工作区内）")
+            "src_dir" to strProp(L("工作区内解包后的 APK 目录", "AAK directory after the withdraw of the package in the area"), ),
+            "output" to strProp(L("输出 APK 路径（工作区内）", "Output APK path (working area)"))
         ),
         listOf("src_dir", "output")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val srcDir = args.str("src_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
-            ?: return ToolResult.err("缺少 src_dir")
+            ?: return ToolResult.err(L("缺少 src_dir", "Missing src dir"))
         val output = args.str("output")?.let { Sandbox.resolve(File(it), ctx.workspace) }
-            ?: return ToolResult.err("缺少 output")
+            ?: return ToolResult.err(L("缺少 output", "Missing output"))
         Sandbox.assertReadable(srcDir, ctx.workspace, ctx.openApk)
         Sandbox.assertWritable(output, ctx.workspace)
         val r = com.apkagent.apktools.smali.ApkRepackSigner.repack(srcDir, output)
@@ -510,16 +512,16 @@ object ApkRepack : Tool {
 
 object ApkUnpack : Tool {
     override val name = "apk_unpack"
-    override val description = "解包 APK 到工作区目录（提取全部文件，便于修改后用 apk.repack 重打包）。"
+    override val description get() = L("解包 APK 到工作区目录（提取全部文件，便于修改后用 apk.repack 重打包）。", "Unpack APK to the workspace directory (extract all files and repackage them with apk.repack after modification).")
     override val sensitive = true
-    override val parameters = schemaObject(
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"),
-            "output_dir" to strProp("输出目录（工作区内），留空则自动命名")
+            "apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")),
+            "output_dir" to strProp(L("输出目录（工作区内），留空则自动命名", "Output directory (working area), empty and automatically named"))
         )
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
+        val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
         val outDir = args.str("output_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: File(ctx.workspace, "unpacked_${apk.nameWithoutExtension}")
         Sandbox.assertWritable(outDir, ctx.workspace)
@@ -532,19 +534,19 @@ object ApkUnpack : Tool {
 
 object ApkSign : Tool {
     override val name = "apk_sign"
-    override val description = "对 APK 进行 v1/v2 签名。使用内置调试密钥（自签名，与 Android debug 等价）或自定义 keystore。基于 Google apksig 库实现。"
+    override val description get() = L("对 APK 进行 v1/v2 签名。使用内置调试密钥（自签名，与 Android debug 等价）或自定义 keystore。基于 Google apksig 库实现。", "V1/v2 signature for APK. Use the built-in debug key (self-signed, equal to Android debug) or customize the keystore. Based on Google arksig library.")
     override val sensitive = true
-    override val parameters = schemaObject(
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("待签名的 APK 路径（工作区内）"),
-            "output" to strProp("签名后输出 APK 路径，留空则在原名加 -signed"),
-            "scheme" to strProp("签名方案：v1 / v2 / both", enum = listOf("v1", "v2", "both"))
+            "apk_path" to strProp(L("待签名的 APK 路径（工作区内）", "AAK Path to Sign (working area)")),
+            "output" to strProp(L("签名后输出 APK 路径，留空则在原名加 -signed", "Output AAK path after signing, leave empty with original name added -signed")),
+            "scheme" to strProp(L("签名方案：v1 / v2 / both", "Signature scheme: v1 / v2 / both"), enum = listOf("v1", "v2", "both"))
         ),
         listOf("apk_path")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val apkPath = args.str("apk_path")?.let { Sandbox.resolve(File(it), ctx.workspace) }
-            ?: return ToolResult.err("缺少 apk_path")
+            ?: return ToolResult.err(L("缺少 apk_path", "Missing ack Countries"))
         Sandbox.assertReadable(apkPath, ctx.workspace, ctx.openApk)
         val scheme = args.str("scheme") ?: "both"
         val outPath = args.str("output")?.let { Sandbox.resolve(File(it), ctx.workspace) }
@@ -568,13 +570,13 @@ object ApkSign : Tool {
 
 object DexDisasm : Tool {
     override val name = "dex_disasm"
-    override val description = "将 DEX 反编译为 smali 代码（基于 baksmali 引擎）。可反编译工作区内 .dex 或直接读 APK 内 DEX。输出 smali 文件到工作区目录。"
-    override val parameters = schemaObject(
+    override val description get() = L("将 DEX 反编译为 smali 代码（基于 baksmali 引擎）。可反编译工作区内 .dex 或直接读 APK 内 DEX。输出 smali 文件到工作区目录。", "Compile DEX back into smali code (based on baksmali engine). Recompilable to re-circulate .dex or read DEX directly in APK. Output the smali file to the workspace directory.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "path" to strProp("工作区内 .dex 文件路径"),
-            "entry_in_apk" to strProp("若从 APK 内读取 DEX，填条目名如 classes.dex"),
-            "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"),
-            "output_dir" to strProp("smali 输出目录（工作区内），留空自动命名")
+            "path" to strProp(L("工作区内 .dex 文件路径", "Workspace .dex file path")),
+            "entry_in_apk" to strProp(L("若从 APK 内读取 DEX，填条目名如 classes.dex", "If read DEX from APK, enter an entry name like numbers.dex")),
+            "apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")),
+            "output_dir" to strProp(L("smali 输出目录（工作区内），留空自动命名", "Smali output directory (working area), leave empty for automatic naming"))
         )
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
@@ -583,7 +585,7 @@ object DexDisasm : Tool {
         Sandbox.assertWritable(outDir, ctx.workspace)
         val entry = args.str("entry_in_apk")
         val result = if (entry != null) {
-            val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK。")
+            val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
             java.util.zip.ZipFile(apk).use { zip ->
                 val e = zip.getEntry(entry) ?: return@use null
                 val tmp = File(ctx.workspace, "_tmp_${entry.replace("/", "_")}")
@@ -593,7 +595,7 @@ object DexDisasm : Tool {
                 r
             } ?: return ToolResult.err("APK 内未找到条目：$entry")
         } else {
-            val p = args.str("path") ?: return ToolResult.err("需提供 path 或 entry_in_apk")
+            val p = args.str("path") ?: return ToolResult.err(L("需提供 path 或 entry_in_apk", "Need to provide path or intry in apk"))
             val f = Sandbox.resolve(File(p), ctx.workspace)
             Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
             com.apkagent.apktools.smali.SmaliEngine.disassembleDex(f, outDir)
@@ -606,20 +608,20 @@ object DexDisasm : Tool {
 
 object DexAssemble : Tool {
     override val name = "dex_assemble"
-    override val description = "将 smali 目录回编译为 DEX 文件（基于 smali 汇编器）。用于修改 smali 后重新生成 DEX。"
+    override val description get() = L("将 smali 目录回编译为 DEX 文件（基于 smali 汇编器）。用于修改 smali 后重新生成 DEX。", "Compile the smali directory back into a DEX file (based on the smali compiler). Recreate DEX after changing smali.")
     override val sensitive = true
-    override val parameters = schemaObject(
+    override val parameters get() = schemaObject(
         mapOf(
-            "smali_dir" to strProp("工作区内 smali 文件目录"),
-            "output" to strProp("输出 .dex 文件路径（工作区内）")
+            "smali_dir" to strProp(L("工作区内 smali 文件目录", "Workspace smali file directory")),
+            "output" to strProp(L("输出 .dex 文件路径（工作区内）", "Output.dex file Violations (working area)"))
         ),
         listOf("smali_dir", "output")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val smaliDir = args.str("smali_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
-            ?: return ToolResult.err("缺少 smali_dir")
+            ?: return ToolResult.err(L("缺少 smali_dir", "Missing smali dir"))
         val output = args.str("output")?.let { Sandbox.resolve(File(it), ctx.workspace) }
-            ?: return ToolResult.err("缺少 output")
+            ?: return ToolResult.err(L("缺少 output", "Missing output"))
         Sandbox.assertReadable(smaliDir, ctx.workspace, ctx.openApk)
         Sandbox.assertWritable(output, ctx.workspace)
         val r = com.apkagent.apktools.smali.SmaliEngine.assembleSmali(smaliDir, output)
@@ -631,21 +633,21 @@ object DexAssemble : Tool {
 
 object DexEdit : Tool {
     override val name = "dex_edit"
-    override val description = "DEX/smali 编辑：列出类的方法字段、或修改 smali 文本。工作流：dex.disasm 反编译 → file.read_text 查看/修改 smali → dex.assemble 回编译。"
+    override val description get() = L("DEX/smali 编辑：列出类的方法字段、或修改 smali 文本。工作流：dex.disasm 反编译 → file.read_text 查看/修改 smali → dex.assemble 回编译。", "DEX/smali Edit: Lists categories of method fields or changes the smali text. Workstream: dex.disasm inversion →file.read text view/modify smali → dex.assemble back.")
     override val sensitive = true
-    override val parameters = schemaObject(
+    override val parameters get() = schemaObject(
         mapOf(
-            "smali_path" to strProp("工作区内 .smali 文件路径"),
-            "action" to strProp("操作：list_methods（列出方法）/ list_fields（列出字段）/ read（读取smali文本）", enum = listOf("list_methods", "list_fields", "read"))
+            "smali_path" to strProp(L("工作区内 .smali 文件路径", "Workspace.smali file path")),
+            "action" to strProp(L("操作：list_methods（列出方法）/ list_fields（列出字段）/ read（读取smali文本）", "Operations: list methods (list method)/list fields (list field)/ read (read smali text)"), enum = listOf("list_methods", "list_fields", "read"))
         ),
         listOf("smali_path")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val path = args.str("smali_path") ?: return ToolResult.err("缺少 smali_path")
+        val path = args.str("smali_path") ?: return ToolResult.err(L("缺少 smali_path", "Missing smali path"))
         val action = args.str("action") ?: "read"
         val f = Sandbox.resolve(File(path), ctx.workspace)
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
-        if (!f.exists()) return ToolResult.err("文件不存在：$path")
+        if (!f.exists()) return ToolResult.err(L("文件不存在：$path", "File not found: $path"))
         val text = f.readText()
         return when (action) {
             "read" -> ToolResult.ok(text.take(8000) + if (text.length > 8000) "\n…(共 ${text.length} 字符)" else "")
@@ -657,7 +659,7 @@ object DexEdit : Tool {
                 val fields = Regex("""\.field\s+(.*)""").findAll(text).map { it.groupValues[1] }.toList()
                 ToolResult.ok("字段列表（${fields.size}）：\n${fields.joinToString("\n")}")
             }
-            else -> ToolResult.err("未知 action")
+            else -> ToolResult.err(L("未知 action", "Unknown action"))
         }
     }
 }
@@ -667,22 +669,22 @@ object DexEdit : Tool {
 /** shizuku.file_access — 通过 Shizuku 以系统权限读文件 */
 object ShizukuFileAccess : Tool {
     override val name = "shizuku_file_access"
-    override val description = "通过 Shizuku 系统权限读取/列出任意路径文件（绕过 SAF 限制）。需 Shizuku 已授权。"
-    override val parameters = schemaObject(
+    override val description get() = L("通过 Shizuku 系统权限读取/列出任意路径文件（绕过 SAF 限制）。需 Shizuku 已授权。", "Read/list any path file (by bypassing SAF limits) with Shizuku system privileges. 5.5%")
+    override val parameters get() = schemaObject(
         mapOf(
-            "action" to strProp("操作：read（读文件）/ list（列目录）/ copy_to_workspace（复制到工作区）",
+            "action" to strProp(L("操作：read（读文件）/ list（列目录）/ copy_to_workspace（复制到工作区）", "Operations: read/ list/ copy to workspace (copy to workspace)"),
                 enum = listOf("read", "list", "copy_to_workspace")),
-            "path" to strProp("目标路径（绝对路径）"),
-            "max_chars" to intProp("read 模式最多读取字符数，默认 8000"),
-            "dest_name" to strProp("copy_to_workspace 模式的目标文件名（留空用原名）")
+            "path" to strProp(L("目标路径（绝对路径）", "Target path (absolute)")),
+            "max_chars" to intProp(L("read 模式最多读取字符数，默认 8000", "Read mode reads maximum number of characters, default 8000")),
+            "dest_name" to strProp(L("copy_to_workspace 模式的目标文件名（留空用原名）", "Destination filename for copy to workspace mode (main name left empty)"))
         ),
         listOf("action", "path")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         if (!ShizukuManager.isAuthorized()) {
-            return ToolResult.err("Shizuku 未授权，无法使用系统级文件访问。请先在设置页授权 Shizuku。")
+            return ToolResult.err(L("Shizuku 未授权，无法使用系统级文件访问。请先在设置页授权 Shizuku。", "Shizuku was not authorized to access using system-level files. Please authorize Shizuku to start with the settings page."))
         }
-        val path = args.str("path") ?: return ToolResult.err("缺少 path")
+        val path = args.str("path") ?: return ToolResult.err(L("缺少 path", "Missing path"))
         val action = args.str("action") ?: "read"
 
         return when (action) {
@@ -715,7 +717,7 @@ object ShizukuFileAccess : Tool {
                 if (ok) {
                     ToolResult.ok("已复制到工作区：${dest.absolutePath}（${dest.length()} 字节）")
                 } else {
-                    ToolResult.err("复制失败：$path")
+                    ToolResult.err(L("复制失败：$path", "Copying failed: $path"))
                 }
             }
             else -> ToolResult.err("未知 action：$action")
@@ -728,18 +730,18 @@ object ShizukuFileAccess : Tool {
 /** python.exec — 在设备上执行 Python 脚本 */
 object PythonExec : Tool {
     override val name = "python_exec"
-    override val description = "在 Android 设备上执行 Python 脚本。优先用 Python 引擎，不可用时自动降级为 Shizuku shell 执行简单操作（文件复制/删除/目录操作等）。复杂库（androguard/frida）仍需安装 Python。"
+    override val description get() = L("在 Android 设备上执行 Python 脚本。优先用 Python 引擎，不可用时自动降级为 Shizuku shell 执行简单操作（文件复制/删除/目录操作等）。复杂库（androguard/frida）仍需安装 Python。", "Execute Python scripts on Android devices. Prefer to the Python engine and perform simple operations (document copying/deleting/ directory operations, etc.) when not automatically downgraded to Shizuku shell. The complex library (androguard/frida) still needs Python.")
     override val sensitive = true
-    override val parameters = schemaObject(
+    override val parameters get() = schemaObject(
         mapOf(
-            "code" to strProp("Python 代码（必填）。可直接内联代码，或写导入 os/json 等标准库。代码中可用 open() 读写工作区文件。"),
-            "timeout" to intProp("超时秒数，默认 30，最大 120"),
-            "save_as" to strProp("将代码保存为工作区内 .py 文件（留空则自动命名并执行后删除）")
+            "code" to strProp(L("Python 代码（必填）。可直接内联代码，或写导入 os/json 等标准库。代码中可用 open() 读写工作区文件。", "Python code (required). You can either direct inline code, or write a standard library such as Os/json. Code can be used to read and write workspace files.")),
+            "timeout" to intProp(L("超时秒数，默认 30，最大 120", "Timeout seconds, default 30, max 120")),
+            "save_as" to strProp(L("将代码保存为工作区内 .py 文件（留空则自动命名并执行后删除）", "Save code as .py file in the workspace (name and execute when left empty)"))
         ),
         listOf("code")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val code = args.str("code") ?: return ToolResult.err("缺少 code")
+        val code = args.str("code") ?: return ToolResult.err(L("缺少 code", "Missing code»"))
         val timeout = (args.int("timeout") ?: 30).coerceIn(1, 120)
         val saveAs = args.str("save_as")
 
@@ -760,7 +762,7 @@ object PythonExec : Tool {
             }
             // 如果 Python 本身不可用（不是脚本错误），尝试降级
             if (result.error?.contains("Permission denied") == true
-                || result.error?.contains("未找到") == true
+                || result.error?.contains(L("未找到", "Not found")) == true
                 || result.error?.contains("installGuide") == true) {
                 null // 标记需要降级
             } else {
@@ -774,19 +776,19 @@ object PythonExec : Tool {
 
         // Python 不可用 — 降级为 Shizuku shell 执行简单文件操作
         if (pyResult == null && ShizukuManager.isAuthorized()) {
-            Logger.i("Py", "Python 不可用，降级为 Shizuku shell 执行")
+            Logger.i("Py", L("Python 不可用，降级为 Shizuku shell 执行", "Python not available, downgrade to Shizuku shell execution"))
             val shellCmd = pythonToShell(code, ctx.workspace.absolutePath)
             if (shellCmd != null) {
                 val output = ShizukuManager.execAndGet(shellCmd)
                 return if (output != null) {
                     ToolResult.ok("⚠️ Python 不可用，已通过 Shizuku shell 执行等效操作：\n${output.take(8000)}")
                 } else {
-                    ToolResult.err("Python 不可用且 Shizuku shell 执行失败")
+                    ToolResult.err(L("Python 不可用且 Shizuku shell 执行失败", "Python is not available and Shizuku shell execution failed"))
                 }
             }
-            return ToolResult.err("Python 不可用。此操作需要完整 Python 环境（androguard/frida 等库），请在设置页安装。")
+            return ToolResult.err(L("Python 不可用。此操作需要完整 Python 环境（androguard/frida 等库），请在设置页安装。", "Python is not available. This operation requires a complete Python environment (androguard/ Frida, etc.), installed on the settings page."))
         }
-        return pyResult ?: ToolResult.err("Python 不可用。请在设置页安装 Python 环境。")
+        return pyResult ?: ToolResult.err(L("Python 不可用。请在设置页安装 Python 环境。", "Python is not available. Please install the Python environment on the settings page."))
     }
 
     /**
@@ -856,8 +858,8 @@ object PythonExec : Tool {
 /** python.info — 检查 Python 环境状态 */
 object PythonInfo : Tool {
     override val name = "python_info"
-    override val description = "检查设备上 Python 环境是否可用，以及版本信息。"
-    override val parameters = schemaObject(emptyMap())
+    override val description get() = L("检查设备上 Python 环境是否可用，以及版本信息。", "Checks the availability of the Python environment on the device, as well as version information.")
+    override val parameters get() = schemaObject(emptyMap())
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val python = PythonRunner.findPython()
         return if (python == null) {
@@ -874,16 +876,16 @@ object PythonInfo : Tool {
 /** pip.install — AI 自安装 Python 包，跳过已安装的 */
 object PipInstall : Tool {
     override val name = "pip_install"
-    override val description = "安装 Python pip 包（自动跳过已安装）。AI 可在需要时自行安装依赖，如 frida-tools、androguard、objection 等。支持批量安装。"
+    override val description get() = L("安装 Python pip 包（自动跳过已安装）。AI 可在需要时自行安装依赖，如 frida-tools、androguard、objection 等。支持批量安装。", "Install a Python pip package (auto skip installed). AI can install its own dependencies when needed, such as Frida-tools, androguard, or otherwise.")
     override val sensitive = true
-    override val parameters = schemaObject(mapOf(
-        "packages" to strProp("要安装的包名或空格分隔的多个包名，如 'frida-tools androguard'"),
-        "timeout" to intProp("超时秒数，默认120，最大300")
+    override val parameters get() = schemaObject(mapOf(
+        "packages" to strProp(L("要安装的包名或空格分隔的多个包名，如 'frida-tools androguard'", "Multiple package names to install or space-separated, e.g. 'frida-tools and roguard'")),
+        "timeout" to intProp(L("超时秒数，默认120，最大300", "Overtime seconds, default 120, max 300"))
     ), listOf("packages"))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         if (!PythonRunner.isAvailable()) return ToolResult.err(PythonRunner.installGuide())
         val list = args.str("packages")?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-            ?: return ToolResult.err("缺少 packages")
+            ?: return ToolResult.err(L("缺少 packages", "Missing Packages"))
         val timeout = args.int("timeout") ?: 120
         return if (list.size == 1) {
             val r = PythonRunner.pipInstall(list[0], timeoutSeconds = timeout)
@@ -898,12 +900,12 @@ object PipInstall : Tool {
 /** pip.list — 查看已安装的 pip 包 */
 object PipList : Tool {
     override val name = "pip_list"
-    override val description = "列出 Python 已安装的 pip 包及版本。"
-    override val parameters = schemaObject(emptyMap())
+    override val description get() = L("列出 Python 已安装的 pip 包及版本。", "Lists Python installed pip packages and versions.")
+    override val parameters get() = schemaObject(emptyMap())
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         if (!PythonRunner.isAvailable()) return ToolResult.err(PythonRunner.installGuide())
         val pkgs = PythonRunner.refreshInstalled()
-        return ToolResult.ok(if (pkgs.isEmpty()) "无已安装的 pip 包" else "已安装 ${pkgs.size} 个包:\n${pkgs.joinToString("\n")}")
+        return ToolResult.ok(if (pkgs.isEmpty()) L("无已安装的 pip 包", "No installed pip package") else "已安装 ${pkgs.size} 个包:\n${pkgs.joinToString("\n")}")
     }
 }
 
@@ -912,12 +914,12 @@ object PipList : Tool {
 /** plugin.install — 安装内置或远程插件 */
 object PluginInstall : Tool {
     override val name = "plugin_install"
-    override val description = "安装分析插件到本地。内置插件（frida-scripts/smali-patches/反混淆/脱壳/分析脚本）直接写入，远程插件下载到 workspace/plugins/ 并缓存。"
+    override val description get() = L("安装分析插件到本地。内置插件（frida-scripts/smali-patches/反混淆/脱壳/分析脚本）直接写入，远程插件下载到 workspace/plugins/ 并缓存。", "Install analytical plugins locally. The built-in plugin (frida-scripts/smali-pacies/anti-mixing/screech/analytic script) is written directly and the remote plugin is downloaded to workspace/plugins/ and cache.")
     override val sensitive = true
-    override val parameters = schemaObject(mapOf(
-        "id" to strProp("内置插件ID（如 frida-sslpin, smali-vip-bypass），留空则用 url 下载"),
-        "url" to strProp("远程插件下载URL（.js/.py/.patch/.zip），id 和 url 二选一"),
-        "timeout" to intProp("下载超时秒数，默认60")
+    override val parameters get() = schemaObject(mapOf(
+        "id" to strProp(L("内置插件ID（如 frida-sslpin, smali-vip-bypass），留空则用 url 下载", "Inline plugin ID (e. g. Frida-sslpin, smali-vip-bypass), download with url")),
+        "url" to strProp(L("远程插件下载URL（.js/.py/.patch/.zip），id 和 url 二选一", "Remote plugin download URLs (.js/.py/.pact/.zip), id and url two")),
+        "timeout" to intProp(L("下载超时秒数，默认60", "Download timeout seconds, default 60"))
     ))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val pluginsDir = PluginManager.pluginDir(ctx.workspace)
@@ -936,9 +938,9 @@ object PluginInstall : Tool {
         } else if (url != null) {
             val timeout = args.int("timeout") ?: 60
             val result = PluginManager.download(url, pluginsDir, timeout)
-            return if (result.startsWith("已")) ToolResult.ok(result) else ToolResult.err(result)
+            return if (result.startsWith(L("已", "Already"))) ToolResult.ok(result) else ToolResult.err(result)
         } else {
-            return ToolResult.err("需提供 id 或 url")
+            return ToolResult.err(L("需提供 id 或 url", "Id or url required"))
         }
     }
 }
@@ -946,9 +948,9 @@ object PluginInstall : Tool {
 /** plugin.list — 列出可用和已安装插件 */
 object PluginList : Tool {
     override val name = "plugin_list"
-    override val description = "列出所有可用插件及安装状态。内置插件有默认代码可直接使用。"
-    override val parameters = schemaObject(mapOf(
-        "category" to strProp("按类别过滤: frida / smali / deobfuscation / unpackers / analysis")
+    override val description get() = L("列出所有可用插件及安装状态。内置插件有默认代码可直接使用。", "Lists all available plugins and installed status. The built-in plugin has a default code to use directly.")
+    override val parameters get() = schemaObject(mapOf(
+        "category" to strProp(L("按类别过滤: frida / smali / deobfuscation / unpackers / analysis", "Filter by category: Frida / smali / deobfuscation / unpackers / anallysis"))
     ))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val cat = args.str("category")?.lowercase()
@@ -967,7 +969,7 @@ object PluginList : Tool {
             sb.appendLine("  ${if (installed) "✅" else "⬇️"} ${plugin.id}: ${plugin.name}")
             sb.appendLine("     ${plugin.description}")
         }
-        sb.appendLine("\n用法: plugin.install id=插件ID")
+        sb.appendLine(L("\n用法: plugin.install id=插件ID", "Usage: plugin. install id = plugin ID"))
         sb.appendLine("目录: ${pluginsDir.absolutePath}")
         return ToolResult.ok(sb.toString())
     }
@@ -978,16 +980,16 @@ object PluginList : Tool {
 /** apk.search_strings — APK 内正则搜索 */
 object ApkSearchStrings : Tool {
     override val name = "apk_search_strings"
-    override val description = "在 APK 所有文件中搜索匹配正则的内容（字符串/URL/密钥模式）。逐个条目读取、忽略二进制、限时。"
-    override val parameters = schemaObject(mapOf(
+    override val description get() = L("在 APK 所有文件中搜索匹配正则的内容（字符串/URL/密钥模式）。逐个条目读取、忽略二进制、限时。", "Searches for content matching the regulars (strings/URL/key mode) in all APK files. Reads and ignores binary and time limits per entry.")
+    override val parameters get() = schemaObject(mapOf(
         "pattern" to strProp("""搜索正则表达式，如 'https?://[\w./]+' 或 'api_key|token|secret'"""),
-        "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK"),
-        "file_filter" to strProp("文件名过滤，如 '*.xml' 或 '*.dex'，留空搜全部"),
-        "max_results" to intProp("最多匹配数，默认50")
+        "apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK")),
+        "file_filter" to strProp(L("文件名过滤，如 '*.xml' 或 '*.dex'，留空搜全部", "File name filters such as '*.xml' or '*.dex', empty search all")),
+        "max_results" to intProp(L("最多匹配数，默认50", "Max matches, default 50"))
     ), listOf("pattern"))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val pattern = args.str("pattern") ?: return ToolResult.err("缺少 pattern")
-        val apk = resolveApk(args, ctx) ?: return ToolResult.err("未指定 APK")
+        val pattern = args.str("pattern") ?: return ToolResult.err(L("缺少 pattern", "Missing pattern"))
+        val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK", "No APK specified"))
         val fileFilter = args.str("file_filter")
         val maxResults = args.int("max_results") ?: 50
 
@@ -1030,15 +1032,15 @@ object ApkSearchStrings : Tool {
 /** file.search — 工作区文件正则搜索 */
 object FileSearch : Tool {
     override val name = "file_search"
-    override val description = "在工作区文件内容中搜索正则匹配。类似 grep -rn。"
-    override val parameters = schemaObject(mapOf(
-        "pattern" to strProp("搜索正则"),
-        "path" to strProp("搜索起始路径（工作区内）；留空=工作区根"),
-        "file_glob" to strProp("文件名匹配，如 '*.smali' 或 '*.py'"),
-        "max_results" to intProp("最多结果数，默认30")
+    override val description get() = L("在工作区文件内容中搜索正则匹配。类似 grep -rn。", "Searches for regular matches in the working area file contents. Like grep-rn.")
+    override val parameters get() = schemaObject(mapOf(
+        "pattern" to strProp(L("搜索正则", "Search regular")),
+        "path" to strProp(L("搜索起始路径（工作区内）；留空=工作区根", "Search starting path (working area Choose a working area Root")),
+        "file_glob" to strProp(L("文件名匹配，如 '*.smali' 或 '*.py'", "Filename matches, e. g. '*.smali' or '*.py'")),
+        "max_results" to intProp(L("最多结果数，默认30", "Max results, default 30"))
     ), listOf("pattern"))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val pattern = args.str("pattern") ?: return ToolResult.err("缺少 pattern")
+        val pattern = args.str("pattern") ?: return ToolResult.err(L("缺少 pattern", "Missing pattern"))
         val baseDir = args.str("path")?.let { Sandbox.resolve(File(it), ctx.workspace) } ?: ctx.workspace
         Sandbox.assertReadable(baseDir, ctx.workspace, ctx.openApk)
         val glob = args.str("file_glob")?.let { it.removePrefix("*.") }?.lowercase()
@@ -1076,14 +1078,14 @@ object FileSearch : Tool {
 /** apk.patch_manifest — 修改 AndroidManifest */
 object ApkPatchManifest : Tool {
     override val name = "apk_patch_manifest"
-    override val description = "修改 APK 的 AndroidManifest.xml（配合 apk_unpack/apk_repack 流程）。支持添加 debuggable=true、networkSecurity（允许明文）、backup、导出组件等。"
+    override val description get() = L("修改 APK 的 AndroidManifest.xml（配合 apk_unpack/apk_repack 流程）。支持添加 debuggable=true、networkSecurity（允许明文）、backup、导出组件等。", "AndroidManifest.xml (with apk unpack/apk repack process). Supports the addition of debuggable=true, networkSecurity (allowed), Backup, export components, etc.")
     override val sensitive = true
-    override val parameters = schemaObject(mapOf(
-        "manifest_path" to strProp("工作区内解包后的 AndroidManifest.xml 路径"),
-        "patch_type" to strProp("修改类型：debuggable/network/backup/export/all", enum = listOf("debuggable", "network", "backup", "export", "all"))
+    override val parameters get() = schemaObject(mapOf(
+        "manifest_path" to strProp(L("工作区内解包后的 AndroidManifest.xml 路径", "AndroidManifest.xml path after unpacking in the workspace")),
+        "patch_type" to strProp(L("修改类型：debuggable/network/backup/export/all", "Change type: debuggable/network/backup/export/all"), enum = listOf("debuggable", "network", "backup", "export", "all"))
     ), listOf("manifest_path", "patch_type"))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val path = args.str("manifest_path") ?: return ToolResult.err("缺少 manifest_path")
+        val path = args.str("manifest_path") ?: return ToolResult.err(L("缺少 manifest_path", "Missing manise path"))
         val patchType = args.str("patch_type") ?: "all"
         val f = Sandbox.resolve(File(path), ctx.workspace)
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
@@ -1123,9 +1125,15 @@ object ApkPatchManifest : Tool {
             if (exportedCount > 0) changes.add("提示: $exportedCount 个组件缺少 exported (需手动处理)")
         }
 
-        if (changes.isEmpty()) return ToolResult.ok("无需修改（Manifest 已包含所需属性）")
+        if (changes.isEmpty()) return ToolResult.ok(L("无需修改（Manifest 已包含所需属性）", "No changes required (Manifest contains required properties)"))
         f.writeText(text)
-        return ToolResult.ok("已修改 ${f.absolutePath}:\n${changes.joinToString("\n")}\n\n下一步: apk_repack + apk_sign 重打包")
+        val changeList = changes.joinToString("\n")
+        return ToolResult.ok(
+            L(
+                "已修改 ${f.absolutePath}:\n$changeList\n\n下一步: apk_repack + apk_sign 重打包",
+                "Modified ${f.absolutePath}:\n$changeList\n\nNext: apk_repack + apk_sign"
+            )
+        )
     }
 }
 
@@ -1134,20 +1142,20 @@ object ApkPatchManifest : Tool {
 /** adb.exec — 执行 ADB 命令 */
 object AdbExec : Tool {
     override val name = "adb_exec"
-    override val description = "执行 ADB 命令（需设备已连接 USB 调试或无线调试）。可用于: adb install/uninstall, am/pm, logcat, dumpsys 等。"
+    override val description get() = L("执行 ADB 命令（需设备已连接 USB 调试或无线调试）。可用于: adb install/uninstall, am/pm, logcat, dumpsys 等。", "Execute the ADB command (required device is connected to USB debugging or wireless debugging). For: adb install/uninstall, am/pm, logcat, dumpsys, etc.")
     override val sensitive = true
-    override val parameters = schemaObject(mapOf(
-        "command" to strProp("ADB 命令（不需要 adb 前缀），如 'install /path/to.apk' 或 'shell pm list packages'"),
-        "timeout" to intProp("超时秒数，默认30，最大60")
+    override val parameters get() = schemaObject(mapOf(
+        "command" to strProp(L("ADB 命令（不需要 adb 前缀），如 'install /path/to.apk' 或 'shell pm list packages'", "ADB command (no adb prefix required), e. g. 'install /path/to.apk' or 'shell pm list packs'")),
+        "timeout" to intProp(L("超时秒数，默认30，最大60", "Timeout seconds, default 30, maximum 60"))
     ), listOf("command"))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val cmd = args.str("command") ?: return ToolResult.err("缺少 command")
+        val cmd = args.str("command") ?: return ToolResult.err(L("缺少 command", "Missing command"))
         val timeout = (args.int("timeout") ?: 30).coerceIn(5, 60)
 
         // 查找 adb
         val adbPaths = listOf("/data/data/com.termux/files/usr/bin/adb", "/system/bin/adb", "/usr/bin/adb")
         val adb = adbPaths.firstOrNull { File(it).exists() && File(it).canExecute() }
-            ?: return ToolResult.err("未找到 ADB。请在 Termux 中: pkg install android-tools\n或连接电脑使用 adb。")
+            ?: return ToolResult.err(L("未找到 ADB。请在 Termux 中: pkg install android-tools\n或连接电脑使用 adb。", "No ADB found. In Termux: pkg install and roid-tools\\n or connect to computer adb."))
 
         return try {
             kotlinx.coroutines.withTimeout(timeout * 1000L) {
@@ -1175,8 +1183,8 @@ object AdbExec : Tool {
 /** smart_patch.scan — 扫描可应用的 Patch */
 object SmartPatchScan : Tool {
     override val name = "smart_patch_scan"
-    override val description = "扫描 APK 工作区，列出所有可应用的智能 Patch（签名校验/root检测/emulator检测/调试限制/SSL pinning/VIP绕过）"
-    override val parameters = schemaObject(emptyMap())
+    override val description get() = L("扫描 APK 工作区，列出所有可应用的智能 Patch（签名校验/root检测/emulator检测/调试限制/SSL pinning/VIP绕过）", "Scan APK Workspace, listing all applicable smart Patches (signature verification/ root testing/emulator testing/ debugging limits/SSL penning/ VIP bypassing)")
+    override val parameters get() = schemaObject(emptyMap())
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val result = SmartPatch.scanAvailable(ctx.workspace)
         return ToolResult.ok(result)
@@ -1186,11 +1194,11 @@ object SmartPatchScan : Tool {
 /** smart_patch.apply — 应用指定 Patch */
 object SmartPatchApply : Tool {
     override val name = "smart_patch_apply"
-    override val description = "一键应用智能 Patch。可用ID: signature_check(签名校验), root_detection(Root检测), emulator_detection(模拟器检测), debug_restriction(调试限制), ssl_pinning(SSL Pinning), vip_bypass(VIP绕过)"
+    override val description get() = L("一键应用智能 Patch。可用ID: signature_check(签名校验), root_detection(Root检测), emulator_detection(模拟器检测), debug_restriction(调试限制), ssl_pinning(SSL Pinning), vip_bypass(VIP绕过)", "One key to apply smart Patch. Available ID: signature check (signature validation), root detion (Root testing), emulator detection (simulator detection), debug resulting (debugging limit), ssl pinning (SSL Pinning), vip bypass (VIP bypassing)")
     override val sensitive = true
-    override val parameters = schemaObject(mapOf(
+    override val parameters get() = schemaObject(mapOf(
         "patch_id" to strProp("Patch ID: signature_check / root_detection / emulator_detection / debug_restriction / ssl_pinning / vip_bypass"),
-        "target_dir" to strProp("目标 smali 目录路径（留空自动检测）")
+        "target_dir" to strProp(L("目标 smali 目录路径（留空自动检测）", "Target smali directory path (almost automatic detection)"))
     ), listOf("patch_id"))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val patchId = args.str("patch_id") ?: return ToolResult.err("缺少 patch_id\n可用: ${SmartPatch.PATCHES.joinToString { it.id }}")
@@ -1205,16 +1213,16 @@ object SmartPatchApply : Tool {
 /** risk.scan — 安全风险扫描仪表盘 */
 object RiskScan : Tool {
     override val name = "risk_scan"
-    override val description = "全面扫描 APK 安全风险：危险权限/导出组件/WebView风险/硬编码密钥/证书Pinning/debuggable/allowBackup/明文传输/代码混淆/原生库。生成安全评分和报告。"
-    override val parameters = schemaObject(mapOf(
-        "apk_path" to strProp("APK 文件路径；留空则用当前导入的 APK")
+    override val description get() = L("全面扫描 APK 安全风险：危险权限/导出组件/WebView风险/硬编码密钥/证书Pinning/debuggable/allowBackup/明文传输/代码混淆/原生库。生成安全评分和报告。", "Comprehensive scan of APK security risk: Hazard privileges/export component/WebView risk/hard code key/certificate Pinning/debuggable/allowBackup/express transmission/code confusion/generic library. Generate security ratings and reports.")
+    override val parameters get() = schemaObject(mapOf(
+        "apk_path" to strProp(L("APK 文件路径；留空则用当前导入的 APK", "APK file path; leave empty to use the currently imported APK"))
     ))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val apk = args.str("apk_path")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: ctx.openApk
-            ?: return ToolResult.err("未指定 APK，请先导入或提供路径")
+            ?: return ToolResult.err(L("未指定 APK，请先导入或提供路径", "No APK specified, import or provide path first"))
 
-        if (!apk.exists()) return ToolResult.err("APK 文件不存在: ${apk.absolutePath}")
+        if (!apk.exists()) return ToolResult.err(L("APK 文件不存在: ${apk.absolutePath}", "AAK file does not exist: ${apk.absolutePath}"))
 
         val result = RiskScanner.scan(apk)
         return ToolResult.ok(result.report)
@@ -1226,15 +1234,15 @@ object RiskScan : Tool {
 /** run_python_script — 执行预置或自定义 Python 分析脚本 */
 object RunPythonScript : Tool {
     override val name = "run_python_script"
-    override val description = "执行 Python 脚本进行深度分析。可用预置脚本: androguard_analysis(类/方法/权限分析), find_secrets(搜索硬编码密钥), manifest_parser(解析Manifest), dex_class_list(列出所有类)。也可传入自定义脚本内容。"
-    override val parameters = schemaObject(mapOf(
-        "script_name" to strProp("预置脚本名: androguard_analysis / find_secrets / manifest_parser / dex_class_list，或留空用 script_content"),
-        "script_content" to strProp("自定义 Python 脚本内容（script_name 为空时使用）"),
-        "args" to strProp("传给脚本的参数，如 APK 路径"),
-        "timeout" to intProp("超时秒数，默认60")
+    override val description get() = L("执行 Python 脚本进行深度分析。可用预置脚本: androguard_analysis(类/方法/权限分析), find_secrets(搜索硬编码密钥), manifest_parser(解析Manifest), dex_class_list(列出所有类)。也可传入自定义脚本内容。", "Execute Python script for in-depth analysis. Preset scripts are available: androguard analysis (class/method/authority analysis), find Contributes (search hard-coding keys), solvency parser (dex class list) You can also enter a custom script content.")
+    override val parameters get() = schemaObject(mapOf(
+        "script_name" to strProp(L("预置脚本名: androguard_analysis / find_secrets / manifest_parser / dex_class_list，或留空用 script_content", "Preset script name: androguard analysis / find security parser / dex class list, or leave empty script content")),
+        "script_content" to strProp(L("自定义 Python 脚本内容（script_name 为空时使用）", "Custom Python script content (script name is empty)")),
+        "args" to strProp(L("传给脚本的参数，如 APK 路径", "Parameters to pass to script, e. g. APK path")),
+        "timeout" to intProp(L("超时秒数，默认60", "Overtime seconds, default 60"))
     ))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        if (!PythonRunner.isAvailable()) return ToolResult.err("Python 未安装，请在设置页安装")
+        if (!PythonRunner.isAvailable()) return ToolResult.err(L("Python 未安装，请在设置页安装", "Python is not installed, please install on the settings page"))
 
         val scriptName = args.str("script_name")
         val scriptContent = args.str("script_content")
@@ -1249,7 +1257,7 @@ object RunPythonScript : Tool {
         } else if (scriptContent != null) {
             scriptContent
         } else {
-            return ToolResult.err("请提供 script_name 或 script_content")
+            return ToolResult.err(L("请提供 script_name 或 script_content", "Please provide script name or script content"))
         }
 
         // 写入临时文件执行
@@ -1367,7 +1375,7 @@ for i, dex in enumerate(d):
 object RunNodeScript : Tool {
     override val name = "run_node_script"
     override val description = "执行 Node.js 脚本。用于 Frida 脚本生成、JS 分析等。"
-    override val parameters = schemaObject(mapOf(
+    override val parameters get() = schemaObject(mapOf(
         "script_content" to strProp("Node.js 脚本内容"),
         "args" to strProp("传给脚本的参数"),
         "timeout" to intProp("超时秒数，默认30")
@@ -1424,7 +1432,7 @@ object RunNodeScript : Tool {
             val proc = pb.start()
             val out = withTimeoutOrNull(timeout * 1000L) {
                 proc.inputStream.bufferedReader().use { it.readText() }
-            } ?: return ToolResult.err("执行超时(${timeout}s)")
+            } ?: return ToolResult.err(L("执行超时(${timeout}s)", "Timed out (${timeout}s)"))
             proc.waitFor()
             return ToolResult.ok(out.take(8000))
         } finally {
@@ -1437,7 +1445,7 @@ object RunNodeScript : Tool {
 object GenerateFridaScript : Tool {
     override val name = "generate_frida_script"
     override val description = "生成 Frida JS hook 脚本模板。支持: bypass_ssl(绕过SSL pinning), bypass_root(绕过Root检测), hook_method( hook指定方法), bypass_debug(绕过反调试), intercept_crypto(拦截加密调用)"
-    override val parameters = schemaObject(mapOf(
+    override val parameters get() = schemaObject(mapOf(
         "template" to strProp("模板名: bypass_ssl / bypass_root / hook_method / bypass_debug / intercept_crypto"),
         "target_class" to strProp("目标类名（hook_method 时必填）"),
         "target_method" to strProp("目标方法名（hook_method 时可选）")
