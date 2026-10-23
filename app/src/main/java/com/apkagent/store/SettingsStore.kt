@@ -8,6 +8,8 @@ import androidx.security.crypto.MasterKey
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import com.apkagent.i18n.AppLanguage
+import com.apkagent.i18n.LocaleManager
 
 data class AgentConfig(
     val providerId: String = "deepseek",
@@ -107,6 +109,16 @@ class SettingsStore(private val context: Context) {
         getPrefs().edit().putBoolean(KEY_NODE_INSTALLED, installed).apply()
     }
 
+
+    // ──── Language / 语言 ────
+
+    fun getLanguage(): AppLanguage = AppLanguage.fromId(getPrefs().getString(KEY_LANGUAGE, AppLanguage.SYSTEM.id))
+
+    fun setLanguage(lang: AppLanguage) {
+        getPrefs().edit().putString(KEY_LANGUAGE, lang.id).apply()
+        LocaleManager.setLanguage(lang)
+    }
+
     companion object {
         private const val KEY_PROVIDER = "provider"
         private const val KEY_BASE = "base_url"
@@ -118,6 +130,7 @@ class SettingsStore(private val context: Context) {
         private const val KEY_PYTHON_INSTALLED = "python_installed"
         private const val KEY_NODE_INSTALLED = "node_installed"
         private const val KEY_MAX_ROUNDS = "max_rounds"
+        private const val KEY_LANGUAGE = "app_language"
     }
 
     private operator fun SharedPreferences.get(key: String): String? =

@@ -1,5 +1,7 @@
 package com.apkagent.ui
 
+import com.apkagent.i18n.LocaleManager
+
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
@@ -109,5 +111,24 @@ fun APKAgentTheme(
             }
         }
         content()
+    }
+}
+
+
+/** Localized theme name for the current UI language. */
+fun AppTheme.localizedLabel(): String {
+    val s = LocaleManager.strings
+    return when (this) {
+        AppTheme.SYSTEM -> s.themeSystem
+        AppTheme.AMOLED_BLACK -> s.themeAmoled
+        AppTheme.PURE_WHITE -> s.themePureWhite
+        AppTheme.CREAM -> s.themeCream
+        AppTheme.MD3_BLUE -> s.themeMd3Blue
+        AppTheme.MD3_GREEN -> s.themeMd3Green
+        AppTheme.MD3_PURPLE -> s.themeMd3Purple
+        AppTheme.MD3_ORANGE -> s.themeMd3Orange
+        AppTheme.MD3_MONO -> s.themeMd3Mono
+        AppTheme.CUSTOM_WALLPAPER -> s.themeWallpaper
+        AppTheme.CUSTOM_WALLPAPER_DARK -> s.themeWallpaperDark
     }
 }

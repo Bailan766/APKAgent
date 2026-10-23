@@ -40,6 +40,9 @@ import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.service.KeepAliveManager
 import com.apkagent.store.AgentConfig
 import com.apkagent.store.AiProvider
+import com.apkagent.i18n.AppLanguage
+import com.apkagent.i18n.LocalAppStrings
+import com.apkagent.i18n.LocaleManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
@@ -48,6 +51,9 @@ import kotlinx.coroutines.launch
 fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTerminal: () -> Unit = {}) {
     val context = LocalContext.current
     val app = context.applicationContext as ApkAgentApp
+    val s = LocalAppStrings.current
+    var language by remember { mutableStateOf(app.settingsStore.getLanguage()) }
+    var showLangMenu by remember { mutableStateOf(false) }
     val cfg = app.settingsStore.config.value
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
@@ -83,9 +89,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 ThemeState.loadWallpaper(tmp.absolutePath)
                 ThemeState.currentTheme = AppTheme.CUSTOM_WALLPAPER
                 currentTheme = AppTheme.CUSTOM_WALLPAPER
-                scope.launch { snackbar.showSnackbar("壁纸已设置") }
+                scope.launch { snackbar.showSnackbar(s.wallpaperSet) }
             } catch (e: Throwable) {
-                scope.launch { snackbar.showSnackbar("壁纸加载失败") }
+                scope.launch { snackbar.showSnackbar(s.wallpaperLoadFailed) }
             }
         }
     }
@@ -93,7 +99,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
     // 获取可用模型列表
     fun fetchModels() {
         if (apiKey.isBlank()) {
-            scope.launch { snackbar.showSnackbar("请先输入 API Key") }
+            scope.launch { snackbar.showSnackbar(s.enterApiKeyFirst) }
             return
         }
         isLoadingModels = true
@@ -109,14 +115,14 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                     if (model !in models) {
                         model = models.first()
                     }
-                    snackbar.showSnackbar("已获取 ${models.size} 个模型")
+                    snackbar.showSnackbar(s.fmt(s.modelsFetched, "n" to models.size))
                 } else {
-                    snackbar.showSnackbar("未获取到模型，请检查 API Key")
+                    snackbar.showSnackbar(s.noModels)
                 }
                 isLoadingModels = false
             }.onFailure { e ->
                 modelFetchError = e.message
-                snackbar.showSnackbar("获取失败: ${e.message?.take(50)}")
+                snackbar.showSnackbar(s.fmt(s.fetchFailed, "msg" to e.message?.take(50)))
                 isLoadingModels = false
             }
         }
@@ -126,8 +132,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             TopAppBar(
-                title = { Text("设置") },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") } }
+                title = { Text(s.settings) },
+                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back) } }
             )
         }
     ) { padding ->
@@ -139,9 +145,48 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+
+            // ── Language ──
+            SectionTitle(s.sectionLanguage)
+            Text(s.languageHint, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            ExposedDropdownMenuBox(expanded = showLangMenu, onExpandedChange = { showLangMenu = it }) {
+                val langLabel = when (language) {
+                    AppLanguage.SYSTEM -> s.langSystem
+                    AppLanguage.ZH -> s.langZh
+                    AppLanguage.EN -> s.langEn
+                }
+                OutlinedTextField(
+                    value = langLabel, onValueChange = {}, readOnly = true,
+                    label = { Text(s.languageLabel) },
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLangMenu) },
+                    modifier = Modifier.fillMaxWidth().menuAnchor()
+                )
+                ExposedDropdownMenu(expanded = showLangMenu, onDismissRequest = { showLangMenu = false }) {
+                    listOf(AppLanguage.SYSTEM, AppLanguage.ZH, AppLanguage.EN).forEach { lang ->
+                        val label = when (lang) {
+                            AppLanguage.SYSTEM -> s.langSystem
+                            AppLanguage.ZH -> s.langZh
+                            AppLanguage.EN -> s.langEn
+                        }
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            onClick = {
+                                language = lang
+                                showLangMenu = false
+                                app.settingsStore.setLanguage(lang)
+                                scope.launch { snackbar.showSnackbar(s.languageChanged) }
+                            },
+                            leadingIcon = {
+                                if (lang == language) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                            }
+                        )
+                    }
+                }
+            }
+
             // ── 主题 ──
-            SectionTitle("🎨 主题")
-            Text("选择配色方案", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SectionTitle(s.sectionTheme)
+            Text(s.chooseColorScheme, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(AppTheme.entries.toList()) { theme ->
                     ThemeChip(
@@ -158,19 +203,19 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
             TextButton(onClick = { wallpaperLauncher.launch("image/*") }) {
                 Icon(Icons.Default.Wallpaper, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
-                Text("选择壁纸", fontSize = 13.sp)
+                Text(s.chooseWallpaper, fontSize = 13.sp)
             }
             if (ThemeState.wallpaperPath != null) {
-                Text("壁纸: ${ThemeState.wallpaperPath!!.takeLast(30)}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("${s.wallpaperPrefix}${ThemeState.wallpaperPath!!.takeLast(30)}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             // ── Shizuku ──
-            SectionTitle("🔐 系统权限")
+            SectionTitle(s.sectionPermissions)
             ShizukuStatusCard()
             BatteryOptimizationCard()
 
             // ── Python ──
-            SectionTitle("🐍 Python 环境")
+            SectionTitle(s.sectionPython)
             PythonStatusCard()
 
             // 内置终端入口
@@ -181,17 +226,17 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
             ) {
                 Icon(Icons.Default.Terminal, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text("打开内置终端", fontSize = 13.sp)
+                Text(s.openBuiltinTerminal, fontSize = 13.sp)
             }
 
             // ── AI Provider ──
-            SectionTitle("🤖 AI 模型")
-            Text("选择提供商，填入 API Key 即可使用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            SectionTitle(s.sectionAi)
+            Text(s.aiHint, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
 
             ExposedDropdownMenuBox(expanded = showProviderMenu, onExpandedChange = { showProviderMenu = it }) {
                 OutlinedTextField(
                     value = selectedProvider.label, onValueChange = {}, readOnly = true,
-                    label = { Text("AI 提供商") },
+                    label = { Text(s.aiProvider) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showProviderMenu) },
                     modifier = Modifier.fillMaxWidth().menuAnchor()
                 )
@@ -214,11 +259,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
 
             // API Key 输入
             OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, label = { Text("API Key") },
-                placeholder = { Text("粘贴 API Key") }, singleLine = true,
+                placeholder = { Text(s.pasteApiKey) }, singleLine = true,
                 visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                 modifier = Modifier.fillMaxWidth(),
-                trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) "隐藏" else "显示", fontSize = 12.sp) } })
+                trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) s.hide else s.show, fontSize = 12.sp) } })
 
             // 自动获取模型按钮
             Button(
@@ -230,11 +275,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 if (isLoadingModels) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                     Spacer(Modifier.width(8.dp))
-                    Text("获取中...")
+                    Text(s.fetching)
                 } else {
                     Icon(Icons.Default.Refresh, null, modifier = Modifier.size(18.dp))
                     Spacer(Modifier.width(8.dp))
-                    Text("自动获取可用模型")
+                    Text(s.fetchModels)
                 }
             }
 
@@ -245,8 +290,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 ExposedDropdownMenuBox(expanded = modelExpanded, onExpandedChange = { modelExpanded = it }) {
                     OutlinedTextField(
                         value = model, onValueChange = {}, readOnly = true,
-                        label = { Text("模型") },
-                        supportingText = { if (dynamicModels.isNotEmpty()) Text("已获取 ${dynamicModels.size} 个模型", fontSize = 10.sp) },
+                        label = { Text(s.model) },
+                        supportingText = { if (dynamicModels.isNotEmpty()) Text(s.fmt(s.modelsFetchedHint, "n" to dynamicModels.size), fontSize = 10.sp) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
                         modifier = Modifier.fillMaxWidth().menuAnchor()
                     )
@@ -259,7 +304,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 }
             } else if (selectedProvider.id == "custom") {
                 // 自定义提供商：手动输入模型名
-                OutlinedTextField(value = customModel, onValueChange = { customModel = it }, label = { Text("模型名") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(value = customModel, onValueChange = { customModel = it }, label = { Text(s.modelName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
             }
 
             // 错误提示
@@ -267,19 +312,19 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 Text("⚠️ $modelFetchError", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
             }
 
-            Text("温度：%.2f".format(temp), fontSize = 13.sp)
+            Text(s.temperature.format(temp), fontSize = 13.sp)
             Slider(value = temp.toFloat(), onValueChange = { temp = it.toDouble() }, valueRange = 0f..2f, modifier = Modifier.fillMaxWidth())
 
-            TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(if (showAdvanced) "收起高级 ▼" else "展开高级 ▲", fontSize = 12.sp) }
+            TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(if (showAdvanced) s.collapseAdvanced else s.expandAdvanced, fontSize = 12.sp) }
             if (showAdvanced) {
                 OutlinedTextField(value = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl,
                     onValueChange = { if (selectedProvider.id == "custom") customBaseUrl = it },
                     label = { Text("API Base URL") }, enabled = selectedProvider.id == "custom", singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = sysExtra, onValueChange = { sysExtra = it }, label = { Text("附加提示词") }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp))
+                OutlinedTextField(value = sysExtra, onValueChange = { sysExtra = it }, label = { Text(s.systemExtra) }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp))
             }
 
             // ── 关于 ──
-            SectionTitle("ℹ️ 关于")
+            SectionTitle(s.sectionAbout)
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { onOpenAbout() },
                 shape = RoundedCornerShape(12.dp),
@@ -298,8 +343,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                     }
                     Spacer(Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("关于本应用", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                        Text("开发者信息 · 版本 · 开源地址", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(s.aboutApp, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(s.aboutSubtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
                 }
@@ -311,11 +356,11 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 val finalModel = if (selectedProvider.id == "custom") customModel else model
                 val newCfg = AgentConfig(selectedProviderId, baseUrl, apiKey.trim(), finalModel.trim(), temp, sysExtra)
                 app.settingsStore.save(newCfg)
-                scope.launch { snackbar.showSnackbar("已保存 — ${selectedProvider.label}") }
+                scope.launch { snackbar.showSnackbar(s.fmt(s.savedAs, "name" to selectedProvider.label)) }
             }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Check, null); Spacer(Modifier.padding(4.dp)); Text("保存配置")
+                Icon(Icons.Default.Check, null); Spacer(Modifier.padding(4.dp)); Text(s.save)
             }
-            Text("API Key 加密存储于本机。", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(s.apiKeyEncrypted, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
@@ -345,7 +390,7 @@ private fun ThemeChip(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
             if (selected) Icon(Icons.Default.Check, null, tint = if (theme.isDark) Color.White else Color.Black, modifier = Modifier.size(20.dp))
         }
         Spacer(Modifier.height(4.dp))
-        Text(theme.label, fontSize = 10.sp, maxLines = 1)
+        Text(theme.localizedLabel(), fontSize = 10.sp, maxLines = 1)
     }
 }
 
@@ -356,6 +401,7 @@ private fun SectionTitle(text: String) {
 
 @Composable
 private fun ShizukuStatusCard() {
+    val s = LocalAppStrings.current
     val status = ShizukuManager.status
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -364,19 +410,19 @@ private fun ShizukuStatusCard() {
     data class StatusInfo(val text: String, val color: androidx.compose.ui.graphics.Color, val label: String?, val action: (() -> Unit)?)
     val statusInfo = when (status) {
         is ShizukuManager.Status.Authorized -> StatusInfo(
-            "Shizuku 已授权${if (status.uid > 0) " (UID: ${status.uid})" else ""}",
+            s.shizukuAuthorized + if (status.uid > 0) " (UID: ${status.uid})" else "",
             MaterialTheme.colorScheme.primary, null, null
         )
         is ShizukuManager.Status.Running -> StatusInfo(
-            "运行中，待授权", MaterialTheme.colorScheme.tertiary, "授权",
+            s.shizukuRunning, MaterialTheme.colorScheme.tertiary, s.authorize,
             { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } }
         )
         is ShizukuManager.Status.Installed -> StatusInfo(
-            "已安装未运行", MaterialTheme.colorScheme.error, "授权",
+            s.shizukuInstalled, MaterialTheme.colorScheme.error, s.authorize,
             { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } }
         )
         else -> StatusInfo(
-            "未检测到", MaterialTheme.colorScheme.error, "安装",
+            s.shizukuMissing, MaterialTheme.colorScheme.error, s.install,
             { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/"))) }
         )
     }
@@ -397,6 +443,7 @@ private fun ShizukuStatusCard() {
 
 @Composable
 private fun BatteryOptimizationCard() {
+    val s = LocalAppStrings.current
     val context = LocalContext.current
     var isIgnoring by remember { mutableStateOf(KeepAliveManager.isIgnoringBatteryOptimizations(context)) }
 
@@ -420,12 +467,12 @@ private fun BatteryOptimizationCard() {
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    "电池优化白名单",
+                    s.batteryWhitelist,
                     fontSize = 13.sp,
                     fontWeight = FontWeight.Medium
                 )
                 Text(
-                    if (isIgnoring) "已豁免 — 后台任务不会被系统杀死" else "未豁免 — 系统可能在后台杀死分析任务",
+                    if (isIgnoring) s.batteryExempted else s.batteryNotExempted,
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -444,7 +491,7 @@ private fun BatteryOptimizationCard() {
                         } catch (_: Throwable) {}
                     }
                 }) {
-                    Text("去设置", fontSize = 12.sp)
+                    Text(s.goToSettings, fontSize = 12.sp)
                 }
             }
         }
@@ -453,6 +500,7 @@ private fun BatteryOptimizationCard() {
 
 @Composable
 private fun PythonStatusCard() {
+    val s = LocalAppStrings.current
     val context = LocalContext.current
     var checking by remember { mutableStateOf(true) }
     var available by remember { mutableStateOf(false) }
@@ -483,25 +531,25 @@ private fun PythonStatusCard() {
                 if (checking) {
                     CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(10.dp))
-                    Text("检测中...", fontSize = 12.sp)
+                    Text(s.checking, fontSize = 12.sp)
                 } else if (available) {
-                    Text("Python 就绪", fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                    Text(s.pythonReady, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
                 } else {
-                    Text("未检测到 Python", fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                    Text(s.pythonMissing, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
                 }
             }
             if (!checking) {
                 if (available && version != null) {
                     Spacer(Modifier.height(6.dp))
-                    Text("路径: $pythonPath", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text("版本: $version", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(s.fmt(s.pathLabel, "path" to pythonPath), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(s.fmt(s.versionLabel, "ver" to version), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 // 手动配置路径
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = customPath,
                     onValueChange = { customPath = it },
-                    label = { Text("Python 路径（手动指定）", fontSize = 11.sp) },
+                    label = { Text(s.pythonPathManual, fontSize = 11.sp) },
                     singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
                     modifier = Modifier.fillMaxWidth(),
@@ -514,12 +562,12 @@ private fun PythonStatusCard() {
                                 version = com.apkagent.apktools.PythonRunner.getVersion()
                             }
                         }) {
-                            Icon(Icons.Filled.Refresh, "检测", modifier = Modifier.size(18.dp))
+                            Icon(Icons.Filled.Refresh, s.detect, modifier = Modifier.size(18.dp))
                         }
                     }
                 )
                 Text(
-                    "需先安装 Termux: pkg install python && pip install frida-tools androguard",
+                    s.pythonTermuxHint,
                     fontSize = 10.sp, color = MaterialTheme.colorScheme.outline
                 )
             }

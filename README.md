@@ -6,6 +6,10 @@
 </p>
 
 <p align="center">
+  <a href="./README_EN.md">English</a>
+</p>
+
+<p align="center">
   <img alt="Android" src="https://img.shields.io/badge/Android-8.0%2B-green"/>
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.0-blue"/>
   <img alt="Compose" src="https://img.shields.io/badge/Jetpack%20Compose-Material3-purple"/>
@@ -156,6 +160,17 @@ APKAgent 是工具型 App，不追求沙盒极简，而追求“能干活”。�
 - `docs/architecture/apkagent-refactor-overview.md`
 - `docs/architecture/runtime-and-confirmation.md`
 - `docs/plans/2026-07-08-apkagent-perfect-refactor.md`
+
+---
+
+## 语言 / Language
+
+界面与 AI 系统提示支持中文与英文：
+
+- 打开 **设置 → 语言 / Language**
+- 可选：跟随系统 / 中文 / English
+- 默认跟随系统语言（`zh*` 为中文，其他为英文）
+- 详细英文说明见 [README_EN.md](./README_EN.md)
 
 ---
 

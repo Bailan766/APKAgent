@@ -11,6 +11,7 @@ import com.apkagent.project.ReverseProject
 import com.apkagent.runtime.RuntimeManager
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.SettingsStore
+import com.apkagent.i18n.LocaleManager
 import com.apkagent.util.Logger
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -96,6 +97,7 @@ class ApkAgentApp : Application() {
         Logger.setupCrashHandler()
         Logger.i("App", "APKAgent v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) 启动 — SDK=${android.os.Build.VERSION.SDK_INT}")
         settingsStore = SettingsStore(this)
+        LocaleManager.setLanguage(settingsStore.getLanguage())
         projectStore = ProjectStore(this, workspace)
         runtimeManager = RuntimeManager(this)
         PythonRunner.init(this)

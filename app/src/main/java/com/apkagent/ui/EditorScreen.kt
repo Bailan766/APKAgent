@@ -1,5 +1,7 @@
 package com.apkagent.ui
 
+import com.apkagent.i18n.LocalAppStrings
+
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,6 +34,7 @@ fun EditorScreen(
     rootDir: File,
     onBack: () -> Unit
 ) {
+    val s = LocalAppStrings.current
     var currentDir by remember { mutableStateOf(rootDir) }
     var selectedFile by remember { mutableStateOf<File?>(null) }
     var fileContent by remember { mutableStateOf("") }
@@ -50,7 +53,7 @@ fun EditorScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("APK 编辑器", fontFamily = FontFamily.Monospace)
+                        Text(s.apkEditor, fontFamily = FontFamily.Monospace)
                         Text(currentDir.absolutePath, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
                     }
                 },
@@ -63,7 +66,7 @@ fun EditorScreen(
                         } else {
                             onBack()
                         }
-                    }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回") }
+                    }) { Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back) }
                 },
                 actions = {
                     if (selectedFile != null && isEditing) {
@@ -72,9 +75,9 @@ fun EditorScreen(
                                 selectedFile?.writeText(editedContent)
                                 fileContent = editedContent
                                 isEditing = false
-                                snackbarMsg = "已保存"
-                            } catch (e: Throwable) { snackbarMsg = "保存失败：${e.message}" }
-                        }) { Icon(Icons.Default.Save, "保存") }
+                                snackbarMsg = s.saved
+                            } catch (e: Throwable) { snackbarMsg = s.fmt(s.saveFailed, "msg" to e.message) }
+                        }) { Icon(Icons.Default.Save, s.save) }
                     }
                 }
             )
@@ -105,9 +108,9 @@ fun EditorScreen(
                         if (file.extension in listOf("smali", "xml", "txt", "json", "properties", "mf", "kotlin_module", "pro")) {
                             file.readText()
                         } else {
-                            "（二进制文件，${file.length()} 字节，用 Agent 的 apk.hex_view 工具查看十六进制）"
+                            s.fmt(s.binaryFileHint, "n" to file.length())
                         }
-                    } catch (e: Throwable) { "读取失败：${e.message}" }
+                    } catch (e: Throwable) { s.fmt(s.readFailed, "msg" to e.message) }
                     isEditing = false
                 },
                 modifier = Modifier.padding(padding)
@@ -123,6 +126,7 @@ private fun FileBrowser(
     onFileClick: (File) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val s = LocalAppStrings.current
     val entries = remember(dir) {
         dir.listFiles()?.sortedWith(compareBy({ !it.isDirectory }, { it.name.lowercase() })) ?: emptyList()
     }
@@ -151,7 +155,7 @@ private fun FileBrowser(
             HorizontalDivider(modifier = Modifier.padding(horizontal = 8.dp))
         }
         if (entries.isEmpty()) {
-            item { Text("（空目录）", modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            item { Text(s.emptyDir, modifier = Modifier.padding(16.dp), color = MaterialTheme.colorScheme.onSurfaceVariant) }
         }
     }
 }
@@ -174,7 +178,7 @@ private fun FileViewer(
             Text(file.name, fontFamily = FontFamily.Monospace, fontSize = 12.sp, modifier = Modifier.weight(1f))
             Text("${file.length()}B", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (!isEditing && file.extension in listOf("smali", "xml", "txt", "json")) {
-                TextButton(onClick = onEdit) { Text("编辑") }
+                TextButton(onClick = onEdit) { Text(LocalAppStrings.current.edit) }
             }
         }
         HorizontalDivider()

@@ -1,5 +1,7 @@
 package com.apkagent.ui
 
+import com.apkagent.i18n.LocalAppStrings
+
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -65,7 +67,7 @@ fun ToolCard(item: ChatItem) {
                     CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
                 } else {
                     Text(
-                        if (item.toolSuccess) "完成" else "失败",
+                        if (item.toolSuccess) LocalAppStrings.current.done else LocalAppStrings.current.failed,
                         fontSize = 11.sp,
                         color = accent
                     )
@@ -74,7 +76,7 @@ fun ToolCard(item: ChatItem) {
                 if (!item.streaming) {
                     Icon(
                         if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = "展开",
+                        contentDescription = LocalAppStrings.current.expand,
                         modifier = Modifier
                             .size(18.dp)
                             .clickable { expanded = !expanded },
@@ -86,7 +88,7 @@ fun ToolCard(item: ChatItem) {
             AnimatedVisibility(visible = expanded || item.streaming) {
                 Column {
                     item.toolArgs?.takeIf { it.isNotBlank() }?.let { args ->
-                        Text("参数：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(LocalAppStrings.current.paramsColon, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
                             args,
                             fontFamily = FontFamily.Monospace,
@@ -99,7 +101,7 @@ fun ToolCard(item: ChatItem) {
                     }
                     item.toolResult?.let { res ->
                         Spacer(Modifier.padding(2.dp))
-                        Text("结果：", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(LocalAppStrings.current.resultColon, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         Text(
                             res,
                             fontFamily = FontFamily.Monospace,
@@ -128,10 +130,10 @@ fun PermissionDialog(call: PendingToolCall, onResult: (Boolean) -> Unit) {
     }
     AlertDialog(
         onDismissRequest = { onAction(false) },
-        title = { Text("工具调用授权") },
+        title = { Text(LocalAppStrings.current.toolAuthTitle) },
         text = {
             Column {
-                Text("AI 请求执行一个敏感操作，需要你确认：")
+                Text(LocalAppStrings.current.toolAuthBody)
                 Spacer(Modifier.padding(4.dp))
                 Row(
                     Modifier
@@ -148,13 +150,13 @@ fun PermissionDialog(call: PendingToolCall, onResult: (Boolean) -> Unit) {
                 }
                 Spacer(Modifier.padding(6.dp))
                 Text(
-                    "⚠ 该操作可能修改/删除文件或改动 APK。拒绝则 AI 会收到拒绝提示并继续推理。",
+                    LocalAppStrings.current.toolAuthWarn,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
-        confirmButton = { TextButton(onClick = { onAction(true) }) { Text("允许执行") } },
-        dismissButton = { TextButton(onClick = { onAction(false) }) { Text("拒绝") } }
+        confirmButton = { TextButton(onClick = { onAction(true) }) { Text(LocalAppStrings.current.allowExecute) } },
+        dismissButton = { TextButton(onClick = { onAction(false) }) { Text(LocalAppStrings.current.reject) } }
     )
 }
