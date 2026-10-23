@@ -21,6 +21,10 @@ import com.apkagent.store.SettingsStore
 import com.apkagent.ui.APKAgentTheme
 import com.apkagent.ui.SetupScreen
 import com.apkagent.ui.ThemeState
+import com.apkagent.i18n.LocalAppStrings
+import com.apkagent.i18n.LocaleManager
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.collectAsState
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -42,17 +46,21 @@ class MainActivity : ComponentActivity() {
         
         setContent {
             val theme by remember { mutableStateOf(ThemeState.currentTheme) }
-            APKAgentTheme(theme = theme) {
-                Box(modifier = Modifier.fillMaxSize()) {
-                    ThemeState.wallpaperBitmap?.let { bmp ->
-                        Image(
-                            bitmap = bmp.asImageBitmap(),
-                            contentDescription = null,
-                            modifier = Modifier.fillMaxSize(),
-                            contentScale = ContentScale.Crop
-                        )
+            val lang by LocaleManager.language.collectAsState()
+            val strings = remember(lang) { LocaleManager.strings }
+            CompositionLocalProvider(LocalAppStrings provides strings) {
+                APKAgentTheme(theme = theme) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        ThemeState.wallpaperBitmap?.let { bmp ->
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = null,
+                                modifier = Modifier.fillMaxSize(),
+                                contentScale = ContentScale.Crop
+                            )
+                        }
+                        AppEntry()
                     }
-                    AppEntry()
                 }
             }
         }

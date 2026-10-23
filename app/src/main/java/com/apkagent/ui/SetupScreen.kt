@@ -1,5 +1,8 @@
 package com.apkagent.ui
 
+import com.apkagent.i18n.LocalAppStrings
+import com.apkagent.i18n.LocaleManager
+
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
@@ -55,6 +58,7 @@ private fun hasStoragePermission(context: android.content.Context): Boolean {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
+    val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     val app = remember { context.applicationContext as ApkAgentApp }
@@ -63,7 +67,7 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
     var pythonStatus by remember { mutableStateOf(InstallStatus.CHECKING) }
     var nodeStatus by remember { mutableStateOf(InstallStatus.CHECKING) }
     var storageGranted by remember { mutableStateOf(hasStoragePermission(context)) }
-    var statusMessage by remember { mutableStateOf("检测环境...") }
+    var statusMessage by remember { mutableStateOf(LocaleManager.strings.detectingEnv) }
     var progress by remember { mutableFloatStateOf(0f) }
     var pythonVersion by remember { mutableStateOf("") }
     var nodeVersion by remember { mutableStateOf("") }
@@ -107,9 +111,9 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
         }
 
         statusMessage = when {
-            status.pythonInstalled && status.nodeInstalled -> "✅ 环境就绪"
-            status.pythonInstalled -> "Python 就绪，Node.js 可选安装"
-            else -> "点击下方按钮安装 Python"
+            status.pythonInstalled && status.nodeInstalled -> s.envReady
+            status.pythonInstalled -> s.pythonReadyNodeOptional
+            else -> s.tapInstallPython
         }
     }
 
@@ -151,7 +155,7 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "首次使用需要配置运行环境",
+                text = s.setupTitle,
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
@@ -193,8 +197,8 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
 
             // ── Python ──
             EnvCard(
-                title = "Python 运行环境",
-                subtitle = if (pythonVersion.isNotEmpty()) "v$pythonVersion" else "必需 · 脚本分析引擎",
+                title = s.pythonRuntime,
+                subtitle = if (pythonVersion.isNotEmpty()) "v$pythonVersion" else s.pythonSubtitleRequired,
                 icon = Icons.Default.Code,
                 status = pythonStatus,
                 required = true,
@@ -230,8 +234,8 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
 
             // ── Node.js ──
             EnvCard(
-                title = "Node.js 运行环境",
-                subtitle = if (nodeVersion.isNotEmpty()) nodeVersion else "可选 · JS 工具支持",
+                title = s.nodeRuntime,
+                subtitle = if (nodeVersion.isNotEmpty()) nodeVersion else s.nodeSubtitleOptional,
                 icon = Icons.Default.AccountTree,
                 status = nodeStatus,
                 required = false,
@@ -291,7 +295,7 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
             ) {
                 Icon(Icons.Default.Terminal, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("打开内置终端", fontSize = 14.sp)
+                Text(s.openBuiltinTerminal, fontSize = 14.sp)
             }
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -307,11 +311,11 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
             ) {
                 Icon(Icons.Default.Check, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
-                Text("开始使用", fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text(s.startUsing, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             }
 
             TextButton(onClick = onSetupComplete, modifier = Modifier.padding(top = 4.dp)) {
-                Text("稍后配置", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(s.configureLater, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -321,6 +325,7 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
 
 @Composable
 private fun StoragePermissionCard(granted: Boolean, onGrant: () -> Unit) {
+    val s = LocalAppStrings.current
     val bgColor = if (granted)
         MaterialTheme.colorScheme.primaryContainer
     else
@@ -349,7 +354,7 @@ private fun StoragePermissionCard(granted: Boolean, onGrant: () -> Unit) {
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("存储权限", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(s.storagePermission, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
                     Spacer(modifier = Modifier.width(6.dp))
                     Box(
                         modifier = Modifier
@@ -357,11 +362,11 @@ private fun StoragePermissionCard(granted: Boolean, onGrant: () -> Unit) {
                             .background(MaterialTheme.colorScheme.error.copy(alpha = 0.15f))
                             .padding(horizontal = 5.dp, vertical = 1.dp)
                     ) {
-                        Text("必需", fontSize = 9.sp, color = MaterialTheme.colorScheme.error)
+                        Text(s.required, fontSize = 9.sp, color = MaterialTheme.colorScheme.error)
                     }
                 }
                 Text(
-                    if (granted) "已授权 · 可读写设备文件" else "未授权 · 无法保存文件到设备",
+                    if (granted) s.storageGranted else s.storageDenied,
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -374,7 +379,7 @@ private fun StoragePermissionCard(granted: Boolean, onGrant: () -> Unit) {
                     onClick = onGrant,
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
-                    Text("授权", fontSize = 13.sp)
+                    Text(s.authorize, fontSize = 13.sp)
                 }
             }
         }
@@ -391,6 +396,7 @@ private fun EnvCard(
     isInstalling: Boolean,
     onAction: () -> Unit
 ) {
+    val s = LocalAppStrings.current
     val bgColor = when (status) {
         InstallStatus.INSTALLED -> MaterialTheme.colorScheme.primaryContainer
         InstallStatus.FAILED -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
@@ -429,7 +435,7 @@ private fun EnvCard(
                                 .background(MaterialTheme.colorScheme.error.copy(alpha = 0.15f))
                                 .padding(horizontal = 5.dp, vertical = 1.dp)
                         ) {
-                            Text("必需", fontSize = 9.sp, color = MaterialTheme.colorScheme.error)
+                            Text(s.required, fontSize = 9.sp, color = MaterialTheme.colorScheme.error)
                         }
                     }
                 }
@@ -446,7 +452,7 @@ private fun EnvCard(
                         enabled = !isInstalling,
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                     ) {
-                        Text("一键安装", fontSize = 13.sp)
+                        Text(s.oneClickInstall, fontSize = 13.sp)
                     }
                 }
                 InstallStatus.INSTALLED -> {

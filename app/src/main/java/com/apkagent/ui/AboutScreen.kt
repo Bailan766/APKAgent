@@ -1,5 +1,7 @@
 package com.apkagent.ui
 
+import com.apkagent.i18n.LocalAppStrings
+
 import android.content.Intent
 import android.net.Uri
 import androidx.compose.foundation.Image
@@ -32,15 +34,16 @@ import com.apkagent.BuildConfig
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AboutScreen(onBack: () -> Unit) {
+    val s = LocalAppStrings.current
     val context = LocalContext.current
 
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("关于本应用") },
+                title = { Text(s.aboutApp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = s.back)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
@@ -90,7 +93,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 fontWeight = FontWeight.Bold
             )
             Text(
-                text = "AI 驱动的 Android APK 逆向分析工具",
+                text = s.aboutTagline,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -134,7 +137,7 @@ fun AboutScreen(onBack: () -> Unit) {
                         if (resId != 0) {
                             Image(
                                 painter = painterResource(id = resId),
-                                contentDescription = "头像",
+                                contentDescription = s.avatar,
                                 modifier = Modifier.fillMaxSize(),
                                 contentScale = ContentScale.Crop
                             )
@@ -151,7 +154,7 @@ fun AboutScreen(onBack: () -> Unit) {
                         fontWeight = FontWeight.Bold
                     )
                     Text(
-                        text = "开发者",
+                        text = s.developer,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -179,7 +182,7 @@ fun AboutScreen(onBack: () -> Unit) {
                         )
                         Spacer(Modifier.width(12.dp))
                         Column {
-                            Text("邮箱", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(s.email, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text("lb1493729@gmail.com", fontSize = 14.sp)
                         }
                     }
@@ -196,7 +199,7 @@ fun AboutScreen(onBack: () -> Unit) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     InfoRow(
                         icon = Icons.Default.Code,
-                        label = "开源地址",
+                        label = s.openSource,
                         value = "github.com/Bailan766/APKAgent",
                         onClick = {
                             context.startActivity(Intent(Intent.ACTION_VIEW,
@@ -206,20 +209,20 @@ fun AboutScreen(onBack: () -> Unit) {
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                     InfoRow(
                         icon = Icons.Default.CalendarToday,
-                        label = "构建日期",
+                        label = s.buildDate,
                         value = java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.getDefault())
                             .format(java.util.Date())
                     )
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                     InfoRow(
                         icon = Icons.Default.PhoneAndroid,
-                        label = "系统要求",
+                        label = s.systemReq,
                         value = "Android 8.0+ (API 26)"
                     )
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp))
                     InfoRow(
                         icon = Icons.Default.Architecture,
-                        label = "技术栈",
+                        label = s.techStack,
                         value = "Kotlin · Jetpack Compose · Material3"
                     )
                 }
@@ -229,7 +232,7 @@ fun AboutScreen(onBack: () -> Unit) {
 
             // ── 声明 ──
             Text(
-                text = "本应用仅供安全研究和学习用途\n请勿用于非法用途",
+                text = s.disclaimer,
                 textAlign = TextAlign.Center,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.outline,
@@ -239,7 +242,7 @@ fun AboutScreen(onBack: () -> Unit) {
             Spacer(Modifier.height(8.dp))
 
             Text(
-                text = "Made with ❤️ by 摆烂233",
+                text = s.madeWith,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )

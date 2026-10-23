@@ -1,5 +1,7 @@
 package com.apkagent.ui
 
+import com.apkagent.i18n.LocalAppStrings
+
 import android.graphics.Typeface
 import android.view.ViewGroup
 import android.widget.ScrollView
@@ -35,6 +37,7 @@ import java.io.File
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen(onBack: () -> Unit) {
+    val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
     val session = remember { TerminalSession() }
     val output by session.output.collectAsState()
@@ -71,7 +74,7 @@ fun TerminalScreen(onBack: () -> Unit) {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("内置终端", fontWeight = FontWeight.Bold)
+                        Text(s.builtinTerminal, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.width(8.dp))
                         Box(
                             modifier = Modifier
@@ -189,7 +192,7 @@ fun TerminalScreen(onBack: () -> Unit) {
                     value = command,
                     onValueChange = { command = it },
                     modifier = Modifier.weight(1f),
-                    placeholder = { Text("输入命令...", color = Color.Gray) },
+                    placeholder = { Text(s.commandPlaceholder, color = Color.Gray) },
                     singleLine = true,
                     textStyle = androidx.compose.ui.text.TextStyle(
                         color = Color.White,

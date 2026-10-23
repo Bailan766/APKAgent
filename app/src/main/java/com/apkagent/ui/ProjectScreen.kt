@@ -1,5 +1,7 @@
 package com.apkagent.ui
 
+import com.apkagent.i18n.LocalAppStrings
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -35,6 +37,7 @@ fun ProjectScreen(
     onOpenProjectEditor: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
+    val s = LocalAppStrings.current
     val context = LocalContext.current
     val app = remember { context.applicationContext as ApkAgentApp }
     val scope = rememberCoroutineScope()
@@ -60,7 +63,7 @@ fun ProjectScreen(
                     val tmp = File(context.cacheDir, "import_${System.currentTimeMillis()}.apk")
                     val ins = context.contentResolver.openInputStream(uri)
                     if (ins == null) {
-                        withContext(Dispatchers.Main) { snackbar.showSnackbar("无法读取 APK") }
+                        withContext(Dispatchers.Main) { snackbar.showSnackbar(s.cannotReadApk) }
                         return@launch
                     }
                     ins.use { src -> tmp.outputStream().use { dst -> src.copyTo(dst) } }
@@ -68,10 +71,10 @@ fun ProjectScreen(
                     tmp.delete()
                     withContext(Dispatchers.Main) {
                         reloadProjects()
-                        snackbar.showSnackbar("已导入并完成预分析：$name")
+                        snackbar.showSnackbar(s.fmt(s.importedAnalyzed, "name" to name))
                     }
                 } catch (e: Throwable) {
-                    withContext(Dispatchers.Main) { snackbar.showSnackbar("导入失败：${e.message?.take(80)}") }
+                    withContext(Dispatchers.Main) { snackbar.showSnackbar(s.fmt(s.importFailedShort, "msg" to e.message?.take(80))) }
                 } finally { loading = false }
             }
         }
@@ -83,12 +86,12 @@ fun ProjectScreen(
             TopAppBar(
                 title = {
                     Column {
-                        Text("逆向项目", fontWeight = FontWeight.Bold)
-                        Text("每个 APK / 应用独立目录、独立分析、独立 AI 历史", style = MaterialTheme.typography.bodySmall)
+                        Text(s.reverseProjects, fontWeight = FontWeight.Bold)
+                        Text(s.projectsSubtitle, style = MaterialTheme.typography.bodySmall)
                     }
                 },
                 actions = {
-                    IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, "设置") }
+                    IconButton(onClick = onOpenSettings) { Icon(Icons.Default.Settings, s.settings) }
                 }
             )
         },
@@ -104,12 +107,12 @@ fun ProjectScreen(
                                 showApps = true
                             }
                         } catch (e: Throwable) {
-                            withContext(Dispatchers.Main) { snackbar.showSnackbar("读取应用列表失败：${e.message}") }
+                            withContext(Dispatchers.Main) { snackbar.showSnackbar(s.fmt(s.readAppsFailed, "msg" to e.message)) }
                         } finally { loading = false }
                     }
                 },
                 icon = { Icon(Icons.Default.Apps, null) },
-                text = { Text("导入已安装应用") }
+                text = { Text(s.importInstalledApp) }
             )
         }
     ) { padding ->
@@ -121,9 +124,9 @@ fun ProjectScreen(
                 Button(
                     onClick = { apkLauncher.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream")) },
                     modifier = Modifier.weight(1f)
-                ) { Icon(Icons.Default.FolderOpen, null); Spacer(Modifier.width(6.dp)); Text("导入 APK") }
+                ) { Icon(Icons.Default.FolderOpen, null); Spacer(Modifier.width(6.dp)); Text(s.importApkBtn) }
                 OutlinedButton(onClick = { reloadProjects() }, modifier = Modifier.weight(1f)) {
-                    Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text("刷新项目")
+                    Icon(Icons.Default.Refresh, null); Spacer(Modifier.width(6.dp)); Text(s.refreshProjects)
                 }
             }
 
@@ -161,13 +164,13 @@ fun ProjectScreen(
     if (showApps) {
         AlertDialog(
             onDismissRequest = { showApps = false },
-            title = { Text("选择已安装应用") },
+            title = { Text(s.pickInstalledApp) },
             text = {
                 Column(Modifier.fillMaxWidth().heightIn(max = 560.dp)) {
                     OutlinedTextField(
                         value = appQuery,
                         onValueChange = { appQuery = it },
-                        label = { Text("搜索应用名 / 包名") },
+                        label = { Text(s.searchAppHint) },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth()
                     )
@@ -179,7 +182,7 @@ fun ProjectScreen(
                         items(filtered, key = { it.packageName }) { item ->
                             ListItem(
                                 headlineContent = { Text(item.label.ifBlank { item.packageName }, maxLines = 1) },
-                                supportingContent = { Text("${item.packageName}\n${item.versionName ?: "未知版本"}${if (item.systemApp) " · 系统应用" else ""}") },
+                                supportingContent = { Text("${item.packageName}\n${item.versionName ?: s.unknownVersion}${if (item.systemApp) " · ${s.systemApp}" else ""}") },
                                 leadingContent = { Icon(Icons.Default.Android, null) },
                                 modifier = Modifier.clickable {
                                     showApps = false
@@ -189,10 +192,10 @@ fun ProjectScreen(
                                             app.importInstalledApp(item)
                                             withContext(Dispatchers.Main) {
                                                 reloadProjects()
-                                                snackbar.showSnackbar("已导入并完成预分析：${item.label}")
+                                                snackbar.showSnackbar(s.fmt(s.importedAnalyzed, "name" to item.label))
                                             }
                                         } catch (e: Throwable) {
-                                            withContext(Dispatchers.Main) { snackbar.showSnackbar("导入失败：${e.message?.take(80)}") }
+                                            withContext(Dispatchers.Main) { snackbar.showSnackbar(s.fmt(s.importFailedShort, "msg" to e.message?.take(80))) }
                                         } finally { loading = false }
                                     }
                                 }
@@ -201,19 +204,20 @@ fun ProjectScreen(
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showApps = false }) { Text("关闭") } }
+            confirmButton = { TextButton(onClick = { showApps = false }) { Text(s.close) } }
         )
     }
 }
 
 @Composable
 private fun EmptyProjectHint(modifier: Modifier = Modifier) {
+    val s = LocalAppStrings.current
     Box(modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
             Icon(Icons.Default.Apps, null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.height(12.dp))
-            Text("还没有逆向项目", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("先从已安装应用导入，或手动选择 APK。导入后会自动预分析并生成项目记忆。", style = MaterialTheme.typography.bodyMedium)
+            Text(s.noProjectsYet, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+            Text(s.noProjectsHint, style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
@@ -225,6 +229,7 @@ private fun ProjectCard(
     onOpen: () -> Unit,
     onEditor: () -> Unit
 ) {
+    val s = LocalAppStrings.current
     ElevatedCard(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -242,18 +247,18 @@ private fun ProjectCard(
                     Text(project.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1)
                     Text(project.packageName ?: File(project.importedApkPath).name, style = MaterialTheme.typography.bodySmall, maxLines = 1)
                 }
-                IconButton(onClick = onOpen) { Icon(Icons.AutoMirrored.Filled.ArrowForward, "进入") }
+                IconButton(onClick = onOpen) { Icon(Icons.AutoMirrored.Filled.ArrowForward, s.enter) }
             }
             Spacer(Modifier.height(8.dp))
             if (summaryText.isNotBlank()) {
                 Text(summaryText, style = MaterialTheme.typography.bodySmall, maxLines = 8)
             } else {
-                Text("尚未生成分析摘要", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                Text(s.noAnalysisYet, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
             Spacer(Modifier.height(10.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onOpen, modifier = Modifier.weight(1f)) { Icon(Icons.Default.SmartToy, null); Spacer(Modifier.width(6.dp)); Text("AI 对话") }
-                OutlinedButton(onClick = onEditor, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Folder, null); Spacer(Modifier.width(6.dp)); Text("项目文件") }
+                Button(onClick = onOpen, modifier = Modifier.weight(1f)) { Icon(Icons.Default.SmartToy, null); Spacer(Modifier.width(6.dp)); Text(s.aiChat) }
+                OutlinedButton(onClick = onEditor, modifier = Modifier.weight(1f)) { Icon(Icons.Default.Folder, null); Spacer(Modifier.width(6.dp)); Text(s.projectFiles) }
             }
         }
     }

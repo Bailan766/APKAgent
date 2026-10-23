@@ -1,5 +1,7 @@
 package com.apkagent.ui
 
+import com.apkagent.i18n.LocalAppStrings
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -71,6 +73,7 @@ fun ChatScreen(
     onOpenProjects: () -> Unit,
     vm: ChatViewModel = viewModel()
 ) {
+    val s = LocalAppStrings.current
     val context = LocalContext.current
     val app = remember { context.applicationContext as ApkAgentApp }
     val focusManager = LocalFocusManager.current
@@ -108,7 +111,7 @@ fun ChatScreen(
                     val ins = context.contentResolver.openInputStream(uri)
                     if (ins == null) {
                         withContext(Dispatchers.Main) {
-                            snackbarHostState.showSnackbar("❌ 无法读取文件")
+                            snackbarHostState.showSnackbar(s.cannotReadFile)
                         }
                         return@launch
                     }
@@ -116,11 +119,11 @@ fun ChatScreen(
                     vm.setOpenApk(dest)
                     dest.delete()
                     withContext(Dispatchers.Main) {
-                        snackbarHostState.showSnackbar("✅ 已创建独立项目并完成预分析")
+                        snackbarHostState.showSnackbar(s.projectCreated)
                     }
                 } catch (e: Exception) {
                     withContext(Dispatchers.Main) {
-                        snackbarHostState.showSnackbar("❌ 导入失败: ${e.message?.take(50)}")
+                        snackbarHostState.showSnackbar(s.fmt(s.importFailed, "msg" to e.message?.take(50)))
                     }
                 }
             }
@@ -148,7 +151,7 @@ fun ChatScreen(
                                 fontSize = 17.sp
                             )
                             Text(
-                                openApkName?.let { "已导入：$it" } ?: "Android 逆向分析",
+                                openApkName?.let { s.fmt(s.importedPrefix, "name" to it) } ?: s.androidReverseAnalysis,
                                 color = Color.White.copy(alpha = 0.7f),
                                 fontSize = 12.sp
                             )
@@ -156,13 +159,13 @@ fun ChatScreen(
                     },
                     actions = {
                         IconButton(onClick = onOpenProjects) {
-                            Icon(Icons.Default.Apps, "项目", tint = Color.White)
+                            Icon(Icons.Default.Apps, s.projects, tint = Color.White)
                         }
                         // 导入 APK（备用入口）
                         IconButton(onClick = {
                             apkLauncher.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream"))
                         }) {
-                            Icon(Icons.Default.FolderOpen, "导入", tint = Color.White)
+                            Icon(Icons.Default.FolderOpen, s.importApk, tint = Color.White)
                         }
                         // 导出
                         IconButton(
@@ -178,37 +181,37 @@ fun ChatScreen(
                                     Modifier.size(20.dp), strokeWidth = 2.dp, color = Color.White
                                 )
                             } else {
-                                Icon(Icons.Default.FileDownload, "导出", tint = Color.White)
+                                Icon(Icons.Default.FileDownload, s.export, tint = Color.White)
                             }
                         }
                         // 更多菜单
                         var showMenu by remember { mutableStateOf(false) }
                         IconButton(onClick = { showMenu = true }) {
-                            Icon(Icons.Default.MoreVert, "更多", tint = Color.White)
+                            Icon(Icons.Default.MoreVert, s.more, tint = Color.White)
                         }
                         DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                             DropdownMenuItem(
-                                text = { Text("逆向项目") },
+                                text = { Text(s.reverseProjects) },
                                 onClick = { showMenu = false; onOpenProjects() },
                                 leadingIcon = { Icon(Icons.Default.Apps, null) }
                             )
                             DropdownMenuItem(
-                                text = { Text("项目文件") },
+                                text = { Text(s.projectFiles) },
                                 onClick = { showMenu = false; onOpenEditor() },
                                 leadingIcon = { Icon(Icons.Default.Edit, null) }
                             )
                             DropdownMenuItem(
-                                text = { Text("历史记录") },
+                                text = { Text(s.history) },
                                 onClick = { showMenu = false; showHistory = true; vm.loadHistoryList() },
                                 leadingIcon = { Icon(Icons.Default.History, null) }
                             )
                             DropdownMenuItem(
-                                text = { Text("设置") },
+                                text = { Text(s.settings) },
                                 onClick = { showMenu = false; onOpenSettings() },
                                 leadingIcon = { Icon(Icons.Default.Settings, null) }
                             )
                             DropdownMenuItem(
-                                text = { Text("清空对话") },
+                                text = { Text(s.clearChat) },
                                 onClick = { showMenu = false; vm.clearChat() },
                                 leadingIcon = { Icon(Icons.Default.CleaningServices, null) }
                             )
@@ -261,10 +264,10 @@ fun ChatScreen(
     if (showHistory) {
         AlertDialog(
             onDismissRequest = { showHistory = false },
-            title = { Text("项目 AI 历史") },
+            title = { Text(s.projectAiHistory) },
             text = {
                 if (historyList.isEmpty()) {
-                    Text("当前项目还没有历史对话")
+                    Text(s.noHistoryYet)
                 } else {
                     LazyColumn(
                         modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp),
@@ -272,8 +275,8 @@ fun ChatScreen(
                     ) {
                         items(historyList, key = { it.id }) { item ->
                             ListItem(
-                                headlineContent = { Text(item.userInput.ifBlank { "未命名对话" }, maxLines = 1) },
-                                supportingContent = { Text("${item.apkName.ifBlank { openApkName ?: "当前项目" }} · ${item.messageCount} 条消息") },
+                                headlineContent = { Text(item.userInput.ifBlank { s.unnamedChat }, maxLines = 1) },
+                                supportingContent = { Text("${item.apkName.ifBlank { openApkName ?: s.currentProject }} · ${s.fmt(s.messageCount, "n" to item.messageCount)}") },
                                 leadingContent = { Icon(Icons.Default.History, null) },
                                 modifier = Modifier.clickable {
                                     vm.loadHistory(item.id)
@@ -284,7 +287,7 @@ fun ChatScreen(
                     }
                 }
             },
-            confirmButton = { TextButton(onClick = { showHistory = false }) { Text("关闭") } }
+            confirmButton = { TextButton(onClick = { showHistory = false }) { Text(s.close) } }
         )
     }
 
@@ -303,6 +306,7 @@ private fun ToolConfirmationDialog(
     onApprove: () -> Unit,
     onDeny: () -> Unit
 ) {
+    val s = LocalAppStrings.current
     val riskColor = when (request.riskLevel) {
         com.apkagent.agent.ToolRiskLevel.DANGER -> Color(0xFFE53935)
         com.apkagent.agent.ToolRiskLevel.CAUTION -> Color(0xFFFF9800)
@@ -311,15 +315,15 @@ private fun ToolConfirmationDialog(
     AlertDialog(
         onDismissRequest = onDeny,
         title = {
-            Text("确认敏感操作")
+            Text(s.confirmSensitive)
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("AI 请求执行敏感工具，请确认后继续。")
-                Text("工具：${request.call.name}", fontWeight = FontWeight.SemiBold)
-                Text("风险级别：${request.riskLevel.name}", color = riskColor)
+                Text(s.aiRequestsSensitive)
+                Text(s.fmt(s.toolLabel, "name" to request.call.name), fontWeight = FontWeight.SemiBold)
+                Text(s.fmt(s.riskLevelLabel, "level" to request.riskLevel.name), color = riskColor)
                 Text(
-                    text = request.summary.ifBlank { "无参数" },
+                    text = request.summary.ifBlank { s.noParams },
                     fontFamily = FontFamily.Monospace,
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -327,10 +331,10 @@ private fun ToolConfirmationDialog(
             }
         },
         confirmButton = {
-            TextButton(onClick = onApprove) { Text("允许", color = riskColor) }
+            TextButton(onClick = onApprove) { Text(s.allow, color = riskColor) }
         },
         dismissButton = {
-            TextButton(onClick = onDeny) { Text("拒绝") }
+            TextButton(onClick = onDeny) { Text(s.deny) }
         }
     )
 }
@@ -483,7 +487,7 @@ private fun ToolBubble(item: ChatItem, isDark: Boolean) {
                 AnimatedVisibility(visible = expanded) {
                     Column(Modifier.padding(top = 6.dp)) {
                         item.toolArgs?.takeIf { it.isNotBlank() }?.let { args ->
-                            Text("参数", fontSize = 10.sp, color = TgColors.timeText)
+                            Text(LocalAppStrings.current.params, fontSize = 10.sp, color = TgColors.timeText)
                             Text(
                                 args.take(500),
                                 fontFamily = FontFamily.Monospace,
@@ -494,7 +498,7 @@ private fun ToolBubble(item: ChatItem, isDark: Boolean) {
                         }
                         item.toolResult?.takeIf { it.isNotBlank() }?.let { res ->
                             Spacer(Modifier.height(4.dp))
-                            Text("结果", fontSize = 10.sp, color = TgColors.timeText)
+                            Text(LocalAppStrings.current.result, fontSize = 10.sp, color = TgColors.timeText)
                             Text(
                                 res.take(1000),
                                 fontFamily = FontFamily.Monospace,
@@ -613,7 +617,7 @@ private fun TgInputBar(
                         .fillMaxWidth()
                         .heightIn(min = 40.dp, max = 120.dp),
                     placeholder = {
-                        Text("输入分析指令…", fontSize = 15.sp, color = TgColors.timeText)
+                        Text(LocalAppStrings.current.inputPlaceholder, fontSize = 15.sp, color = TgColors.timeText)
                     },
                     colors = TextFieldDefaults.colors(
                         focusedContainerColor = Color.Transparent,
@@ -640,7 +644,7 @@ private fun TgInputBar(
                         .clip(CircleShape)
                         .background(Color(0xFFE53935))
                 ) {
-                    Icon(Icons.Default.Stop, "停止", tint = Color.White, modifier = Modifier.size(20.dp))
+                    Icon(Icons.Default.Stop, LocalAppStrings.current.stop, tint = Color.White, modifier = Modifier.size(20.dp))
                 }
             } else {
                 IconButton(
@@ -652,7 +656,7 @@ private fun TgInputBar(
                         .background(if (text.isNotBlank()) TgColors.accent else TgColors.accent.copy(alpha = 0.5f))
                 ) {
                     Icon(
-                        Icons.AutoMirrored.Filled.Send, "发送",
+                        Icons.AutoMirrored.Filled.Send, LocalAppStrings.current.send,
                         tint = Color.White, modifier = Modifier.size(20.dp)
                     )
                 }
@@ -693,6 +697,7 @@ private fun TypingDots() {
 
 @Composable
 private fun TgWelcomeScreen(padding: PaddingValues, isDark: Boolean) {
+    val s = LocalAppStrings.current
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -724,7 +729,7 @@ private fun TgWelcomeScreen(padding: PaddingValues, isDark: Boolean) {
                 color = if (isDark) Color.White else Color(0xFF1B1B1B)
             )
             Text(
-                "Android APK 逆向分析工具",
+                s.welcomeSubtitle,
                 fontSize = 14.sp,
                 color = TgColors.timeText
             )
@@ -733,11 +738,11 @@ private fun TgWelcomeScreen(padding: PaddingValues, isDark: Boolean) {
 
             // 快捷按钮
             val suggestions = listOf(
-                "🔍 分析 APK 签名信息" to "分析这个 APK 的签名信息",
-                "📦 反编译 DEX 文件" to "反编译所有 DEX 文件并列出类结构",
-                "🛡️ 扫描安全风险" to "扫描并生成安全风险报告",
-                "🔧 自动 Patch" to "自动检测并移除签名校验",
-                "🎣 生成 Frida Hook" to "生成 Frida Hook 脚本用于动态分析"
+                s.suggestSignLabel to s.suggestSignPrompt,
+                s.suggestDexLabel to s.suggestDexPrompt,
+                s.suggestRiskLabel to s.suggestRiskPrompt,
+                s.suggestPatchLabel to s.suggestPatchPrompt,
+                s.suggestFridaLabel to s.suggestFridaPrompt
             )
             suggestions.forEach { (label, _) ->
                 Surface(
@@ -758,7 +763,7 @@ private fun TgWelcomeScreen(padding: PaddingValues, isDark: Boolean) {
 
             Spacer(Modifier.height(16.dp))
             Text(
-                "先在逆向项目页导入应用或 APK；导入后会自动预分析，再进入项目 AI 对话",
+                s.welcomeHint,
                 fontSize = 12.sp,
                 color = TgColors.timeText,
                 textAlign = TextAlign.Center

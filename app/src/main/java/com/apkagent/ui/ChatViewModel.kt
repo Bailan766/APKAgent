@@ -1,5 +1,8 @@
 package com.apkagent.ui
 
+import com.apkagent.i18n.LocaleManager
+import com.apkagent.i18n.AgentPrompts
+
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -122,7 +125,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         if (text.isBlank() || _isRunning.value) return
         val cfg = config.value
         if (!cfg.isValid()) {
-            _messages.update { it + ChatItem(role = Role.ERROR, content = "请先在设置页选择 AI 提供商并填写 API Key") }
+            _messages.update { it + ChatItem(role = Role.ERROR, content = LocaleManager.strings.needApiKey) }
             return
         }
         _messages.update { it + ChatItem(role = Role.USER, content = text) }
@@ -141,10 +144,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                 saveHistory(text)
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 Logger.e("VM", "超时")
-                _messages.update { it + ChatItem(role = Role.ERROR, content = "超时（5分钟）") }
+                _messages.update { it + ChatItem(role = Role.ERROR, content = LocaleManager.strings.timeout5min) }
             } catch (e: Throwable) {
                 Logger.e("VM", "异常", e)
-                _messages.update { it + ChatItem(role = Role.ERROR, content = "异常: ${e.message}") }
+                _messages.update { it + ChatItem(role = Role.ERROR, content = LocaleManager.strings.fmt(LocaleManager.strings.exceptionPrefix, "msg" to e.message)) }
             } finally {
                 _isRunning.value = false
                 KeepAliveManager.release()
@@ -176,7 +179,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                 withContext(Dispatchers.Main) { onResult(result.success, result.message) }
             } catch (e: Throwable) {
                 Logger.e("VM", "导出失败", e)
-                withContext(Dispatchers.Main) { onResult(false, "导出失败: ${e.message}") }
+                withContext(Dispatchers.Main) { onResult(false, LocaleManager.strings.fmt(LocaleManager.strings.exportFailed, "msg" to e.message)) }
             } finally {
                 _isExporting.value = false
             }
@@ -191,18 +194,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         val summaryFile = agentApp.projectStore.getAnalysisMarkdownFile(project.id)
         val summary = runCatching { if (summaryFile.exists()) summaryFile.readText().take(12000) else "" }.getOrDefault("")
         if (summary.isBlank()) return userText
-        return """
-当前逆向项目：${project.name}
-项目目录：${agentApp.projectStore.getProjectDir(project.id).absolutePath}
-APK路径：${project.importedApkPath}
-
-以下是导入后自动预分析结果。回答和工具调用必须基于这些真实上下文，不要瞎猜；如信息不足，先调用工具读取项目文件再判断。
-
-$summary
-
-用户任务：
-$userText
-""".trimIndent()
+        return AgentPrompts.projectContextHeader(
+            projectName = project.name,
+            projectDir = agentApp.projectStore.getProjectDir(project.id).absolutePath,
+            apkPath = project.importedApkPath,
+            analysisMarkdown = summary,
+            userTask = userText
+        )
     }
 
     fun loadHistoryList() {
