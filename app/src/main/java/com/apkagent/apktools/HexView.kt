@@ -1,14 +1,16 @@
 package com.apkagent.apktools
 
+import com.apkagent.i18n.L
+
 /**
  * 十六进制查看工具：把字节格式化为 offset + hex + ASCII。
  */
 object HexView {
     fun dump(bytes: ByteArray, maxBytes: Int = 4096, offset: Int = 0): String {
-        if (bytes.isEmpty()) return "<空>"
+        if (bytes.isEmpty()) return L("<空>", "It's empty.")
         val start = offset.coerceAtLeast(0)
         val n = minOf(bytes.size - start, maxBytes).coerceAtLeast(0)
-        if (n == 0) return "<无数据>"
+        if (n == 0) return L("<无数据>", "No data available")
         val sb = StringBuilder()
         var i = 0
         while (i < n) {

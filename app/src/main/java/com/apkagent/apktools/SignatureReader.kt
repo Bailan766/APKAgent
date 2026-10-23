@@ -1,5 +1,7 @@
 package com.apkagent.apktools
 
+import com.apkagent.i18n.L
+
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -26,8 +28,8 @@ object SignatureReader {
 
     fun read(apk: File): String {
         val sb = StringBuilder()
-        sb.appendLine("APK 签名分析：${apk.name}")
-        sb.appendLine("文件大小：${apk.length()} 字节")
+        sb.appendLine(L("APK 签名分析：${apk.name}", "APK signature analysis: ${apk.name}"))
+        sb.appendLine(L("文件大小：${apk.length()} 字节", "File size: ${apk.length()} bytes"))
         sb.appendLine()
 
         val results = mutableListOf<SignerInfo>()
@@ -37,7 +39,7 @@ object SignatureReader {
             val v1 = readV1(apk)
             if (v1 != null) results.add(v1)
         } catch (e: Throwable) {
-            sb.appendLine("[v1] 读取失败：${e.message}")
+            sb.appendLine(L("[v1] 读取失败：${e.message}", "[v1] Read failed: ${e.message}"))
         }
 
         // v2/v3
@@ -45,33 +47,33 @@ object SignatureReader {
             val v2v3 = readV2V3(apk)
             results.addAll(v2v3)
         } catch (e: Throwable) {
-            sb.appendLine("[v2/v3] 读取失败：${e.message}")
+            sb.appendLine(L("[v2/v3] 读取失败：${e.message}", "[v2/v3] Read failed: ${e.message}"))
         }
 
         if (results.isEmpty()) {
-            sb.appendLine("⚠ 未检测到任何签名（v1/v2/v3）。该 APK 未签名或签名格式无法识别。")
+            sb.appendLine(L("⚠ 未检测到任何签名（v1/v2/v3）。该 APK 未签名或签名格式无法识别。", "⚠ No signatures detected (v1/v2/v3). The APK is unsigned or the signature format is unrecognized."))
             return sb.toString()
         }
 
         results.forEach { r ->
-            sb.appendLine("── 签名方案：${r.scheme} ──")
+            sb.appendLine(L("── 签名方案：${r.scheme} ──", "── Signature scheme: ${r.scheme} ──"))
             if (r.certs.isEmpty()) {
-                sb.appendLine("  （检测到方案但未提取到证书）")
+                sb.appendLine(L("  （检测到方案但未提取到证书）", "  (scheme detected but no certificate extracted)"))
             } else {
                 r.certs.forEachIndexed { i, c ->
                     sb.appendLine("  证书 #${i + 1}")
                     sb.appendLine("    Subject : ${c.subjectX500Principal}")
                     sb.appendLine("    Issuer  : ${c.issuerX500Principal}")
                     sb.appendLine("    Serial  : ${c.serialNumber}")
-                    sb.appendLine("    算法    : ${c.sigAlgName}")
-                    sb.appendLine("    有效期  : ${c.notBefore} ~ ${c.notAfter}")
+                    sb.appendLine(L("    算法    : ${c.sigAlgName}", "    Algorithm: ${c.sigAlgName}"))
+                    sb.appendLine(L("    有效期  : ${c.notBefore} ~ ${c.notAfter}", "    Validity : ${c.notBefore} ~ ${c.notAfter}"))
                 }
             }
             sb.appendLine()
         }
 
         if (results.none { it.scheme.startsWith("v2") || it.scheme.startsWith("v3") }) {
-            sb.appendLine("ℹ 仅含 v1 签名，在 Android 7.0+ 建议补充 v2 签名以保证完整性校验。")
+            sb.appendLine(L("ℹ 仅含 v1 签名，在 Android 7.0+ 建议补充 v2 签名以保证完整性校验。", "ℹ v1-only signature; on Android 7.0+ consider adding v2 for integrity checks."))
         }
         return sb.toString()
     }

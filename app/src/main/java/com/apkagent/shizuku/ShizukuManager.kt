@@ -1,5 +1,7 @@
 package com.apkagent.shizuku
 
+import com.apkagent.i18n.L
+
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.IBinder
@@ -50,7 +52,7 @@ object ShizukuManager {
             Shizuku.addRequestPermissionResultListener(permissionListener)
             if (Shizuku.pingBinder()) checkStatus() else status = Status.Installed
         } catch (e: Throwable) {
-            Log.w(TAG, "Shizuku 初始化失败", e)
+            Log.w(TAG, L("Shizuku 初始化失败", "Shi Around initialisation failed"), e)
             status = Status.Unavailable
         }
     }
@@ -128,7 +130,7 @@ object ShizukuManager {
             process.waitFor()
             output.trim()
         } catch (e: Throwable) {
-            Log.e(TAG, "execAndGet 失败", e)
+            Log.e(TAG, L("execAndGet 失败", "ExecAndGet failed"), e)
             null
         }
     }
@@ -144,7 +146,7 @@ object ShizukuManager {
             val code = process.waitFor()
             output.trim() to code
         } catch (e: Throwable) {
-            Log.e(TAG, "execAndGetCode 失败", e)
+            Log.e(TAG, L("execAndGetCode 失败", "Ex earnedAndGetCode failed"), e)
             null to -1
         }
     }

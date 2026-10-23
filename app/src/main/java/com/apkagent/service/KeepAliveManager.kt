@@ -1,5 +1,7 @@
 package com.apkagent.service
 
+import com.apkagent.i18n.L
+
 import android.content.Context
 import android.os.PowerManager
 import com.apkagent.util.Logger
@@ -10,7 +12,7 @@ import com.apkagent.util.Logger
  * 用法：
  *   KeepAliveManager.acquire(context)  // Agent 开始任务时调用
  *   KeepAliveManager.release()          // Agent 任务结束时调用
- *   KeepAliveManager.updateTask("分析 DEX...")  // 更新通知文字
+ *   KeepAliveManager.updateTask(L("分析 DEX...", "DEX..."))  // 更新通知文字
  */
 object KeepAliveManager {
 
@@ -35,7 +37,7 @@ object KeepAliveManager {
             ).apply {
                 acquire(30 * 60 * 1000L)  // 最长 30 分钟自动释放（安全兜底）
             }
-            Logger.i(TAG, "WakeLock + 前台服务已获取")
+            Logger.i(TAG, L("WakeLock + 前台服务已获取", "WakeLock + Front desk service acquired"))
         }
         Logger.i(TAG, "acquire: refCount=$refCount")
     }
@@ -55,7 +57,7 @@ object KeepAliveManager {
                 // service 在 onDestroy 中会调用 onServiceDestroyed
                 try { it.stopSelf() } catch (_: Throwable) {}
             }
-            Logger.i(TAG, "WakeLock + 前台服务已释放")
+            Logger.i(TAG, L("WakeLock + 前台服务已释放", "WakeLock + Front desk service Experienced"))
         }
     }
 
@@ -84,7 +86,7 @@ object KeepAliveManager {
             service = null
             // 如果 service 被系统杀死但 refCount > 0，清理状态
             if (refCount > 0) {
-                Logger.w(TAG, "前台服务被系统杀死，清理状态")
+                Logger.w(TAG, L("前台服务被系统杀死，清理状态", "The front desk service was systematically killed. Clean up."))
                 wakeLock?.let { if (it.isHeld) it.release() }
                 wakeLock = null
                 refCount = 0

@@ -1,5 +1,7 @@
 package com.apkagent.apktools.advanced
 
+import com.apkagent.i18n.L
+
 import com.android.apksig.ApkSigner
 import com.android.apksig.ApkVerifier
 import com.apkagent.agent.Tool
@@ -29,22 +31,22 @@ import java.security.KeyStore
  */
 object EnhancedSigner : Tool {
     override val name = "apk_enhanced_sign"
-    override val description = "增强版 APK 签名，支持 v1/v2/v3/v4 签名方案，支持自定义 keystore 和签名验证。"
-    override val parameters = schemaObject(
+    override val description get() = L("增强版 APK 签名，支持 v1/v2/v3/v4 签名方案，支持自定义 keystore 和签名验证。", "Enhanced APK Signature, supported v1/v2/v3/v4 Signature Program, supported customize keystore and signature authentication.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径"),
-            "output_path" to strProp("输出路径（默认覆盖原文件）"),
-            "keystore_path" to strProp("Keystore 文件路径（可选，默认使用内置调试密钥）"),
-            "keystore_pass" to strProp("Keystore 密码（可选）"),
-            "key_alias" to strProp("密钥别名（可选）"),
-            "key_pass" to strProp("密钥密码（可选）"),
-            "sign_schemes" to strProp("签名方案，逗号分隔（默认 v1,v2,v3,v4）"),
-            "verify_only" to strProp("仅验证签名，不重新签名（true/false）")
+            "apk_path" to strProp(L("APK 文件路径", "AAK File Path")),
+            "output_path" to strProp(L("输出路径（默认覆盖原文件）", "Output path (default overwrite original file)")),
+            "keystore_path" to strProp(L("Keystore 文件路径（可选，默认使用内置调试密钥）", "Keystore file path (optional, default with built-in debug keys)")),
+            "keystore_pass" to strProp(L("Keystore 密码（可选）", "Keystore password (optional)")),
+            "key_alias" to strProp(L("密钥别名（可选）", "Key alias (optional)")),
+            "key_pass" to strProp(L("密钥密码（可选）", "Key Password (optional)")),
+            "sign_schemes" to strProp(L("签名方案，逗号分隔（默认 v1,v2,v3,v4）", "Sign Scheme, Comma Separation (default v1, v2, v3, v4)")),
+            "verify_only" to strProp(L("仅验证签名，不重新签名（true/false）", "Authentication of signature only, not re-signed (tru/false)"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, "缺少 apk_path")
+        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path", "Missing ack Countries"))
         val outputPath = args.str("output_path")
         val keystorePath = args.str("keystore_path")
         val keystorePass = args.str("keystore_pass")
@@ -105,7 +107,7 @@ object EnhancedSigner : Tool {
             if (keystorePath != null && keystorePass != null && keyAlias != null) {
                 // 使用自定义 keystore
                 val ksFile = File(keystorePath)
-                if (!ksFile.exists()) return SignResult(false, "Keystore 文件不存在: $keystorePath")
+                if (!ksFile.exists()) return SignResult(false, L("Keystore 文件不存在: $keystorePath", "Keystore file does not exist: $keystorePath"))
 
                 ks = KeyStore.getInstance(ksFile, keystorePass.toCharArray())
                 alias = keyAlias
@@ -154,12 +156,12 @@ object EnhancedSigner : Tool {
 
             if (result.isVerified) {
                 val sb = StringBuilder()
-                sb.appendLine("签名方案:")
+                sb.appendLine(L("签名方案:", "Signature programme:"))
                 if (v1) sb.appendLine("  • v1 (JAR/PKCS#7)")
                 if (v2) sb.appendLine("  • v2 (APK Signature Scheme v2)")
                 if (v3) sb.appendLine("  • v3 (APK Signature Scheme v3)")
                 if (v4) sb.appendLine("  • v4 (APK Signature Scheme v4)")
-                sb.appendLine("证书信息:")
+                sb.appendLine(L("证书信息:", "Could not close temporary folder: %s"))
                 sb.appendLine("  颁发者: ${certChain[0].issuerX500Principal.name}")
                 sb.appendLine("  使用者: ${certChain[0].subjectX500Principal.name}")
                 sb.appendLine("  有效期: ${certChain[0].notBefore} - ${certChain[0].notAfter}")
@@ -179,15 +181,15 @@ object EnhancedSigner : Tool {
             val result = verifier.verify()
 
             val sb = StringBuilder()
-            sb.appendLine("🔍 APK 签名验证结果：")
+            sb.appendLine(L("🔍 APK 签名验证结果：", "🔍ApK Signature Validation Results:"))
             sb.appendLine()
 
             if (result.isVerified) {
-                sb.appendLine("✅ 签名验证通过")
+                sb.appendLine(L("✅ 签名验证通过", "✅ Signature authentication pass"))
                 sb.appendLine()
 
                 // 签名方案信息
-                sb.appendLine("📋 签名方案:")
+                sb.appendLine(L("📋 签名方案:", "Signature programme:"))
                 val schemes = mutableListOf<String>()
                 if (result.isVerifiedUsingV1Scheme) schemes.add("v1 (JAR/PKCS#7)")
                 if (result.isVerifiedUsingV2Scheme) schemes.add("v2 (APK Signature Scheme v2)")
@@ -197,7 +199,7 @@ object EnhancedSigner : Tool {
 
                 ToolResult(true, sb.toString())
             } else {
-                sb.appendLine("❌ 签名验证失败")
+                sb.appendLine(L("❌ 签名验证失败", "❌ Signature authentication failed"))
                 result.errors.forEach { error ->
                     sb.appendLine("  • $error")
                 }

@@ -1,11 +1,13 @@
 package com.apkagent.agent
 
+import com.apkagent.i18n.L
+
 import android.util.Log
 import kotlinx.coroutines.delay
 
 /**
  * 断路器 + 指数退避。
- * 连续失败达到阈值后"熔断"，短路后续请求，快速失败。
+ * 连续失败达到阈值后L("熔断", "Circuit open")，短路后续请求，快速失败。
  * 经过冷却期后半开，允许一次试探请求。
  */
 class CircuitBreaker(
@@ -35,7 +37,7 @@ class CircuitBreaker(
             State.OPEN -> {
                 val elapsed = System.currentTimeMillis() - lastFailureTime
                 if (elapsed >= cooldownMs) {
-                    Log.i(TAG, "冷却结束，进入半开状态")
+                    Log.i(TAG, L("冷却结束，进入半开状态", "Cooldown finished; entering half-open state"))
                     state = State.HALF_OPEN
                 } else {
                     val remaining = cooldownMs - elapsed
@@ -78,14 +80,14 @@ class CircuitBreaker(
                 delay(wait)
             }
         }
-        throw lastException ?: IllegalStateException("重试耗尽")
+        throw lastException ?: IllegalStateException(L("重试耗尽", "Retries exhausted"))
     }
 
     private fun onSuccess() {
         consecutiveFailures = 0
         backoffMs = 1000L
         if (state == State.HALF_OPEN) {
-            Log.i(TAG, "试探成功，恢复正常")
+            Log.i(TAG, L("试探成功，恢复正常", "Test successful. Get back to normal."))
             state = State.CLOSED
         }
     }

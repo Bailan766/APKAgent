@@ -1,5 +1,7 @@
 package com.apkagent.apktools.advanced
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
@@ -27,26 +29,26 @@ import java.util.zip.ZipFile
  */
 object CertificateViewer : Tool {
     override val name = "apk_certificate"
-    override val description = "查看 APK 签名证书详情：颁发者、使用者、有效期、指纹、签名方案等。"
-    override val parameters = schemaObject(
+    override val description get() = L("查看 APK 签名证书详情：颁发者、使用者、有效期、指纹、签名方案等。", "Read details of the APK signature certificate: issuer, user, validity period, fingerprint, signature program, etc.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径")
+            "apk_path" to strProp(L("APK 文件路径", "AAK File Path"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, "缺少 apk_path")
+        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path", "Missing ack Countries"))
         val apkFile = File(apkPath)
         if (!apkFile.exists()) return ToolResult(false, "文件不存在: $apkPath")
 
         return try {
             val certificates = extractCertificates(apkFile)
             if (certificates.isEmpty()) {
-                return ToolResult(false, "APK 中未找到签名证书")
+                return ToolResult(false, L("APK 中未找到签名证书", "Could not close temporary folder: %s"))
             }
 
             val sb = StringBuilder()
-            sb.appendLine("🔐 APK 签名证书详情：")
+            sb.appendLine(L("🔐 APK 签名证书详情：", "Could not close temporary folder: %s"))
             sb.appendLine()
 
             // 检测签名方案
@@ -56,18 +58,18 @@ object CertificateViewer : Tool {
 
             certificates.forEachIndexed { index, cert ->
                 sb.appendLine("📜 证书 ${index + 1}:")
-                sb.appendLine("   颁发者 (Issuer):")
+                sb.appendLine(L("   颁发者 (Issuer):", "Issuer (Issuer):"))
                 sb.appendLine("     ${cert.issuerX500Principal.name}")
-                sb.appendLine("   使用者 (Subject):")
+                sb.appendLine(L("   使用者 (Subject):", "User (Subject):"))
                 sb.appendLine("     ${cert.subjectX500Principal.name}")
                 sb.appendLine("   序列号: ${cert.serialNumber.toString(16)}")
-                sb.appendLine("   版本: X.509 v${cert.version}")
+                sb.appendLine(L("   版本: X.509 v${cert.version}", "Version: X.509 v${cert.version}"))
                 sb.appendLine("   签名算法: ${cert.sigAlgName}")
-                sb.appendLine("   有效期:")
+                sb.appendLine(L("   有效期:", "Duration:"))
                 sb.appendLine("     开始: ${cert.notBefore}")
                 sb.appendLine("     结束: ${cert.notAfter}")
                 sb.appendLine("     状态: ${if (cert.hasExpired()) "❌ 已过期" else "✅ 有效"}")
-                sb.appendLine("   指纹:")
+                sb.appendLine(L("   指纹:", "Fingerprint:"))
 
                 // 计算各种指纹
                 val md5 = cert.encoded.getMessageDigest("MD5")
@@ -79,7 +81,7 @@ object CertificateViewer : Tool {
                 sb.appendLine("     SHA-256: $sha256")
 
                 // 公钥信息
-                sb.appendLine("   公钥:")
+                sb.appendLine(L("   公钥:", "Public key:"))
                 sb.appendLine("     算法: ${cert.publicKey.algorithm}")
                 sb.appendLine("     长度: ${cert.publicKey.encoded.size * 8} bits")
 
@@ -135,7 +137,7 @@ object CertificateViewer : Tool {
         }
 
         if (schemes.isEmpty()) {
-            schemes.add("未知")
+            schemes.add(L("未知", "Unknown"))
         }
         return schemes
     }

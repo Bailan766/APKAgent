@@ -1,5 +1,7 @@
 package com.apkagent.apktools.advanced
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
@@ -23,17 +25,17 @@ import java.nio.ByteOrder
  */
 object ZipAlignTool : Tool {
     override val name = "apk_zipalign"
-    override val description = "对 APK 进行 ZIP 对齐（ZipAlign），确保未压缩数据按 4 字节边界对齐。Android 11+ 要求 APK 必须对齐。"
-    override val parameters = schemaObject(
+    override val description get() = L("对 APK 进行 ZIP 对齐（ZipAlign），确保未压缩数据按 4 字节边界对齐。Android 11+ 要求 APK 必须对齐。", "ZipAlign for APK to ensure that uncompressed data are aligned to the 4 byte boundary. Android 11+ requires APK to be aligned.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径"),
-            "output_path" to strProp("输出路径（默认覆盖原文件）"),
-            "alignment" to intProp("对齐字节数（默认 4）")
+            "apk_path" to strProp(L("APK 文件路径", "AAK File Path")),
+            "output_path" to strProp(L("输出路径（默认覆盖原文件）", "Output path (default overwrite original file)")),
+            "alignment" to intProp(L("对齐字节数（默认 4）", "Alignment bytes (default 4)"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, "缺少 apk_path 参数")
+        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path 参数", "Missing apk path arguments"))
         val output = args.str("output_path")
         val alignment = args.int("alignment") ?: 4
 
@@ -75,7 +77,7 @@ object ZipAlignTool : Tool {
                         }
                     }
                 }
-                if (eocdPosition < 0) return AlignResult(false, "未找到 EOCD 签名")
+                if (eocdPosition < 0) return AlignResult(false, L("未找到 EOCD 签名", "EOCD signature not found"))
 
                 // 读取中央目录信息
                 raf.seek(eocdPosition + 10)
@@ -126,14 +128,14 @@ object ZipAlignTool : Tool {
                 }
 
                 if (!needsAlignment) {
-                    return AlignResult(true, "APK 已经是对齐的，无需处理")
+                    return AlignResult(true, L("APK 已经是对齐的，无需处理", "APK is already right. It doesn't have to be handled."))
                 }
 
                 // 执行对齐（简化版：复制并调整）
                 return alignZipFile(input, output, alignment)
             }
         } catch (e: Exception) {
-            return AlignResult(false, "对齐失败: ${e.message}")
+            return AlignResult(false, L("对齐失败: ${e.message}", "Alignment failed: ${e.message}"))
         }
     }
 

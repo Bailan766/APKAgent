@@ -1,5 +1,7 @@
 package com.apkagent.apktools
 
+import com.apkagent.i18n.L
+
 import android.util.Log
 import java.io.File
 import java.security.MessageDigest
@@ -82,7 +84,7 @@ object ParseCache {
             val oldest = cache.entries.firstOrNull() ?: break
             totalMemoryBytes -= oldest.value.memoryBytes
             cache.remove(oldest.key)
-            Log.d(TAG, "淘汰缓存: ${oldest.key}")
+            Log.d(TAG, L("淘汰缓存: ${oldest.key}", "Phase-out Cache: ${oldest.key}"))
         }
     }
 
@@ -99,7 +101,7 @@ object ParseCache {
     fun clear() {
         cache.clear()
         totalMemoryBytes = 0L
-        Log.i(TAG, "缓存已清空")
+        Log.i(TAG, L("缓存已清空", "Cache emptied"))
     }
 
     fun stats(): String = "缓存: ${cache.size}/$MAX_ENTRIES 条, ${totalMemoryBytes / 1024}KB / ${MAX_MEMORY_BYTES / 1024}KB"

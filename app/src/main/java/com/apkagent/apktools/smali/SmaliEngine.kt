@@ -1,5 +1,7 @@
 package com.apkagent.apktools.smali
 
+import com.apkagent.i18n.L
+
 import com.android.tools.smali.baksmali.Baksmali
 import com.android.tools.smali.baksmali.BaksmaliOptions
 import com.android.tools.smali.dexlib2.DexFileFactory
@@ -21,7 +23,7 @@ object SmaliEngine {
 
     /** 反编译单个 DEX 文件为 smali 文本，输出到 outDir */
     fun disassembleDex(dexFile: File, outDir: File): DisasmResult {
-        if (!dexFile.exists()) return DisasmResult(false, "DEX 文件不存在", 0)
+        if (!dexFile.exists()) return DisasmResult(false, L("DEX 文件不存在", "DEX file does not exist"), 0)
         outDir.mkdirs()
         return try {
             val dex = DexFileFactory.loadDexFile(dexFile, Opcodes.getDefault())
@@ -29,7 +31,7 @@ object SmaliEngine {
             val ok = Baksmali.disassembleDexFile(dex, outDir, 4, opts)
             val count = outDir.walkTopDown().filter { it.extension == "smali" }.count()
             if (ok) DisasmResult(true, "成功反编译 $count 个类", count)
-            else DisasmResult(false, "反编译失败", 0)
+            else DisasmResult(false, L("反编译失败", "Anti-Compilation Failed"), 0)
         } catch (e: Throwable) {
             DisasmResult(false, "反编译异常：${e.message}", 0)
         }
@@ -73,9 +75,9 @@ object SmaliEngine {
 
     /** 回编译 smali 目录为单个 DEX 文件 */
     fun assembleSmali(smaliDir: File, outputDex: File): AsmResult {
-        if (!smaliDir.exists()) return AsmResult(false, "smali 目录不存在", 0)
+        if (!smaliDir.exists()) return AsmResult(false, L("smali 目录不存在", "smali directory does not exist"), 0)
         val smaliFiles = smaliDir.walkTopDown().filter { it.extension == "smali" }.toList()
-        if (smaliFiles.isEmpty()) return AsmResult(false, "未找到 .smali 文件", 0)
+        if (smaliFiles.isEmpty()) return AsmResult(false, L("未找到 .smali 文件", "No. smali file found"), 0)
 
         return try {
             val opts = SmaliOptions()
@@ -84,8 +86,8 @@ object SmaliEngine {
             val fileList = smaliFiles.map { it.absolutePath }
             opts.outputDexFile = outputDex.absolutePath
             val ok = Smali.assemble(opts, fileList)
-            if (ok) AsmResult(true, "成功回编译为 DEX", smaliFiles.size)
-            else AsmResult(false, "回编译失败（Smali.assemble 返回 false）", 0)
+            if (ok) AsmResult(true, L("成功回编译为 DEX", "Successfully reassembled to DEX"), smaliFiles.size)
+            else AsmResult(false, L("回编译失败（Smali.assemble 返回 false）", "Failed to compile back (Smali.assemble returns false)"), 0)
         } catch (e: Throwable) {
             AsmResult(false, "回编译失败：${e.message}", 0)
         }

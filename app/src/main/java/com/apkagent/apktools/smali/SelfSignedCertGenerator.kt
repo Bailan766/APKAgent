@@ -1,5 +1,7 @@
 package com.apkagent.apktools.smali
 
+import com.apkagent.i18n.L
+
 import java.math.BigInteger
 import java.security.KeyPair
 import java.security.cert.X509Certificate
@@ -50,7 +52,7 @@ object SelfSignedCertGenerator {
      */
     fun generateSimple(keyPair: KeyPair): X509Certificate {
         val clazz = Class.forName("sun.security.x509.X509CertImpl")
-            ?: throw ClassNotFoundException("sun.security.x509 不可用")
-        throw ClassNotFoundException("Android 平台无 sun.security，需 BC")
+            ?: throw ClassNotFoundException(L("sun.security.x509 不可用", "Not available"))
+        throw ClassNotFoundException(L("Android 平台无 sun.security，需 BC", "Android platform no sun.security, required BC"))
     }
 }

@@ -1,5 +1,7 @@
 package com.apkagent.project
 
+import com.apkagent.i18n.L
+
 import com.apkagent.apktools.AxmlParser
 import com.apkagent.apktools.SignatureReader
 import java.io.File
@@ -130,12 +132,12 @@ object ProjectAnalyzer {
         }
         val lowerXml = manifestXml.lowercase(Locale.getDefault())
         if (lowerXml.contains("accessibilityservice")) {
-            risks += "Manifest 含无障碍服务声明"
+            risks += L("Manifest 含无障碍服务声明", "Manifast Statement of Services Including Accessibility")
         }
         if (assetEntries.any { it.contains("frida", ignoreCase = true) || it.contains("xposed", ignoreCase = true) }) {
-            risks += "assets 中出现 frida/xposed 关键字"
+            risks += L("assets 中出现 frida/xposed 关键字", "Assets appear Frida/xposed keywords")
         }
-        if (risks.isEmpty()) risks += "未发现明显高危特征，建议继续查看权限、DEX 和证书信息"
+        if (risks.isEmpty()) risks += L("未发现明显高危特征，建议继续查看权限、DEX 和证书信息", "No visible high-risk characteristics were found, and it is recommended that access, DEX and certificate information be continued")
         return risks.joinToString("\n")
     }
 

@@ -1,5 +1,7 @@
 package com.apkagent.apktools.advanced
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
@@ -25,22 +27,22 @@ import java.util.zip.ZipFile
  */
 object PermissionsViewer : Tool {
     override val name = "apk_permissions"
-    override val description = "查看 APK 声明的所有权限，分类显示普通/危险/特殊权限，并提供用途说明。"
-    override val parameters = schemaObject(
+    override val description get() = L("查看 APK 声明的所有权限，分类显示普通/危险/特殊权限，并提供用途说明。", "View all privileges of the APK declaration, show general/dangerous/special privileges, and provide a description of their use.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径")
+            "apk_path" to strProp(L("APK 文件路径", "AAK File Path"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, "缺少 apk_path")
+        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path", "Missing ack Countries"))
         val apkFile = File(apkPath)
         if (!apkFile.exists()) return ToolResult(false, "文件不存在: $apkPath")
 
         return try {
             val permissions = extractPermissions(apkFile)
             if (permissions.isEmpty()) {
-                return ToolResult(false, "APK 未声明任何权限")
+                return ToolResult(false, L("APK 未声明任何权限", "APK does not declare any authority"))
             }
 
             formatPermissions(permissions)

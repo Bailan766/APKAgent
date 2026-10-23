@@ -1,5 +1,7 @@
 package com.apkagent.apktools.smali
 
+import com.apkagent.i18n.L
+
 import com.android.apksig.ApkSigner
 import com.android.apksig.ApkVerifier
 import java.io.File
@@ -27,7 +29,7 @@ object ApkRepackSigner {
      */
     fun repack(srcDir: File, outputApk: File): RepackResult {
         if (!srcDir.exists() || !srcDir.isDirectory)
-            return RepackResult(false, "源目录不存在或不是目录", 0)
+            return RepackResult(false, L("源目录不存在或不是目录", "Source directory does not exist or is not a directory"), 0)
         outputApk.parentFile?.mkdirs()
         var count = 0
         try {
@@ -57,7 +59,7 @@ object ApkRepackSigner {
      * 从已有 APK 提取所有条目到目录（用于修改后重打包）。
      */
     fun unpackApk(apkFile: File, outDir: File): RepackResult {
-        if (!apkFile.exists()) return RepackResult(false, "APK 不存在", 0)
+        if (!apkFile.exists()) return RepackResult(false, L("APK 不存在", "AAPK does not exist"), 0)
         outDir.mkdirs()
         var count = 0
         try {
@@ -92,7 +94,7 @@ object ApkRepackSigner {
         keyAlias: String? = null,
         keyPass: String? = null
     ): SignResult {
-        if (!inputApk.exists()) return SignResult(false, "输入 APK 不存在", null, null)
+        if (!inputApk.exists()) return SignResult(false, L("输入 APK 不存在", "Input APK does not exist"), null, null)
 
         val ks: File
         val alias: String
@@ -120,8 +122,8 @@ object ApkRepackSigner {
             val privateKey = key as java.security.PrivateKey
             val certs: List<X509Certificate> = keyStore.getCertificateChain(alias)
                 ?.mapNotNull { it as? X509Certificate }
-                ?: return SignResult(false, "未找到证书链", null, null)
-            if (certs.isEmpty()) return SignResult(false, "证书链为空", null, null)
+                ?: return SignResult(false, L("未找到证书链", "Certificate chain not found"), null, null)
+            if (certs.isEmpty()) return SignResult(false, L("证书链为空", "Certificate chain is empty"), null, null)
 
             val signerConfig = ApkSigner.SignerConfig.Builder(
                 "apkagent", privateKey, certs

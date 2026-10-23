@@ -1,5 +1,7 @@
 package com.apkagent.apktools.advanced
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
@@ -26,16 +28,16 @@ import java.util.zip.ZipFile
  */
 object ApkInstaller : Tool {
     override val name = "apk_install"
-    override val description = "安装 APK（支持普通 APK 和 Split APK）。使用 Shizuku 提权安装，无需用户确认。"
-    override val parameters = schemaObject(
+    override val description get() = L("安装 APK（支持普通 APK 和 Split APK）。使用 Shizuku 提权安装，无需用户确认。", "Install APK (support normal APK and Split APK). Install with Shizuku rights, without user confirmation.")
+    override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp("APK 文件路径（或 Bundle 路径 .apks/.apkm/.xapk）"),
-            "action" to strProp("操作：install（安装）/ verify（仅验证）/ info（查看安装信息）")
+            "apk_path" to strProp(L("APK 文件路径（或 Bundle 路径 .apks/.apkm/.xapk）", "AAK file path (or Bundle path.apks/.apkm/.xapk)")),
+            "action" to strProp(L("操作：install（安装）/ verify（仅验证）/ info（查看安装信息）", "Operation: install (installation)/ verify (validation only)/info (see installation information)"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, "缺少 apk_path")
+        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path", "Missing ack Countries"))
         val action = args.str("action") ?: "install"
 
         val apkFile = File(apkPath)
@@ -51,16 +53,16 @@ object ApkInstaller : Tool {
 
     private fun verifyApk(apkFile: File): ToolResult {
         val sb = StringBuilder()
-        sb.appendLine("🔍 APK 安装验证：")
+        sb.appendLine(L("🔍 APK 安装验证：", "🔍APK installation authentication:"))
         sb.appendLine()
 
         // 检查文件类型
         val fileType = when {
-            apkFile.name.endsWith(".apk") -> "普通 APK"
+            apkFile.name.endsWith(".apk") -> L("普通 APK", "Normal GF")
             apkFile.name.endsWith(".apks") -> "Split APK Bundle"
             apkFile.name.endsWith(".apkm") -> "APKMirror Bundle"
             apkFile.name.endsWith(".xapk") -> "APKPure Bundle"
-            else -> "未知格式"
+            else -> L("未知格式", "Unknown format")
         }
         sb.appendLine("📦 文件类型: $fileType")
         sb.appendLine("📁 文件大小: ${formatSize(apkFile.length())}")
@@ -71,9 +73,9 @@ object ApkInstaller : Tool {
             val verifier = com.android.apksig.ApkVerifier.Builder(apkFile).build()
             val result = verifier.verify()
             if (result.isVerified) {
-                sb.appendLine("✅ 签名验证: 通过")
+                sb.appendLine(L("✅ 签名验证: 通过", "✅ Signature verification: passed"))
             } else {
-                sb.appendLine("❌ 签名验证: 失败")
+                sb.appendLine(L("❌ 签名验证: 失败", "❌ Signature verification: failed"))
                 result.errors.forEach { sb.appendLine("  • $it") }
             }
         } catch (e: Exception) {
@@ -85,10 +87,10 @@ object ApkInstaller : Tool {
             try {
                 val splits = listSplits(apkFile)
                 sb.appendLine()
-                sb.appendLine("📦 Split APK 分片:")
+                sb.appendLine(L("📦 Split APK 分片:", "XVIII-Split AAPK"))
                 splits.forEach { sb.appendLine("  • ${it.first} (${formatSize(it.second)})") }
             } catch (e: Exception) {
-                sb.appendLine("⚠️ 无法解析分片: ${e.message}")
+                sb.appendLine(L("⚠️ 无法解析分片: ${e.message}", "⚠️ Unable to parse the fraction: ${e.message}"))
             }
         }
 
@@ -97,7 +99,7 @@ object ApkInstaller : Tool {
 
     private fun getInstallInfo(apkFile: File): ToolResult {
         val sb = StringBuilder()
-        sb.appendLine("📋 APK 安装信息：")
+        sb.appendLine(L("📋 APK 安装信息：", "AAPK installation information:"))
         sb.appendLine()
 
         try {
@@ -130,7 +132,7 @@ object ApkInstaller : Tool {
                     }
                 }
             } else {
-                sb.appendLine("⚠️ 无法读取 AndroidManifest.xml")
+                sb.appendLine(L("⚠️ 无法读取 AndroidManifest.xml", "⚠️ Unreadable AndroidManifest.xml"))
             }
         } catch (e: Exception) {
             sb.appendLine("❌ 解析失败: ${e.message}")
@@ -143,13 +145,13 @@ object ApkInstaller : Tool {
         return try {
             // 检查 Shizuku 是否可用
             if (!ShizukuManager.isRunning() || !ShizukuManager.isAuthorized()) {
-                return ToolResult(false, "❌ Shizuku 不可用，无法安装 APK\n请先启动 Shizuku 服务")
+                return ToolResult(false, L("❌ Shizuku 不可用，无法安装 APK\n请先启动 Shizuku 服务", "Outline: ❌ Shizuku is not available and cannot install APK\\n Please start Shizuku service first"))
             }
 
             when {
                 apkFile.name.endsWith(".apk") -> installSingleApk(apkFile)
                 apkFile.name.endsWith(".apks") || apkFile.name.endsWith(".apkm") || apkFile.name.endsWith(".xapk") -> installBundle(apkFile)
-                else -> ToolResult(false, "不支持的文件格式: ${apkFile.name}")
+                else -> ToolResult(false, L("不支持的文件格式: ${apkFile.name}", "Unsupported file format: ${apkFile.name}"))
             }
         } catch (e: Exception) {
             ToolResult(false, "❌ 安装失败: ${e.message}")
@@ -188,7 +190,7 @@ object ApkInstaller : Tool {
             // 查找 base.apk
             val baseApk = File(tempDir, "base.apk")
             if (!baseApk.exists()) {
-                return ToolResult(false, "Bundle 中未找到 base.apk")
+                return ToolResult(false, L("Bundle 中未找到 base.apk", "Bundle not found base.apk"))
             }
 
             // 使用 pm install-create/write/commit 安装 Split APK

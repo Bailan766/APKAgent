@@ -1,5 +1,7 @@
 package com.apkagent.tools
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.*
 import com.apkagent.apktools.PythonRunner
 import com.apkagent.shizuku.ShizukuManager
@@ -11,12 +13,12 @@ import java.io.File
  */
 class CreateScriptTool : Tool {
     override val name = "create_script"
-    override val description = "在工作区创建脚本文件。支持 Python/Node.js/Bash。参数：filename（文件名如 script.py）、content（脚本内容）、scriptType（python/node/bash）。"
+    override val description get() = L("在工作区创建脚本文件。支持 Python/Node.js/Bash。参数：filename（文件名如 script.py）、content（脚本内容）、scriptType（python/node/bash）。", "Creates a script file in the workspace. Support for Python/Node.js/Bash. Parameters: filename (file name such as script.py), variable (script content), scriptType (python/node/bash).")
     override val parameters: JsonObject = schemaObject(
         properties = mapOf(
-            "filename" to strProp("脚本文件名（如 analyze.py、hook.js、scan.sh）"),
-            "content" to strProp("脚本完整内容"),
-            "scriptType" to strProp("脚本类型", listOf("python", "node", "bash"))
+            "filename" to strProp(L("脚本文件名（如 analyze.py、hook.js、scan.sh）", "Script file name (e. g. analize.py, hook.js, scan.sh)")),
+            "content" to strProp(L("脚本完整内容", "Script Full")),
+            "scriptType" to strProp(L("脚本类型", "Script Type"), listOf("python", "node", "bash"))
         ),
         required = listOf("filename", "content")
     )
@@ -26,11 +28,11 @@ class CreateScriptTool : Tool {
         val filename = args["filename"]?.jsonPrimitive?.contentOrNull
             ?: args["script_name"]?.jsonPrimitive?.contentOrNull
             ?: args["name"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 filename（试传: filename/script_name/name）")
+            ?: return ToolResult.err(L("缺少 filename（试传: filename/script_name/name）", "Missing filename (test: filename/script name/name)"))
         val content = args["content"]?.jsonPrimitive?.contentOrNull
             ?: args["script_content"]?.jsonPrimitive?.contentOrNull
             ?: args["code"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 content（试传: content/script_content/code）")
+            ?: return ToolResult.err(L("缺少 content（试传: content/script_content/code）", "Missing content (test transfer: request/script content/code)"))
         val scriptType = args["scriptType"]?.jsonPrimitive?.contentOrNull ?: guessType(filename)
 
         val scriptDir = File(ctx.workspace, "scripts")
@@ -65,12 +67,12 @@ class CreateScriptTool : Tool {
  */
 class RunScriptTool : Tool {
     override val name = "run_script"
-    override val description = "执行工作区内的脚本文件。通过 Shizuku shell 权限执行，绕过权限限制。参数：scriptPath（脚本路径）、args（命令行参数）、timeout（超时秒数，默认60）。"
+    override val description get() = L("执行工作区内的脚本文件。通过 Shizuku shell 权限执行，绕过权限限制。参数：scriptPath（脚本路径）、args（命令行参数）、timeout（超时秒数，默认60）。", "Script document in the implementation area. Runs through Shizuku shell privileges, bypassing them. Parameters: scriptPath (script path), args (command line parameter), timeout (hours over seconds, default 60).")
     override val parameters: JsonObject = schemaObject(
         properties = mapOf(
-            "scriptPath" to strProp("脚本文件路径（工作区内或绝对路径）"),
-            "args" to strProp("命令行参数（可选）"),
-            "timeout" to intProp("超时秒数，默认 60")
+            "scriptPath" to strProp(L("脚本文件路径（工作区内或绝对路径）", "Script file path (working area or absolute path)")),
+            "args" to strProp(L("命令行参数（可选）", "Command line parameters (optional)")),
+            "timeout" to intProp(L("超时秒数，默认 60", "Timeout seconds, default 60"))
         ),
         required = listOf("scriptPath")
     )
@@ -79,7 +81,7 @@ class RunScriptTool : Tool {
         val scriptPath = args["scriptPath"]?.jsonPrimitive?.contentOrNull
             ?: args["script_path"]?.jsonPrimitive?.contentOrNull
             ?: args["path"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err("缺少 scriptPath（试传: scriptPath/script_path/path）")
+            ?: return ToolResult.err(L("缺少 scriptPath（试传: scriptPath/script_path/path）", "Missing scriptPath (test: scriptPath/script path/path)"))
         val scriptArgs = args["args"]?.jsonPrimitive?.contentOrNull ?: ""
         val timeout = (args["timeout"]?.jsonPrimitive?.intOrNull ?: 60) * 1000L
 
@@ -127,7 +129,7 @@ class RunScriptTool : Tool {
                 val workDir = ctx.workspace.absolutePath
                 val fullCmd = "cd '$workDir' && $cmd"
                 val process = ShizukuManager.execShizuku(fullCmd)
-                    ?: return ToolResult.err("Shizuku 执行失败")
+                    ?: return ToolResult.err(L("Shizuku 执行失败", "Shizuku execution failed"))
 
                 val finished = process.waitFor(timeout, java.util.concurrent.TimeUnit.MILLISECONDS)
                 if (finished == false) {

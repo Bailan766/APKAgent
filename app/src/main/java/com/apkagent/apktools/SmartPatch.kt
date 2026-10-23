@@ -1,5 +1,7 @@
 package com.apkagent.apktools
 
+import com.apkagent.i18n.L
+
 import com.apkagent.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -35,28 +37,28 @@ object SmartPatch {
         // ═══ 签名校验 ═══
         PatchTemplate(
             id = "signature_check",
-            name = "移除签名校验",
-            description = "绕过 APK 签名验证，允许重打包后正常运行",
+            name = L("移除签名校验", "Remove Signature Verify"),
+            description = L("绕过 APK 签名验证，允许重打包后正常运行", "Avoiding APK signature authentication, allowing repackaging to run properly"),
             category = "signature",
             patterns = listOf(
                 SmaliPattern(
                     searchPattern = """invoke-virtual.*Landroid/content/pm/PackageManager;->getPackageInfo.*""",
                     replacement = """# [PATCHED] 签名校验已跳过
 nop""",
-                    description = "PackageManager.getPackageInfo 签名校验"
+                    description = L("PackageManager.getPackageInfo 签名校验", "PackageManager.getPackageInfo Signature Validation")
                 ),
                 SmaliPattern(
                     searchPattern = """invoke-virtual.*Ljava/security/Signature;->verify.*""",
                     replacement = """# [PATCHED] Signature.verify 已绕过
 const/4 v0, 0x1
 return v0""",
-                    description = "Signature.verify 校验"
+                    description = L("Signature.verify 校验", "Signature.verify")
                 ),
                 SmaliPattern(
                     searchPattern = """invoke-virtual.*Ljava/security/MessageDigest;->digest.*""",
                     replacement = """# [PATCHED] MessageDigest 已绕过
 nop""",
-                    description = "MessageDigest 哈希校验"
+                    description = L("MessageDigest 哈希校验", "Message Digest Hash.")
                 )
             )
         ),
@@ -64,19 +66,19 @@ nop""",
         // ═══ Root 检测 ═══
         PatchTemplate(
             id = "root_detection",
-            name = "移除 Root 检测",
-            description = "绕过各种 Root 检测方法（SuperSU路径、su命令、RootBeer等）",
+            name = L("移除 Root 检测", "Remove root detection"),
+            description = L("绕过各种 Root 检测方法（SuperSU路径、su命令、RootBeer等）", "Around Root detection methods (SuperSU path, su command, RootBeer, etc.)"),
             category = "root",
             patterns = listOf(
                 SmaliPattern(
                     searchPattern = """/su/bin/su""",
                     replacement = """/system/bin/true""",
-                    description = "su 二进制路径"
+                    description = L("su 二进制路径", "Su binary path")
                 ),
                 SmaliPattern(
                     searchPattern = """/system/app/Superuser.apk""",
                     replacement = """/dev/null""",
-                    description = "SuperSU APK 路径"
+                    description = L("SuperSU APK 路径", "SuperSU AAK Path")
                 ),
                 SmaliPattern(
                     searchPattern = """invoke-virtual.*Ljava/lang/Runtime;->exec.*"su".*""",
@@ -88,12 +90,12 @@ const/4 v0, 0x0""",
                     searchPattern = """invoke-virtual.*Ljava/io/File;->exists.*"/su".*""",
                     replacement = """# [PATCHED] /su 路径检测已禁用
 const/4 v0, 0x0""",
-                    description = "/su 路径存在检测"
+                    description = L("/su 路径存在检测", "/su path presence detection")
                 ),
                 SmaliPattern(
                     searchPattern = """com.scottyab.rootbeer.RootBeer""",
                     replacement = """# [PATCHED] RootBeer 已禁用""",
-                    description = "RootBeer 库检测"
+                    description = L("RootBeer 库检测", "RootBeer Library Testing")
                 )
             )
         ),
@@ -101,25 +103,25 @@ const/4 v0, 0x0""",
         // ═══ 模拟器检测 ═══
         PatchTemplate(
             id = "emulator_detection",
-            name = "移除模拟器检测",
-            description = "绕过 Android 模拟器检测（Build属性、传感器、电话状态等）",
+            name = L("移除模拟器检测", "Remove emulator detection"),
+            description = L("绕过 Android 模拟器检测（Build属性、传感器、电话状态等）", "Around Android emulator detection (Build properties, sensors, telephone status, etc.)"),
             category = "emulator",
             patterns = listOf(
                 SmaliPattern(
                     searchPattern = """sget-object.*Landroid/os/Build;->MODEL:Ljava/lang/String;""",
                     replacement = """# [PATCHED] Build.MODEL 返回真实设备
 sget-object v0, Landroid/os/Build;->MODEL:Ljava/lang/String;""",
-                    description = "Build.MODEL 检测"
+                    description = L("Build.MODEL 检测", "Build. MODEL Test")
                 ),
                 SmaliPattern(
                     searchPattern = """const-string.*"goldfish".""",
                     replacement = """const-string v0, "realdevice"""",
-                    description = "goldfish 内核检测"
+                    description = L("goldfish 内核检测", "Goldfish kernel detection")
                 ),
                 SmaliPattern(
                     searchPattern = """const-string.*"generic".""",
                     replacement = """const-string v0, "specific"""",
-                    description = "generic 设备检测"
+                    description = L("generic 设备检测", "Generic device testing")
                 ),
                 SmaliPattern(
                     searchPattern = """invoke-virtual.*Landroid/telephony/TelephonyManager;->getDeviceId.*""",
@@ -133,8 +135,8 @@ const/4 v0, 0x0""",
         // ═══ 调试限制 ═══
         PatchTemplate(
             id = "debug_restriction",
-            name = "解除调试限制",
-            description = "允许调试器附加、移除反调试检测",
+            name = L("解除调试限制", "Undo Debug Limit"),
+            description = L("允许调试器附加、移除反调试检测", "Allow debugger attachment, remove anti-debugger detection"),
             category = "debug",
             patterns = listOf(
                 SmaliPattern(
@@ -153,7 +155,7 @@ const/4 v0, 0x0""",
                     searchPattern = """invoke-virtual.*android:debuggable.*""",
                     replacement = """# [PATCHED] debuggable check bypassed
 const/4 v0, 0x1""",
-                    description = "debuggable 属性检测"
+                    description = L("debuggable 属性检测", "Debuggable attribute detection")
                 )
             )
         ),
@@ -161,8 +163,8 @@ const/4 v0, 0x1""",
         // ═══ SSL Pinning ═══
         PatchTemplate(
             id = "ssl_pinning",
-            name = "绕过 SSL Pinning",
-            description = "禁用证书固定，允许中间人抓包",
+            name = L("绕过 SSL Pinning", "Around SSL Pinning"),
+            description = L("禁用证书固定，允许中间人抓包", "Dis Whilst Certificate Fixed to Allow Intermediaries to Capture Packages"),
             category = "signature",
             patterns = listOf(
                 SmaliPattern(
@@ -183,8 +185,8 @@ nop""",
         // ═══ VIP/付费绕过 ═══
         PatchTemplate(
             id = "vip_bypass",
-            name = "VIP/付费绕过",
-            description = "常见 VIP 验证绕过（返回 true/1）",
+            name = L("VIP/付费绕过", "VIP/pay circumvention"),
+            description = L("常见 VIP 验证绕过（返回 true/1）", "Common VIP verification bypass (return true/1)"),
             category = "misc",
             patterns = listOf(
                 SmaliPattern(
@@ -192,7 +194,7 @@ nop""",
                     replacement = """# [PATCHED] VIP 检查返回 true
 const/4 v0, 0x1
 return v0""",
-                    description = "isVip/isPremium/isPro 方法"
+                    description = L("isVip/isPremium/isPro 方法", "IsVip/isPremium/isPro Method")
                 )
             )
         )
@@ -216,7 +218,7 @@ return v0""",
         } else {
             // 自动查找 smali 目录
             workspace.listFiles()?.find { it.isDirectory && it.name.startsWith("smali") }
-                ?: return@withContext PatchResult(false, "未找到 smali 目录，请先 apk_unpack 解包")
+                ?: return@withContext PatchResult(false, L("未找到 smali 目录，请先 apk_unpack 解包", "Smali directory not found, please unpack first"))
         }
 
         if (!smaliDir.exists()) {
@@ -259,7 +261,7 @@ return v0""",
             appendLine("匹配 $totalPatched 处代码:")
             results.forEach { appendLine(it) }
             if (totalPatched > 0) {
-                appendLine("\n下一步: apk_repack + apk_sign 重新打包签名")
+                appendLine(L("\n下一步: apk_repack + apk_sign 重新打包签名", "Next: apk repack + apk sign"))
             }
         }
 
@@ -271,10 +273,10 @@ return v0""",
      */
     suspend fun scanAvailable(workspace: File): String = withContext(Dispatchers.IO) {
         val smaliDir = workspace.listFiles()?.find { it.isDirectory && it.name.startsWith("smali") }
-            ?: return@withContext "未找到 smali 目录，请先 apk_unpack 解包"
+            ?: return@withContext L("未找到 smali 目录，请先 apk_unpack 解包", "Smali directory not found, please unpack first")
 
         val sb = StringBuilder()
-        sb.appendLine("=== 智能 Patch 库 ===\n")
+        sb.appendLine(L("=== 智能 Patch 库 ===\n", "It's the..."))
 
         for (template in PATCHES) {
             var matchCount = 0
@@ -294,7 +296,7 @@ return v0""",
             sb.appendLine()
         }
 
-        sb.appendLine("使用方法: smart_patch apply <patch_id>")
+        sb.appendLine(L("使用方法: smart_patch apply <patch_id>", "Usage method: smart pactapply<pact id>"))
         sb.toString()
     }
 

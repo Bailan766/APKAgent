@@ -1,25 +1,27 @@
 package com.apkagent.tools
 
+import com.apkagent.i18n.L
+
 import com.apkagent.agent.*
 import kotlinx.serialization.json.*
 import java.io.File
 
 class GenerateHookTool : Tool {
     override val name = "generate_hook"
-    override val description = "生成 Frida Hook 脚本：根据类名和方法名自动生成 Java/Native 层 Hook 脚本。参数：className（完整类名）、methodName（方法名）、hookType（java/native/both）、returnValue（强制返回值）。"
+    override val description get() = L("生成 Frida Hook 脚本：根据类名和方法名自动生成 Java/Native 层 Hook 脚本。参数：className（完整类名）、methodName（方法名）、hookType（java/native/both）、returnValue（强制返回值）。", "Generate Frida Hook scripts: Auto-generated Java/Native Layer Hook scripts by class name and method name. Parameters: className (full class name), methodName (method name), hookType (java/native/both), returnValue (forced return value).")
     override val parameters: JsonObject = schemaObject(
         properties = mapOf(
-            "className" to strProp("完整类名（如 com.app.CheckUtils）"),
-            "methodName" to strProp("方法名（如 isRooted）"),
-            "hookType" to strProp("Hook 类型", listOf("java", "native", "both")),
-            "returnValue" to strProp("强制返回值（如 true/false/0/null）")
+            "className" to strProp(L("完整类名（如 com.app.CheckUtils）", "Full class name (e. g. com.app. CheckUtils)")),
+            "methodName" to strProp(L("方法名（如 isRooted）", "Method Name (e. g. isRooted)")),
+            "hookType" to strProp(L("Hook 类型", "Hook type"), listOf("java", "native", "both")),
+            "returnValue" to strProp(L("强制返回值（如 true/false/0/null）", "Force return value (e. g. true/ false/0/null)"))
         ),
         required = listOf("className", "methodName")
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val className = args["className"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.err("缺少 className")
-        val methodName = args["methodName"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.err("缺少 methodName")
+        val className = args["className"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.err(L("缺少 className", "Missing ClassName"))
+        val methodName = args["methodName"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.err(L("缺少 methodName", "Missing methodName"))
         val hookType = args["hookType"]?.jsonPrimitive?.contentOrNull ?: "java"
         val returnValue = args["returnValue"]?.jsonPrimitive?.contentOrNull ?: "false"
 

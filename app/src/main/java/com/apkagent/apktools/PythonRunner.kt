@@ -1,5 +1,7 @@
 package com.apkagent.apktools
 
+import com.apkagent.i18n.L
+
 import android.content.Context
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.util.Logger
@@ -148,7 +150,7 @@ object PythonRunner {
 
         // 如果已部署且源文件没有更新，直接返回
         if (tmpBin.exists() && tmpBin.lastModified() >= srcBin.lastModified()) {
-            Logger.i("Py", "已部署到 tmp，跳过复制")
+            Logger.i("Py", L("已部署到 tmp，跳过复制", "Deployed to tmp, Skip Copy"))
             return TMP_PYTHON_BIN
         }
 
@@ -162,7 +164,7 @@ object PythonRunner {
             Logger.i("Py", "部署成功: $TMP_PYTHON_BIN")
             TMP_PYTHON_BIN
         } else {
-            Logger.e("Py", "部署失败")
+            Logger.e("Py", L("部署失败", "Deployment failed"))
             null
         }
     }
@@ -181,7 +183,7 @@ object PythonRunner {
 
         // 内部 Python 必须部署到 /data/local/tmp/
         if (!ShizukuManager.isAuthorized()) {
-            Logger.w("Py", "内部 Python 需要 Shizuku 授权才能执行")
+            Logger.w("Py", L("内部 Python 需要 Shizuku 授权才能执行", "Internal Python requires Shizuku authorization to execute"))
             return null
         }
         return ensureDeployedToTmp()
@@ -214,7 +216,7 @@ object PythonRunner {
             try {
                 withTimeout(timeoutSeconds * 1000L) {
                     if (ShizukuManager.isAuthorized()) {
-                        Logger.i("Py", "通过 Shizuku shell 执行")
+                        Logger.i("Py", L("通过 Shizuku shell 执行", "By Shizuku shell"))
                         val process = ShizukuManager.execShizuku(cmd)
                         if (process != null) {
                             val stdout = process.inputStream.bufferedReader().use { it.readText() }
@@ -230,7 +232,7 @@ object PythonRunner {
                     }
 
                     // 回退到普通 ProcessBuilder（仅外部 Python 有效）
-                    Logger.i("Py", "通过 ProcessBuilder 执行")
+                    Logger.i("Py", L("通过 ProcessBuilder 执行", "By ProfessBuilder"))
                     val pb = ProcessBuilder(python, script.absolutePath)
                     if (workDir?.isDirectory == true) pb.directory(workDir)
                     pyHome?.let { pb.environment()["PYTHONHOME"] = it }
@@ -248,9 +250,9 @@ object PythonRunner {
                         stderr.ifBlank { "exit=$exit" }.take(2000))
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                Logger.w("Py", "超时"); ExecResult(false, null, "超时(${timeoutSeconds}s)")
+                Logger.w("Py", L("超时", "Timed out")); ExecResult(false, null, "超时(${timeoutSeconds}s)")
             } catch (e: Throwable) {
-                Logger.e("Py", "异常", e); ExecResult(false, null, "执行失败: ${e.message}")
+                Logger.e("Py", L("异常", "Error"), e); ExecResult(false, null, L("执行失败: ${e.message}", "Execution failed: ${e.message}"))
             }
         }
 
@@ -313,7 +315,7 @@ object PythonRunner {
                     } ?: "$python -m pip install ${packages.joinToString(" ")} 2>&1"
 
                     val out = if (ShizukuManager.isAuthorized()) {
-                        ShizukuManager.execAndGet(cmd) ?: "Shizuku 执行失败"
+                        ShizukuManager.execAndGet(cmd) ?: L("Shizuku 执行失败", "Shizuku execution failed")
                     } else {
                         val pb = ProcessBuilder(python, "-m", "pip", "install", *packages)
                         pyHome?.let { pb.environment()["PYTHONHOME"] = it }
@@ -324,7 +326,7 @@ object PythonRunner {
                     ExecResult(!out.contains("ERROR"), out.take(4000), null)
                 }
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
-                ExecResult(false, null, "pip install 超时")
+                ExecResult(false, null, L("pip install 超时", "Pip install time Systematic"))
             } catch (e: Throwable) {
                 ExecResult(false, null, "pip install 失败: ${e.message}")
             }
@@ -340,7 +342,7 @@ object PythonRunner {
             } ?: "$python -m pip list 2>&1"
 
             val out = if (ShizukuManager.isAuthorized()) {
-                ShizukuManager.execAndGet(cmd) ?: "Shizuku 执行失败"
+                ShizukuManager.execAndGet(cmd) ?: L("Shizuku 执行失败", "Shizuku execution failed")
             } else {
                 val pb = ProcessBuilder(python, "-m", "pip", "list")
                 pyHome?.let { pb.environment()["PYTHONHOME"] = it }

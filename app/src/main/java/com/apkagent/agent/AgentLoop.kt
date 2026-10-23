@@ -1,5 +1,7 @@
 package com.apkagent.agent
 
+import com.apkagent.i18n.L
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -141,10 +143,10 @@ class AgentLoop(
     }
 
     private fun shouldStop(response: StreamResult, results: List<ExecutedToolCall>): Boolean {
-        if (results.all { !it.success && it.result.contains("拒绝") }) return true
+        if (results.all { !it.success && it.result.contains(L("拒绝", "Denied")) }) return true
         val content = response.content
         if (content.isNotEmpty()) {
-            val finishKeywords = listOf("分析完成", "最终结论", "总结如下", "已完成", "全部完成", "任务完成", "测试 checklist", "测试建议")
+            val finishKeywords = listOf(L("分析完成", "Analysis complete."), L("最终结论", "Final conclusions"), L("总结如下", "Summary"), L("已完成", "Completed"), L("全部完成", "All completed"), L("任务完成", "Mission accomplished."), L("测试 checklist", "Test checklist"), L("测试建议", "Test Recommendations"))
             if (finishKeywords.any { content.contains(it) }) return true
         }
         return false
@@ -170,7 +172,7 @@ class AgentLoop(
         val tool = registry.get(call.name)
             ?: return ToolResult.err("未知工具：${call.name}")
         if (tool.sensitive && !callbacks.onConfirmToolCall(call)) {
-            return ToolResult.err("拒绝执行")
+            return ToolResult.err(L("拒绝执行", "Deny execution"))
         }
         // DANGER 级工具：执行前创建快照
         var snapshot: SnapshotManager.Snapshot? = null
