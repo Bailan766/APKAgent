@@ -1588,10 +1588,11 @@ object EmbeddedPythonEngine {
             }
             if (op == "%" && left is String) {
                 val args = if (right is List<*>) right else listOf(right)
-                var res = left
+                var res: String = left
                 val fmtRegex = Regex("%[sdxX.0-9]*[sdxXf]")
                 for (a in args) {
-                    res = fmtRegex.replaceFirst(res, pyStr(a))
+                    val m = fmtRegex.find(res) ?: break
+                    res = res.replaceRange(m.range, pyStr(a))
                 }
                 return res
             }
