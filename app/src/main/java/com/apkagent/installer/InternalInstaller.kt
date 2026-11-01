@@ -20,8 +20,8 @@ object InternalInstaller {
 
     // ──── 版本配置（字符串拼接避免 GitHub 秘密扫描误判） ────
     // python-build-standalone 日期
-    private const val PBS_VER = "3.12.13"
-    private val PBS_DATE: String get() = "2026" + "0623"
+    private const val PBS_VER = "3.12.7"
+    private val PBS_DATE: String get() = "2024" + "1016"
 
     // Node.js 版本
     private const val NODE_VER = "20.18.1"

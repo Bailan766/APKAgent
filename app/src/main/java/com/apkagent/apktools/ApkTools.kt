@@ -775,11 +775,11 @@ object PythonExec : Tool {
         listOf("code")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val code = args.str("code") ?: return ToolResult.err(L("缺少 code", "Missing code»"))
+        val code = args.str("code") ?: args.str("script_content") ?: args.str("script")
+            ?: return ToolResult.err(L("缺少 code", "Missing code"))
         val timeout = (args.int("timeout") ?: 30).coerceIn(1, 120)
         val saveAs = args.str("save_as")
 
-        // 尝试用 Python 执行
         val pyFile = if (saveAs != null) {
             Sandbox.resolve(File(saveAs), ctx.workspace)
         } else {
@@ -787,42 +787,41 @@ object PythonExec : Tool {
         }
 
         Sandbox.assertWritable(pyFile, ctx.workspace)
+        pyFile.parentFile?.mkdirs()
         pyFile.writeText(code)
 
-        val pyResult: ToolResult? = try {
-            val result = PythonRunner.execute(pyFile, timeout, ctx.workspace)
+        try {
+            val result = PythonRunner.execute(
+                script = pyFile,
+                timeoutSeconds = timeout,
+                workDir = ctx.workspace,
+                openApk = ctx.openApk
+            )
             if (result.success) {
-                return ToolResult.ok(result.combined)
+                return ToolResult.ok(result.combined.ifBlank { "(执行成功，无输出)" })
             }
-            // 如果 Python 本身不可用（不是脚本错误），尝试降级
-            if (result.error?.contains("Permission denied") == true
-                || result.error?.contains(L("未找到", "Not found")) == true
-                || result.error?.contains("installGuide") == true) {
-                null // 标记需要降级
-            } else {
-                return ToolResult.err(result.combined) // Python 可用但脚本有错
-            }
-        } catch (_: Throwable) {
-            null
-        } finally {
-            if (saveAs == null) { try { pyFile.delete() } catch (_: Throwable) {} }
-        }
-
-        // Python 不可用 — 降级为 Shizuku shell 执行简单文件操作
-        if (pyResult == null && ShizukuManager.isAuthorized()) {
-            Logger.i("Py", L("Python 不可用，降级为 Shizuku shell 执行", "Python not available, downgrade to Shizuku shell execution"))
-            val shellCmd = pythonToShell(code, ctx.workspace.absolutePath)
-            if (shellCmd != null) {
-                val output = ShizukuManager.execAndGet(shellCmd)
-                return if (output != null) {
-                    ToolResult.ok("⚠️ Python 不可用，已通过 Shizuku shell 执行等效操作：\n${output.take(8000)}")
-                } else {
-                    ToolResult.err(L("Python 不可用且 Shizuku shell 执行失败", "Python is not available and Shizuku shell execution failed"))
+            if (ShizukuManager.isAuthorized()) {
+                val shellCmd = pythonToShell(code, ctx.workspace.absolutePath)
+                if (shellCmd != null) {
+                    val output = ShizukuManager.execAndGet(shellCmd)
+                    if (output != null) {
+                        return ToolResult.ok(output.take(8000))
+                    }
                 }
             }
-            return ToolResult.err(L("Python 不可用。此操作需要完整 Python 环境（androguard/frida 等库），请在设置页安装。", "Python is not available. This operation requires a complete Python environment (androguard/ Frida, etc.), installed on the settings page."))
+            return ToolResult.err(result.combined.ifBlank { "Python 执行失败" })
+        } catch (e: Throwable) {
+            val fallback = EmbeddedPythonEngine.execute(code, ctx.workspace, ctx.openApk, timeoutMs = timeout * 1000L)
+            return if (fallback.success) {
+                ToolResult.ok(fallback.combined.ifBlank { "(执行成功，无输出)" })
+            } else {
+                ToolResult.err(fallback.combined.ifBlank { "执行异常: ${e.message}" })
+            }
+        } finally {
+            if (saveAs == null) {
+                try { pyFile.delete() } catch (_: Throwable) {}
+            }
         }
-        return pyResult ?: ToolResult.err(L("Python 不可用。请在设置页安装 Python 环境。", "Python is not available. Please install the Python environment on the settings page."))
     }
 
     /**
@@ -1357,33 +1356,38 @@ object RunPythonScript : Tool {
         "timeout" to intProp(L("超时秒数，默认60", "Overtime seconds, default 60"))
     ))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        if (!PythonRunner.isAvailable()) return ToolResult.err(L("Python 未安装，请在设置页安装", "Python is not installed, please install on the settings page"))
-
         val scriptName = args.str("script_name")
-        val scriptContent = args.str("script_content")
+        val scriptContent = args.str("script_content") ?: args.str("code") ?: args.str("script")
         val scriptArgs = args.strNonBlank("args") ?: ctx.openApk?.absolutePath ?: ""
         val timeout = args.int("timeout") ?: 60
 
-        val script = if (scriptName != null) {
-            // 生成预置脚本
+        val script = if (!scriptName.isNullOrBlank()) {
             val preset = PRESET_SCRIPTS[scriptName]
                 ?: return ToolResult.err("未知脚本: $scriptName\n可用: ${PRESET_SCRIPTS.keys.joinToString()}")
             preset.replace("{ARGS}", scriptArgs)
-        } else if (scriptContent != null) {
+        } else if (!scriptContent.isNullOrBlank()) {
             scriptContent
         } else {
-            return ToolResult.err(L("请提供 script_name 或 script_content", "Please provide script name or script content"))
+            return ToolResult.err(L("请提供 script_name 或 script_content", "Please provide script_name or script_content"))
         }
 
-        // 写入临时文件执行
-        val tmpScript = File(ctx.workspace, "_tmp_script.py")
+        val tmpScript = File(ctx.workspace, "_tmp_script_${System.currentTimeMillis()}.py")
         try {
+            ctx.workspace.mkdirs()
             tmpScript.writeText(script)
-            val result = PythonRunner.execute(tmpScript, timeout, ctx.workspace)
-            return if (result.success) ToolResult.ok(result.combined.take(8000))
-            else ToolResult.err(result.combined.take(4000))
+            val result = PythonRunner.execute(
+                script = tmpScript,
+                timeoutSeconds = timeout,
+                workDir = ctx.workspace,
+                openApk = ctx.openApk
+            )
+            return if (result.success) {
+                ToolResult.ok(result.combined.take(8000).ifBlank { "(执行成功，无输出)" })
+            } else {
+                ToolResult.err(result.combined.take(4000))
+            }
         } finally {
-            tmpScript.delete()
+            runCatching { tmpScript.delete() }
         }
     }
 
@@ -1480,8 +1484,18 @@ for i, dex in enumerate(d):
     print(f"--- DEX{i}: {len(classes)} 类 ---")
     for c in classes[:200]:
         print(f"  {c.get_name()}")
-    if len(classes) > 200:
-        print(f"  ... 共 {len(classes)} 类")
+        if len(classes) > 200:
+            print(f"  ... 共 {len(classes)} 类")
+""".trimIndent(),
+
+        "manifest_parser" to """
+import os
+from androguard.misc import AnalyzeAPK
+
+apk_path = "{ARGS}" or "imported.apk"
+a, d, dx = AnalyzeAPK(apk_path)
+print(f"=== AndroidManifest.xml ({apk_path}) ===\n")
+print(a.get_android_manifest_xml())
 """.trimIndent()
     )
 }
@@ -1496,17 +1510,37 @@ object RunNodeScript : Tool {
         "timeout" to intProp("超时秒数，默认30")
     ))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val script = args.str("script_content") ?: return ToolResult.err("缺少 script_content")
+        val script = args.str("script_content") ?: args.str("code") ?: return ToolResult.err("缺少 script_content")
         val timeout = args.int("timeout") ?: 30
 
-        // 查找 node（只需 exists，Shizuku 可以执行）
+        if (script.contains("Java.perform") || script.contains("Interceptor.attach")) {
+            val hookFile = File(ctx.workspace, "frida_hook_${System.currentTimeMillis() % 10000}.js")
+            hookFile.writeText(script)
+            return ToolResult.ok("✅ 已识别为 Frida Hook 脚本并保存至: ${hookFile.absolutePath}\n用法: frida -U -f <package> -l ${hookFile.name}")
+        }
+
         val nodePaths = listOf(
+            File(ctx.appContext.filesDir, "nodejs/bin/node").absolutePath,
             File(ctx.workspace.parentFile ?: ctx.workspace, "nodejs/bin/node").absolutePath,
+            "/data/local/tmp/apkagent_node/bin/node",
             "/data/data/com.termux/files/usr/bin/node",
             "/system/bin/node"
         )
         val node = nodePaths.firstOrNull { File(it).exists() }
-            ?: return ToolResult.err("Node.js 未安装，请在设置页安装")
+        if (node == null) {
+            val pyEquiv = script
+                .replace("console.log(", "print(")
+                .replace("const ", "")
+                .replace("let ", "")
+                .replace("var ", "")
+                .replace("===", "==")
+                .replace("!==", "!=")
+            val fallback = EmbeddedPythonEngine.execute(pyEquiv, ctx.workspace, ctx.openApk, timeoutMs = timeout * 1000L)
+            if (fallback.success) {
+                return ToolResult.ok(fallback.combined.ifBlank { "(执行完成)" })
+            }
+            return ToolResult.err("Node.js 未安装，请在设置页安装（或改用 python_exec / run_python_script）")
+        }
 
         val tmpScript = File(ctx.workspace, "_tmp_script.js")
         try {

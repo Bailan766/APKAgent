@@ -130,15 +130,20 @@ class RunScriptTool : Tool {
         val scriptFile = candidates.firstOrNull { it.exists() && it.isFile }
             ?: return@withContext ToolResult.err("脚本不存在: $actualScriptPath")
 
-        // 如果无命令行参数且是 .py 脚本，优先走 PythonRunner（支持自动部署到 /data/local/tmp）
-        if (scriptFile.extension.equals("py", ignoreCase = true) && actualArgs.isBlank()) {
-            val pyRes = PythonRunner.execute(scriptFile, timeoutSeconds = timeoutSec, workDir = ctx.workspace)
-            if (pyRes.success || pyRes.output != null) {
-                return@withContext ToolResult(
-                    pyRes.success,
-                    "脚本执行完成 (${scriptFile.name})\n\n输出:\n${pyRes.combined.take(10000)}"
-                )
-            }
+        // 凡是 .py 脚本，统一走 PythonRunner（支持原生 Python + 内置 EmbeddedPythonEngine 自动兜底）
+        if (scriptFile.extension.equals("py", ignoreCase = true)) {
+            val argList = if (actualArgs.isBlank()) emptyList() else actualArgs.split(Regex("""\s+""")).filter { it.isNotBlank() }
+            val pyRes = PythonRunner.execute(
+                script = scriptFile,
+                timeoutSeconds = timeoutSec,
+                workDir = ctx.workspace,
+                openApk = ctx.openApk,
+                args = argList
+            )
+            return@withContext ToolResult(
+                pyRes.success,
+                "脚本执行完成 (${scriptFile.name})\n\n输出:\n${pyRes.combined.take(10000)}"
+            )
         }
 
         val interpreter = when {

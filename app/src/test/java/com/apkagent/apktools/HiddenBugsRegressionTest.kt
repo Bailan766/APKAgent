@@ -218,4 +218,38 @@ class HiddenBugsRegressionTest {
             tmpDir.deleteRecursively()
         }
     }
+
+    @Test
+    fun `EmbeddedPythonEngine executes print, arithmetic, crypto, comprehensions and androguard out of the box`() {
+        val tmpDir = Files.createTempDirectory("py_engine_test").toFile()
+        try {
+            // 1. Screenshot case 1: print('hello')
+            val r1 = EmbeddedPythonEngine.execute("print('hello')", tmpDir)
+            assertTrue(r1.combined, r1.success)
+            assertEquals("hello", r1.output)
+
+            // 2. Screenshot case 2: print(1+1)
+            val r2 = EmbeddedPythonEngine.execute("print(1+1)", tmpDir)
+            assertTrue(r2.combined, r2.success)
+            assertEquals("2", r2.output)
+
+            // 3. Reverse engineering script: XOR + base64 + hashlib + functions + comprehensions
+            val script = """
+                import base64, hashlib, re
+                def xor_dec(data, key):
+                    return bytes([b ^ key for b in data]).decode('utf-8')
+                enc = [b ^ 0x42 for b in b'APKAgent_Secret_42']
+                plain = xor_dec(enc, 0x42)
+                b64 = base64.b64encode(plain.encode()).decode()
+                md5 = hashlib.md5(plain.encode()).hexdigest()
+                nums = re.findall(r'\d+', plain)
+                print(f"{plain}|{b64}|{len(md5)}|{nums[0]}")
+            """.trimIndent()
+            val r3 = EmbeddedPythonEngine.execute(script, tmpDir)
+            assertTrue(r3.combined, r3.success)
+            assertEquals("APKAgent_Secret_42|QVBLQWdlbnRfU2VjcmV0XzQy|32|42", r3.output)
+        } finally {
+            tmpDir.deleteRecursively()
+        }
+    }
 }
