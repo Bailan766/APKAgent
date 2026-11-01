@@ -37,6 +37,17 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 
+
+private object ProjectIconCache {
+    val cache = android.util.LruCache<String, android.graphics.Bitmap>(50)
+}
+
+data class ProjectDossierItem(
+    val project: ReverseProject,
+    val summaryText: String,
+    val bitmap: android.graphics.Bitmap?
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ProjectScreen(
@@ -49,14 +60,38 @@ fun ProjectScreen(
     val app = remember { context.applicationContext as ApkAgentApp }
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
-    var projects by remember { mutableStateOf<List<ReverseProject>>(emptyList()) }
+    var projects by remember { mutableStateOf<List<ProjectDossierItem>>(emptyList()) }
     var loading by remember { mutableStateOf(false) }
     var showApps by remember { mutableStateOf(false) }
     var installedApps by remember { mutableStateOf<List<InstalledAppItem>>(emptyList()) }
     var appQuery by remember { mutableStateOf("") }
 
     fun reloadProjects() {
-        projects = app.projectStore.listProjects()
+        scope.launch(Dispatchers.IO) {
+            val rawProjects = app.projectStore.listProjects()
+            val items = rawProjects.map { p ->
+                val summary = runCatching {
+                    app.projectStore.getAnalysisMarkdownFile(p.id)
+                        .takeIf { it.exists() }?.readText()?.take(500) ?: ""
+                }.getOrDefault("")
+
+                val bmp = p.iconPath?.let { path ->
+                    ProjectIconCache.cache.get(path) ?: runCatching {
+                        val f = File(path)
+                        if (f.exists()) {
+                            android.graphics.BitmapFactory.decodeFile(path)?.also {
+                                ProjectIconCache.cache.put(path, it)
+                            }
+                        } else null
+                    }.getOrNull()
+                }
+
+                ProjectDossierItem(project = p, summaryText = summary, bitmap = bmp)
+            }
+            withContext(Dispatchers.Main) {
+                projects = items
+            }
+        }
     }
 
     LaunchedEffect(Unit) { reloadProjects() }
@@ -206,21 +241,15 @@ fun ProjectScreen(
                     contentPadding = PaddingValues(14.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(projects, key = { it.id }) { project ->
+                    items(projects, key = { it.project.id }) { item ->
                         ProjectDossierCard(
-                            project = project,
-                            summaryText = remember(project.id) {
-                                runCatching {
-                                    app.projectStore.getAnalysisMarkdownFile(project.id)
-                                        .takeIf { it.exists() }?.readText()?.take(500) ?: ""
-                                }.getOrDefault("")
-                            },
+                            item = item,
                             onOpen = {
-                                app.setCurrentProject(project)
+                                app.setCurrentProject(item.project)
                                 onOpenProjectChat()
                             },
                             onEditor = {
-                                app.setCurrentProject(project)
+                                app.setCurrentProject(item.project)
                                 onOpenProjectEditor()
                             }
                         )
@@ -359,11 +388,13 @@ private fun EmptyProjectHint(modifier: Modifier = Modifier) {
 /** 逆向工程目标档案卡片 (Target Dossier) */
 @Composable
 private fun ProjectDossierCard(
-    project: ReverseProject,
-    summaryText: String,
+    item: ProjectDossierItem,
     onOpen: () -> Unit,
     onEditor: () -> Unit
 ) {
+    val project = item.project
+    val summaryText = item.summaryText
+    val bitmap = item.bitmap
     val s = LocalAppStrings.current
     var showFullSummary by remember { mutableStateOf(false) }
 
@@ -376,12 +407,6 @@ private fun ProjectDossierCard(
         Column(Modifier.padding(14.dp)) {
             // 头部：图标 + 标题 + 包名 + 箭头
             Row(verticalAlignment = Alignment.CenterVertically) {
-                val iconFile = project.iconPath?.let(::File)
-                val bitmap = remember(project.iconPath) {
-                    runCatching {
-                        iconFile?.takeIf { it.exists() }?.let { android.graphics.BitmapFactory.decodeFile(it.absolutePath) }
-                    }.getOrNull()
-                }
 
                 Box(
                     modifier = Modifier

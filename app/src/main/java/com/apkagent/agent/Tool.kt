@@ -12,12 +12,16 @@ import java.io.File
  */
 class ToolContext(
     val appContext: Context,
-    val workspace: File,
+    workspace: File,
     openApk: File?
 ) {
+    @Volatile var workspace: File = workspace
+        private set
+
     @Volatile var openApk: File? = openApk
         private set
 
+    fun updateWorkspace(dir: File) { workspace = dir }
     fun updateOpenApk(file: File?) { openApk = file }
 }
 

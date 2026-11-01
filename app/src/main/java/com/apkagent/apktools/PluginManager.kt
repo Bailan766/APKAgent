@@ -83,7 +83,7 @@ object PluginManager {
             withTimeout(timeoutSeconds * 1000L) {
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = 10000; conn.readTimeout = timeoutSeconds * 1000
-                conn.setRequestProperty("User-Agent", "APKAgent/4.2.0")
+                conn.setRequestProperty("User-Agent", "APKAgent/4.3.0")
                 conn.connect()
                 if (conn.responseCode != 200) return@withTimeout "HTTP ${conn.responseCode}"
                 conn.inputStream.use { input -> dest.outputStream().use { output -> input.copyTo(output) } }

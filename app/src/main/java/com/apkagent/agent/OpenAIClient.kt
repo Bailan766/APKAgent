@@ -4,6 +4,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
+import okhttp3.Call
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -11,12 +12,13 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 /**
- * 流式调用结果：累积的文本 + 工具调用列表 + 结束原因。
+ * 流式调用结果：累积的文本 + 工具调用列表 + 结束原因 + 思考过程。
  */
 data class StreamResult(
     val content: String,
     val toolCalls: List<PendingToolCall>,
-    val finishReason: String?
+    val finishReason: String?,
+    val reasoningContent: String? = null
 )
 
 /** 一次流式过程中累积中的工具调用（按 index 聚合增量）。 */
@@ -28,7 +30,7 @@ private data class AccToolCall(
 
 /**
  * OpenAI 兼容 Chat Completions 客户端。
- * 支持 SSE 流式输出、DeepSeek-R1 / 推理模型 reasoning_content 思考链展示与 function calling 增量拼接。
+ * 支持 SSE 流式输出、DeepSeek-R1 / 推理模型 reasoning_content 独立思考流与原生硬取消。
  */
 class OpenAIClient(
     var baseUrl: String,
@@ -47,6 +49,17 @@ class OpenAIClient(
         .readTimeout(300, TimeUnit.SECONDS)
         .writeTimeout(60, TimeUnit.SECONDS)
         .build()
+
+    @Volatile
+    private var activeCall: Call? = null
+
+    /** 立即切断当前正在进行的网络调用与流 */
+    fun cancelCurrentCall() {
+        try {
+            activeCall?.cancel()
+        } catch (_: Throwable) {}
+        activeCall = null
+    }
 
     private fun endpoint(): String {
         var base = baseUrl.trim().trimEnd('/')
@@ -92,7 +105,14 @@ class OpenAIClient(
                     .get()
                     .build()
 
-                val response = client.newCall(req).execute()
+                val call = client.newCall(req)
+                activeCall = call
+                val response = try {
+                    call.execute()
+                } finally {
+                    if (activeCall == call) activeCall = null
+                }
+
                 val respBody = response.body?.string() ?: ""
 
                 if (!response.isSuccessful) {
@@ -119,10 +139,12 @@ class OpenAIClient(
 
     /**
      * 发起流式对话。
-     * @param onContentDelta 文本增量回调（用于 UI 实时显示）
+     * @param onReasoningDelta 推理思考过程增量回调（独立通道）
+     * @param onContentDelta 最终文本增量回调
      */
     suspend fun streamChat(
         request: ChatRequest,
+        onReasoningDelta: ((String) -> Unit)? = null,
         onContentDelta: (String) -> Unit
     ): StreamResult = withContext(Dispatchers.IO) {
         circuitBreaker.retryWithBackoff(maxRetries = 3) {
@@ -137,7 +159,15 @@ class OpenAIClient(
                 .post(body)
                 .build()
 
-            val response = client.newCall(req).execute()
+            val call = client.newCall(req)
+            activeCall = call
+            val response = try {
+                call.execute()
+            } catch (e: Throwable) {
+                if (activeCall == call) activeCall = null
+                throw e
+            }
+
             val respBody = response.body
                 ?: throw IllegalStateException("空响应体 (HTTP ${response.code})")
 
@@ -150,65 +180,58 @@ class OpenAIClient(
             }
 
             val content = StringBuilder()
+            val reasoning = StringBuilder()
             val acc = mutableMapOf<Int, AccToolCall>()
             var finishReason: String? = null
             val source = respBody.source()
-            var inReasoning = false
-            var reasoningDone = false
 
-            while (!source.exhausted()) {
-                val line = source.readUtf8Line() ?: break
-                if (line.isBlank()) continue
-                val data = when {
-                    line.startsWith("data:") -> line.removePrefix("data:").trim()
-                    line.startsWith("data: ") -> line.removePrefix("data: ").trim()
-                    else -> continue
-                }
-                if (data == "[DONE]") break
-                if (data.isEmpty()) continue
+            try {
+                while (!source.exhausted()) {
+                    val line = source.readUtf8Line() ?: break
+                    if (line.isBlank()) continue
+                    val data = when {
+                        line.startsWith("data:") -> line.removePrefix("data:").trim()
+                        line.startsWith("data: ") -> line.removePrefix("data: ").trim()
+                        else -> continue
+                    }
+                    if (data == "[DONE]") break
+                    if (data.isEmpty()) continue
 
-                val chunk = try {
-                    json.decodeFromString(StreamChunk.serializer(), data)
-                } catch (_: Throwable) { continue }
+                    val chunk = try {
+                        json.decodeFromString(StreamChunk.serializer(), data)
+                    } catch (_: Throwable) { continue }
 
-                val choice = chunk.choices.firstOrNull() ?: continue
-                choice.finishReason?.let { finishReason = it }
-                val delta = choice.delta ?: continue
+                    val choice = chunk.choices.firstOrNull() ?: continue
+                    choice.finishReason?.let { finishReason = it }
+                    val delta = choice.delta ?: continue
 
-                delta.reasoningContent?.let {
-                    if (it.isNotEmpty()) {
-                        if (!inReasoning && !reasoningDone) {
-                            inReasoning = true
-                            val header = "> 🧠 **思考过程**\n> \n"
-                            content.append(header)
-                            onContentDelta(header)
+                    // 1. 原生隔离 reasoning_content
+                    delta.reasoningContent?.let {
+                        if (it.isNotEmpty()) {
+                            reasoning.append(it)
+                            onReasoningDelta?.invoke(it)
                         }
-                        val formatted = it.replace("\n", "\n> ")
-                        content.append(formatted)
-                        onContentDelta(formatted)
+                    }
+
+                    // 2. 正常回答 content
+                    delta.content?.let {
+                        if (it.isNotEmpty()) {
+                            content.append(it)
+                            onContentDelta(it)
+                        }
+                    }
+
+                    // 3. 聚合工具调用参数
+                    delta.toolCalls?.forEach { tc ->
+                        val a = acc.getOrPut(tc.index) { AccToolCall() }
+                        tc.id?.let { a.id = it }
+                        tc.function?.name?.let { a.name = it }
+                        tc.function?.arguments?.let { a.args.append(it) }
                     }
                 }
-
-                delta.content?.let {
-                    if (it.isNotEmpty()) {
-                        if (inReasoning) {
-                            inReasoning = false
-                            reasoningDone = true
-                            val footer = "\n\n---\n\n"
-                            content.append(footer)
-                            onContentDelta(footer)
-                        }
-                        content.append(it)
-                        onContentDelta(it)
-                    }
-                }
-
-                delta.toolCalls?.forEach { tc ->
-                    val a = acc.getOrPut(tc.index) { AccToolCall() }
-                    tc.id?.let { a.id = it }
-                    tc.function?.name?.let { a.name = it }
-                    tc.function?.arguments?.let { a.args.append(it) }
-                }
+            } finally {
+                try { respBody.close() } catch (_: Throwable) {}
+                if (activeCall == call) activeCall = null
             }
 
             val pending = acc.toSortedMap().map { (_, a) ->
@@ -225,7 +248,12 @@ class OpenAIClient(
                 )
             }
 
-            StreamResult(content.toString(), pending, finishReason)
+            StreamResult(
+                content = content.toString(),
+                toolCalls = pending,
+                finishReason = finishReason,
+                reasoningContent = reasoning.toString().ifBlank { null }
+            )
         }
     }
 }

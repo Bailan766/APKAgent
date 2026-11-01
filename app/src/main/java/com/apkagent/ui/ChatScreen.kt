@@ -72,7 +72,7 @@ fun ChatScreen(
         vm.selectProject(activeProject)
     }
 
-    LaunchedEffect(messages.size, messages.lastOrNull()?.streaming) {
+    LaunchedEffect(messages.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
@@ -349,9 +349,19 @@ private fun AgentExecutionBlock(item: ChatItem, time: String) {
 
             Spacer(Modifier.height(8.dp))
 
-            MarkdownText(markdown = item.content)
+            if (!item.reasoningContent.isNullOrBlank() || item.isThinking) {
+                com.apkagent.ui.components.NeuralTrace(
+                    reasoningText = item.reasoningContent.orEmpty(),
+                    isThinking = item.isThinking,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+            }
 
-            if (item.streaming) {
+            if (item.content.isNotBlank()) {
+                MarkdownText(markdown = item.content)
+            }
+
+            if (item.streaming && !item.isThinking) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     LinearProgressIndicator(
