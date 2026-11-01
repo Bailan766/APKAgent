@@ -1,268 +1,125 @@
 package com.apkagent.apktools.advanced
 
 import com.apkagent.i18n.L
-
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
+import com.apkagent.agent.boolProp
 import com.apkagent.agent.strProp
 import com.apkagent.agent.schemaObject
-import com.apkagent.apktools.str
-import com.apkagent.apktools.int
+import com.apkagent.apktools.Sandbox
+import com.apkagent.apktools.strNonBlank
 import com.apkagent.apktools.bool
 import com.apkagent.shizuku.ShizukuManager
-import android.content.Context
 import kotlinx.serialization.json.JsonObject
 import java.io.File
-import java.util.zip.ZipFile
 
 /**
- * APK 安装器：支持普通 APK 和 Split APK 安装。
- *
- * 功能：
- * 1. 普通 APK 安装（通过 Shizuku 或系统 intent）
- * 2. Split APK 安装（通过 pm install-create/write/commit）
- * 3. App Bundle 安装（先解压再安装分片）
- * 4. 安装前验证（签名、版本、权限）
- * 5. 安装后状态检查
+ * APK 安装工具：通过 Shizuku 执行 pm install 安装单个 APK 或 Split APK Bundle。
  */
 object ApkInstaller : Tool {
     override val name = "apk_install"
-    override val description get() = L("安装 APK（支持普通 APK 和 Split APK）。使用 Shizuku 提权安装，无需用户确认。", "Install APK (support normal APK and Split APK). Install with Shizuku rights, without user confirmation.")
+    override val description get() = L(
+        "通过 Shizuku 安装 APK（支持单个 APK 或 Split APK 目录）。需要 Shizuku 已授权。",
+        "Install APK via Shizuku (supports single APK or Split APK directory)."
+    )
     override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp(L("APK 文件路径（或 Bundle 路径 .apks/.apkm/.xapk）", "AAK file path (or Bundle path.apks/.apkm/.xapk)")),
-            "action" to strProp(L("操作：install（安装）/ verify（仅验证）/ info（查看安装信息）", "Operation: install (installation)/ verify (validation only)/info (see installation information)"))
+            "apk_path" to strProp(L("APK 文件路径，或包含多个分片 APK 的目录路径（留空默认当前 APK）", "APK file path or Split APK directory path")),
+            "allow_downgrade" to boolProp(L("是否允许降级安装（默认 true）", "Allow downgrade installation (default true)")),
+            "grant_permissions" to boolProp(L("是否自动授予所有运行时权限（默认 false）", "Automatically grant all runtime permissions (default false)"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path", "Missing ack Countries"))
-        val action = args.str("action") ?: "install"
-
-        val apkFile = File(apkPath)
-        if (!apkFile.exists()) return ToolResult(false, "文件不存在: $apkPath")
-
-        return when (action) {
-            "verify" -> verifyApk(apkFile)
-            "info" -> getInstallInfo(apkFile)
-            "install" -> installApk(apkFile)
-            else -> ToolResult(false, "未知操作: $action，支持 install/verify/info")
+        val rawPath = args.strNonBlank("apk_path")
+        val target = when {
+            rawPath != null -> Sandbox.resolve(File(rawPath), ctx.workspace)
+            ctx.openApk != null -> ctx.openApk!!
+            else -> File(ctx.workspace, "base.apk")
         }
-    }
+        val allowDowngrade = args.bool("allow_downgrade") ?: true
+        val grantPermissions = args.bool("grant_permissions") ?: false
 
-    private fun verifyApk(apkFile: File): ToolResult {
-        val sb = StringBuilder()
-        sb.appendLine(L("🔍 APK 安装验证：", "🔍APK installation authentication:"))
-        sb.appendLine()
-
-        // 检查文件类型
-        val fileType = when {
-            apkFile.name.endsWith(".apk") -> L("普通 APK", "Normal GF")
-            apkFile.name.endsWith(".apks") -> "Split APK Bundle"
-            apkFile.name.endsWith(".apkm") -> "APKMirror Bundle"
-            apkFile.name.endsWith(".xapk") -> "APKPure Bundle"
-            else -> L("未知格式", "Unknown format")
-        }
-        sb.appendLine("📦 文件类型: $fileType")
-        sb.appendLine("📁 文件大小: ${formatSize(apkFile.length())}")
-        sb.appendLine()
-
-        // 检查签名
-        try {
-            val verifier = com.android.apksig.ApkVerifier.Builder(apkFile).build()
-            val result = verifier.verify()
-            if (result.isVerified) {
-                sb.appendLine(L("✅ 签名验证: 通过", "✅ Signature verification: passed"))
-            } else {
-                sb.appendLine(L("❌ 签名验证: 失败", "❌ Signature verification: failed"))
-                result.errors.forEach { sb.appendLine("  • $it") }
-            }
-        } catch (e: Exception) {
-            sb.appendLine("⚠️ 签名验证: 无法验证 (${e.message})")
+        if (!ShizukuManager.isAuthorized()) {
+            return ToolResult(false, L("❌ Shizuku 未授权，无法执行安装。请先在设置页授权 Shizuku。", "❌ Shizuku is not authorized."))
         }
 
-        // 检查是否为 Split APK
-        if (fileType != "普通 APK") {
-            try {
-                val splits = listSplits(apkFile)
-                sb.appendLine()
-                sb.appendLine(L("📦 Split APK 分片:", "XVIII-Split AAPK"))
-                splits.forEach { sb.appendLine("  • ${it.first} (${formatSize(it.second)})") }
-            } catch (e: Exception) {
-                sb.appendLine(L("⚠️ 无法解析分片: ${e.message}", "⚠️ Unable to parse the fraction: ${e.message}"))
-            }
-        }
+        if (!target.exists()) return ToolResult(false, "文件或目录不存在: ${target.absolutePath}")
 
-        return ToolResult(true, sb.toString())
-    }
-
-    private fun getInstallInfo(apkFile: File): ToolResult {
-        val sb = StringBuilder()
-        sb.appendLine(L("📋 APK 安装信息：", "AAPK installation information:"))
-        sb.appendLine()
-
-        try {
-            // 读取 AndroidManifest.xml 获取包信息
-            val manifestData = extractManifest(apkFile)
-            if (manifestData != null) {
-                val parser = com.apkagent.apktools.AxmlParser(manifestData)
-                val xml = parser.parse()
-
-                // 提取关键信息
-                val packageName = extractAttribute(xml, "package")
-                val versionName = extractAttribute(xml, "android:versionName")
-                val versionCode = extractAttribute(xml, "android:versionCode")
-                val minSdk = extractAttribute(xml, "android:minSdkVersion")
-                val targetSdk = extractAttribute(xml, "android:targetSdkVersion")
-
-                sb.appendLine("📦 包名: ${packageName ?: "未知"}")
-                sb.appendLine("📌 版本: ${versionName ?: "未知"} (${versionCode ?: "未知"})")
-                sb.appendLine("📱 最低 SDK: ${minSdk ?: "未知"}")
-                sb.appendLine("🎯 目标 SDK: ${targetSdk ?: "未知"}")
-                sb.appendLine()
-
-                // 提取权限
-                val permissions = extractPermissionsFromXml(xml)
-                if (permissions.isNotEmpty()) {
-                    sb.appendLine("🔐 权限 (${permissions.size} 个):")
-                    permissions.take(10).forEach { sb.appendLine("  • $it") }
-                    if (permissions.size > 10) {
-                        sb.appendLine("  ... 还有 ${permissions.size - 10} 个权限")
-                    }
-                }
-            } else {
-                sb.appendLine(L("⚠️ 无法读取 AndroidManifest.xml", "⚠️ Unreadable AndroidManifest.xml"))
-            }
-        } catch (e: Exception) {
-            sb.appendLine("❌ 解析失败: ${e.message}")
-        }
-
-        return ToolResult(true, sb.toString())
-    }
-
-    private fun installApk(apkFile: File): ToolResult {
-        return try {
-            // 检查 Shizuku 是否可用
-            if (!ShizukuManager.isRunning() || !ShizukuManager.isAuthorized()) {
-                return ToolResult(false, L("❌ Shizuku 不可用，无法安装 APK\n请先启动 Shizuku 服务", "Outline: ❌ Shizuku is not available and cannot install APK\\n Please start Shizuku service first"))
-            }
-
-            when {
-                apkFile.name.endsWith(".apk") -> installSingleApk(apkFile)
-                apkFile.name.endsWith(".apks") || apkFile.name.endsWith(".apkm") || apkFile.name.endsWith(".xapk") -> installBundle(apkFile)
-                else -> ToolResult(false, L("不支持的文件格式: ${apkFile.name}", "Unsupported file format: ${apkFile.name}"))
-            }
-        } catch (e: Exception) {
-            ToolResult(false, "❌ 安装失败: ${e.message}")
-        }
-    }
-
-    private fun installSingleApk(apkFile: File): ToolResult {
-        val result = ShizukuManager.execAndGet("pm install -r -d \"${apkFile.absolutePath}\"") ?: "null"
-        return if (result.contains("Success")) {
-            ToolResult(true, "✅ APK 安装成功\n${apkFile.name}")
+        return if (target.isDirectory) {
+            installSplitApks(target, allowDowngrade, grantPermissions)
         } else {
-            ToolResult(false, "❌ APK 安装失败\n$result")
+            installSingleApk(target, allowDowngrade, grantPermissions)
         }
     }
 
-    private fun installBundle(bundleFile: File): ToolResult {
-        // 先解压 Bundle
-        val tempDir = File(bundleFile.parent, "temp_install_${System.currentTimeMillis()}")
-        tempDir.mkdirs()
+    private fun installSingleApk(apkFile: File, allowDowngrade: Boolean, grantPermissions: Boolean): ToolResult {
+        return try {
+            val flags = buildFlags(allowDowngrade, grantPermissions)
+            val tmpApk = "/data/local/tmp/apkagent_install_${System.currentTimeMillis()}.apk"
+            ShizukuManager.copyFile(apkFile.absolutePath, tmpApk)
+            ShizukuManager.chmod(tmpApk, "644")
 
-        try {
-            ZipFile(bundleFile).use { zip ->
-                zip.entries().toList().forEach { entry ->
-                    if (entry.name.endsWith(".apk")) {
-                        val outFile = File(tempDir, entry.name)
-                        outFile.parentFile?.mkdirs()
-                        zip.getInputStream(entry).use { input ->
-                            outFile.outputStream().use { output ->
-                                input.copyTo(output)
-                            }
-                        }
-                    }
-                }
+            val cmd = "pm install $flags '$tmpApk' 2>&1"
+            val (output, code) = ShizukuManager.execAndGetCode(cmd)
+            ShizukuManager.deleteFile(tmpApk)
+
+            if (code == 0 && output?.contains("Success") == true) {
+                ToolResult(true, "✅ 安装成功: ${apkFile.name}\n$output")
+            } else {
+                ToolResult(false, "❌ 安装失败 (code=$code):\n$output")
+            }
+        } catch (e: Exception) {
+            ToolResult(false, "安装异常: ${e.message}")
+        }
+    }
+
+    private fun installSplitApks(splitDir: File, allowDowngrade: Boolean, grantPermissions: Boolean): ToolResult {
+        return try {
+            val apkFiles = splitDir.listFiles()?.filter { it.name.endsWith(".apk") } ?: emptyList()
+            if (apkFiles.isEmpty()) {
+                return ToolResult(false, "目录内未找到 APK 文件: ${splitDir.absolutePath}")
             }
 
-            // 查找 base.apk
-            val baseApk = File(tempDir, "base.apk")
-            if (!baseApk.exists()) {
-                return ToolResult(false, L("Bundle 中未找到 base.apk", "Bundle not found base.apk"))
-            }
-
-            // 使用 pm install-create/write/commit 安装 Split APK
-            val apkFiles = tempDir.listFiles()?.filter { it.name.endsWith(".apk") } ?: emptyList()
+            val flags = buildFlags(allowDowngrade, grantPermissions)
             val totalSize = apkFiles.sumOf { it.length() }
 
-            // 创建安装会话
-            val sessionResult = ShizukuManager.execAndGet("pm install-create -S $totalSize") ?: "null"
-            val sessionId = Regex("""sessionId=(\d+)""").find(sessionResult)?.groupValues?.get(1)
-                ?: return ToolResult(false, "创建安装会话失败\n$sessionResult")
+            val createCmd = "pm install-create $flags -S $totalSize 2>&1"
+            val (createOutput, createCode) = ShizukuManager.execAndGetCode(createCmd)
+            if (createCode != 0 || createOutput == null) {
+                return ToolResult(false, "创建安装会话失败:\n$createOutput")
+            }
 
-            // 写入每个分片
-            for (apk in apkFiles) {
-                val writeResult = ShizukuManager.execAndGet("pm install-write $sessionId ${apk.name} \"${apk.absolutePath}\"") ?: "null"
-                if (!writeResult.contains("Success")) {
-                    return ToolResult(false, "写入分片失败: ${apk.name}\n$writeResult")
+            val sessionId = Regex("""\[(\d+)\]""").find(createOutput)?.groupValues?.get(1)
+                ?: return ToolResult(false, "无法解析 Session ID:\n$createOutput")
+
+            apkFiles.forEachIndexed { index, apk ->
+                val writeCmd = "pm install-write -S ${apk.length()} $sessionId ${index}_${apk.name} '${apk.absolutePath}' 2>&1"
+                val (writeOutput, writeCode) = ShizukuManager.execAndGetCode(writeCmd)
+                if (writeCode != 0) {
+                    ShizukuManager.execAndGet("pm install-abandon $sessionId")
+                    return ToolResult(false, "写入分片失败 (${apk.name}):\n$writeOutput")
                 }
             }
 
-            // 提交安装
-            val commitResult = ShizukuManager.execAndGet("pm install-commit $sessionId") ?: "null"
-            return if (commitResult.contains("Success")) {
-                ToolResult(true, "✅ Split APK 安装成功\n分片数量: ${apkFiles.size}")
+            val commitCmd = "pm install-commit $sessionId 2>&1"
+            val (commitOutput, commitCode) = ShizukuManager.execAndGetCode(commitCmd)
+
+            if (commitCode == 0 && commitOutput?.contains("Success") == true) {
+                ToolResult(true, "✅ Split APK 安装成功（${apkFiles.size} 个分片）\n$commitOutput")
             } else {
-                ToolResult(false, "❌ Split APK 安装失败\n$commitResult")
+                ToolResult(false, "❌ 提交安装失败:\n$commitOutput")
             }
         } catch (e: Exception) {
-            return ToolResult(false, "❌ 安装异常: ${e.message}")
-        } finally {
-            // 清理临时目录
-            tempDir.deleteRecursively()
+            ToolResult(false, "Split APK 安装异常: ${e.message}")
         }
     }
 
-    private fun listSplits(bundleFile: File): List<Pair<String, Long>> {
-        val splits = mutableListOf<Pair<String, Long>>()
-        ZipFile(bundleFile).use { zip ->
-            zip.entries().toList().forEach { entry ->
-                if (entry.name.endsWith(".apk")) {
-                    splits.add(entry.name to entry.size)
-                }
-            }
-        }
-        return splits
-    }
-
-    private fun extractManifest(apkFile: File): ByteArray? {
-        ZipFile(apkFile).use { zip ->
-            val entry = zip.getEntry("AndroidManifest.xml") ?: return null
-            return zip.getInputStream(entry).readBytes()
-        }
-    }
-
-    private fun extractAttribute(xml: String, attribute: String): String? {
-        val regex = Regex("""$attribute="([^"]+)"""")
-        return regex.find(xml)?.groupValues?.get(1)
-    }
-
-    private fun extractPermissionsFromXml(xml: String): List<String> {
-        val permissions = mutableListOf<String>()
-        val regex = Regex("""android:name="([^"]*permission[^"]*)"""", RegexOption.IGNORE_CASE)
-        regex.findAll(xml).forEach { match ->
-            permissions.add(match.groupValues[1])
-        }
-        return permissions
-    }
-
-    private fun formatSize(bytes: Long): String {
-        return when {
-            bytes < 1024 -> "$bytes B"
-            bytes < 1024 * 1024 -> "${bytes / 1024} KB"
-            else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
-        }
+    private fun buildFlags(allowDowngrade: Boolean, grantPermissions: Boolean): String {
+        val flags = mutableListOf("-r")
+        if (allowDowngrade) flags.add("-d")
+        if (grantPermissions) flags.add("-g")
+        return flags.joinToString(" ")
     }
 }

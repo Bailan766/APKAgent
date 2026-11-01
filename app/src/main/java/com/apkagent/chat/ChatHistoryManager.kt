@@ -20,7 +20,8 @@ class ChatHistoryManager(
     }
 
     fun loadHistoryList(project: ReverseProject?): List<HistoryItem> {
-        return historyDir(project).listFiles { f -> f.extension == "json" }
+        return historyDir(project)
+            .listFiles { f -> f.isFile && f.extension == "json" && !f.name.endsWith("_chat.json") }
             ?.sortedByDescending { it.lastModified() }
             ?.take(50)
             ?.mapNotNull { f -> runCatching { json.decodeFromString<HistoryItem>(f.readText()) }.getOrNull() }

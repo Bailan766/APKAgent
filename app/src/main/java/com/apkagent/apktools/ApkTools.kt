@@ -111,13 +111,15 @@ fun buildToolRegistry(): ToolRegistry {
 /* ---------------- APK 工具 ---------------- */
 
 private fun resolveApk(args: JsonObject, ctx: ToolContext): File? {
-    val p = args.str("apk_path")
+    val p = args.strNonBlank("apk_path")
     if (p != null) {
         val f = Sandbox.resolve(File(p), ctx.workspace)
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
-        return f
+        if (f.exists() && f.isFile) return f
     }
     return ctx.openApk
+        ?: File(ctx.workspace, "source/base.apk").takeIf { it.exists() }
+        ?: File(ctx.workspace, "base.apk").takeIf { it.exists() }
 }
 
 /** apk.list_files — 列出 APK 内部结构 */
@@ -216,7 +218,8 @@ object ApkReadDex : Tool {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val max = args.int("max_classes") ?: 200
         val bytes: ByteArray = try {
-            val entry = args.str("entry_in_apk")
+            val pathArg = args.strNonBlank("path")
+            val entry = args.strNonBlank("entry_in_apk") ?: if (pathArg == null) "classes.dex" else null
             if (entry != null) {
                 val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
                 ZipFile(apk).use { zip ->
@@ -224,14 +227,14 @@ object ApkReadDex : Tool {
                     zip.getInputStream(e).use { it.readBytes() }
                 } ?: return ToolResult.err("APK 内未找到条目：$entry")
             } else {
-                val p = args.str("path") ?: return ToolResult.err(L("需提供 path 或 entry_in_apk。", "Provide path or entry_in_apk."))
+                val p = pathArg ?: return ToolResult.err(L("需提供 path 或 entry_in_apk。", "Provide path or entry_in_apk."))
                 val f = Sandbox.resolve(File(p), ctx.workspace)
                 Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
                 f.readBytes()
             }
         } catch (e: SecurityException) { return ToolResult.err(e.message ?: L("权限拒绝", "Permission denied")) }
 
-        val info = try { DexParser(bytes).parse() }
+        val info = try { DexParser.parseCached(bytes) }
         catch (e: Throwable) { return ToolResult.err(L("DEX 解析失败：${e.message}", "DEX parse failed: ${e.message}")) }
 
         val sb = StringBuilder()
@@ -367,7 +370,12 @@ object FileReadText : Tool {
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
         if (!f.exists()) return ToolResult.err(L("文件不存在：$path", "File not found: $path"))
         if (f.isDirectory) return ToolResult.err("目标是目录：$path")
-        val text = f.readText()
+        val bytes = f.readBytes()
+        val text = if (f.extension.equals("xml", ignoreCase = true) && AxmlParser.isBinaryAxml(bytes)) {
+            AxmlParser.parseCached(bytes)
+        } else {
+            String(bytes, Charsets.UTF_8)
+        }
         return ToolResult.ok(if (text.length > max) text.take(max) + "\n…(共 ${text.length} 字符，已截断)" else text)
     }
 }
@@ -581,28 +589,29 @@ object DexDisasm : Tool {
         )
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val outDir = args.str("output_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
+        val outDir = args.strNonBlank("output_dir")?.let { Sandbox.resolve(File(it), ctx.workspace) }
             ?: File(ctx.workspace, "smali_out_${System.currentTimeMillis()}")
         Sandbox.assertWritable(outDir, ctx.workspace)
-        val entry = args.str("entry_in_apk")
+        val pathArg = args.strNonBlank("path")
+        val entry = args.strNonBlank("entry_in_apk") ?: if (pathArg == null) "classes.dex" else null
         val result = if (entry != null) {
             val apk = resolveApk(args, ctx) ?: return ToolResult.err(L("未指定 APK。", "No APK specified."))
             java.util.zip.ZipFile(apk).use { zip ->
                 val e = zip.getEntry(entry) ?: return@use null
                 val tmp = File(ctx.workspace, "_tmp_${entry.replace("/", "_")}")
-                zip.getInputStream(e).use { it.copyTo(tmp.outputStream()) }
+                zip.getInputStream(e).use { input -> tmp.outputStream().use { input.copyTo(it) } }
                 val r = com.apkagent.apktools.smali.SmaliEngine.disassembleDex(tmp, outDir)
                 tmp.delete()
                 r
             } ?: return ToolResult.err("APK 内未找到条目：$entry")
         } else {
-            val p = args.str("path") ?: return ToolResult.err(L("需提供 path 或 entry_in_apk", "Need to provide path or intry in apk"))
+            val p = pathArg ?: return ToolResult.err(L("需提供 path 或 entry_in_apk", "Need to provide path or entry_in_apk"))
             val f = Sandbox.resolve(File(p), ctx.workspace)
             Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
             com.apkagent.apktools.smali.SmaliEngine.disassembleDex(f, outDir)
         }
         return if (result.success) {
-            ToolResult.ok("${result.message}\nsmali 输出目录：${outDir.absolutePath}\n可用 dex.assemble 回编译，或 file.read_text 查看具体类。")
+            ToolResult.ok("${result.message}\nsmali 输出目录：${outDir.absolutePath}\n可用 dex_assemble 回编译，或 file_read_text / dex_edit 查看与修改具体类。")
         } else ToolResult.err(result.message)
     }
 }
@@ -634,18 +643,27 @@ object DexAssemble : Tool {
 
 object DexEdit : Tool {
     override val name = "dex_edit"
-    override val description get() = L("DEX/smali 编辑：列出类的方法字段、或修改 smali 文本。工作流：dex.disasm 反编译 → file.read_text 查看/修改 smali → dex.assemble 回编译。", "DEX/smali Edit: Lists categories of method fields or changes the smali text. Workstream: dex.disasm inversion →file.read text view/modify smali → dex.assemble back.")
+    override val description get() = L(
+        "DEX/smali 编辑：列出类的方法字段、读取或直接替换修改 smali 文本。工作流：dex_disasm 反编译 → dex_edit 查看/修改 smali → dex_assemble 回编译。",
+        "DEX/smali Edit: list methods/fields, read or replace smali text."
+    )
     override val sensitive = true
     override val parameters get() = schemaObject(
         mapOf(
-            "smali_path" to strProp(L("工作区内 .smali 文件路径", "Workspace.smali file path")),
-            "action" to strProp(L("操作：list_methods（列出方法）/ list_fields（列出字段）/ read（读取smali文本）", "Operations: list methods (list method)/list fields (list field)/ read (read smali text)"), enum = listOf("list_methods", "list_fields", "read"))
+            "smali_path" to strProp(L("工作区内 .smali 文件路径", "Workspace .smali file path")),
+            "action" to strProp(
+                L("操作：list_methods（列出方法）/ list_fields（列出字段）/ read（读取smali文本）/ replace（替换文本）/ write（覆写全文）", "Action: list_methods / list_fields / read / replace / write"),
+                enum = listOf("list_methods", "list_fields", "read", "replace", "write")
+            ),
+            "old_text" to strProp(L("replace 模式必填：要查找替换的原 smali 文本片段", "Original smali text to replace (for action=replace)")),
+            "new_text" to strProp(L("replace 模式必填：替换后的新 smali 文本片段", "Replacement smali text (for action=replace)")),
+            "content" to strProp(L("write 模式必填：完整的新 smali 文件内容", "Full smali content (for action=write)"))
         ),
         listOf("smali_path")
     )
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val path = args.str("smali_path") ?: return ToolResult.err(L("缺少 smali_path", "Missing smali path"))
-        val action = args.str("action") ?: "read"
+        val path = args.strNonBlank("smali_path") ?: return ToolResult.err(L("缺少 smali_path", "Missing smali_path"))
+        val action = args.strNonBlank("action") ?: "read"
         val f = Sandbox.resolve(File(path), ctx.workspace)
         Sandbox.assertReadable(f, ctx.workspace, ctx.openApk)
         if (!f.exists()) return ToolResult.err(L("文件不存在：$path", "File not found: $path"))
@@ -660,7 +678,22 @@ object DexEdit : Tool {
                 val fields = Regex("""\.field\s+(.*)""").findAll(text).map { it.groupValues[1] }.toList()
                 ToolResult.ok("字段列表（${fields.size}）：\n${fields.joinToString("\n")}")
             }
-            else -> ToolResult.err(L("未知 action", "Unknown action"))
+            "replace" -> {
+                val oldText = args.str("old_text") ?: return ToolResult.err(L("replace 模式缺少 old_text", "Missing old_text"))
+                val newText = args.str("new_text") ?: return ToolResult.err(L("replace 模式缺少 new_text", "Missing new_text"))
+                if (!text.contains(oldText)) {
+                    return ToolResult.err(L("未在 ${f.name} 中找到指定的 old_text", "old_text not found in ${f.name}"))
+                }
+                val updated = text.replace(oldText, newText)
+                f.writeText(updated)
+                ToolResult.ok("✅ 已成功替换修改 ${f.absolutePath}")
+            }
+            "write" -> {
+                val content = args.str("content") ?: return ToolResult.err(L("write 模式缺少 content", "Missing content"))
+                f.writeText(content)
+                ToolResult.ok("✅ 已覆写 ${f.absolutePath}（${content.length} 字符）")
+            }
+            else -> ToolResult.err(L("未知 action: $action", "Unknown action: $action"))
         }
     }
 }
@@ -885,7 +918,7 @@ object PipInstall : Tool {
     ), listOf("packages"))
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         if (!PythonRunner.isAvailable()) return ToolResult.err(PythonRunner.installGuide())
-        val list = args.str("packages")?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
+        val list = args.str("packages")?.split(Regex("[\\s,]+"))?.map { it.trim() }?.filter { it.isNotEmpty() }
             ?: return ToolResult.err(L("缺少 packages", "Missing Packages"))
         val timeout = args.int("timeout") ?: 120
         return if (list.size == 1) {
@@ -1009,15 +1042,29 @@ object ApkSearchStrings : Tool {
                     scannedFiles++
                     try {
                         val bytes = zip.getInputStream(entry).use { it.readBytes() }
-                        val text = String(bytes, Charsets.UTF_8).take(100_000)
+                        if (entry.name.endsWith(".dex", ignoreCase = true)) {
+                            val dexInfo = DexParser.parseCached(bytes)
+                            for (s in dexInfo.strings) {
+                                if (count >= maxResults) break
+                                if (regex.containsMatchIn(s)) {
+                                    count++
+                                    sb.appendLine("${entry.name}[string] → ${s.replace("\n", "\\n").take(160)}")
+                                }
+                            }
+                            continue
+                        }
+                        val text = if (entry.name.endsWith(".xml", ignoreCase = true) && AxmlParser.isBinaryAxml(bytes)) {
+                            AxmlParser.parseCached(bytes)
+                        } else {
+                            String(bytes, Charsets.UTF_8).take(500_000)
+                        }
                         if (text.isBlank()) continue
                         val matches = regex.findAll(text).take(maxResults - count).toList()
-                        if (matches.isNotEmpty()) {
-                            for (m in matches) {
-                                count++
-                                val matchCtx = text.substring(maxOf(0, m.range.first - 20), minOf(text.length, m.range.last + 30))
-                                sb.appendLine("${entry.name}:${m.range.first} → $matchCtx")
-                            }
+                        for (m in matches) {
+                            count++
+                            val matchCtx = text.substring(maxOf(0, m.range.first - 20), minOf(text.length, m.range.last + 30))
+                                .replace("\n", " ")
+                            sb.appendLine("${entry.name}:${m.range.first} → $matchCtx")
                         }
                     } catch (_: Exception) { /* skip binary/corrupt */ }
                 }
@@ -1053,15 +1100,23 @@ object FileSearch : Tool {
         val sb = StringBuilder()
         var count = 0
         try {
-            baseDir.walkTopDown().filter { it.isFile && it.length() < 1_000_000 && (glob == null || it.extension.lowercase() == glob) }
+            baseDir.walkTopDown()
+                .onEnter { it.name != ".snapshots" && it.name != "audit" && it.name != "projects" }
+                .filter { it.isFile && it.length() < 2_000_000 && (glob == null || it.extension.lowercase() == glob) }
                 .forEach { f ->
                     if (count >= maxResults) return@forEach
                     try {
-                        val text = f.readText(Charsets.UTF_8)
-                        regex.find(text)?.let { m ->
+                        val bytes = f.readBytes()
+                        val text = if (f.extension.equals("xml", ignoreCase = true) && AxmlParser.isBinaryAxml(bytes)) {
+                            AxmlParser.parseCached(bytes)
+                        } else {
+                            String(bytes, Charsets.UTF_8)
+                        }
+                        val rel = f.relativeToOrSelf(baseDir).path
+                        regex.findAll(text).take(maxResults - count).forEach { m ->
                             count++
                             val matchCtx = text.substring(maxOf(0, m.range.first - 15), minOf(text.length, m.range.last + 25))
-                            val rel = f.relativeTo(baseDir).path
+                                .replace("\n", " ")
                             sb.appendLine("$rel:${m.range.first} → $matchCtx")
                         }
                     } catch (_: Exception) {}
@@ -1093,25 +1148,17 @@ object ApkPatchManifest : Tool {
         Sandbox.assertWritable(f, ctx.workspace)
         if (!f.exists()) return ToolResult.err("文件不存在: $path")
 
-        var text = f.readText()
+        val rawBytes = f.readBytes()
         val changes = mutableListOf<String>()
-        if (patchType in listOf("debuggable", "all")) {
-            if (!text.contains("android:debuggable=\"true\"")) {
-                text = text.replace("<application", "<application android:debuggable=\"true\"") // 简单替换
-                changes.add("debuggable=true")
-            }
-        }
+
         if (patchType in listOf("network", "all")) {
-            if (!text.contains("android:networkSecurityConfig")) {
-                text = text.replace("<application", "<application android:networkSecurityConfig=\"@xml/network_security_config\"")
-                changes.add("networkSecurityConfig")
-                try {
-                    val rootDir = f.parentFile
-                    val resXmlDir = File(rootDir, "res/xml")
-                    if (!resXmlDir.exists()) resXmlDir.mkdirs()
-                    val netSecFile = File(resXmlDir, "network_security_config.xml")
-                    if (!netSecFile.exists()) {
-                        val xmlContent = """<?xml version="1.0" encoding="utf-8"?>
+            try {
+                val rootDir = f.parentFile
+                val resXmlDir = File(rootDir, "res/xml")
+                if (!resXmlDir.exists()) resXmlDir.mkdirs()
+                val netSecFile = File(resXmlDir, "network_security_config.xml")
+                if (!netSecFile.exists()) {
+                    val xmlContent = """<?xml version="1.0" encoding="utf-8"?>
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
@@ -1120,35 +1167,81 @@ object ApkPatchManifest : Tool {
         </trust-anchors>
     </base-config>
 </network-security-config>""".trimIndent()
-                        netSecFile.writeText(xmlContent)
-                        changes.add("created res/xml/network_security_config.xml")
-                    }
-                } catch (e: Exception) {
-                    Logger.w("ApkTools", "Failed to create network_security_config.xml: ${e.message}")
+                    netSecFile.writeText(xmlContent)
+                    changes.add("created res/xml/network_security_config.xml")
                 }
+            } catch (e: Exception) {
+                Logger.w("ApkTools", "Failed to create network_security_config.xml: ${e.message}")
             }
-            if (!text.contains("android:usesCleartextTraffic=\"true\"")) {
-                text = text.replace("<application", "<application android:usesCleartextTraffic=\"true\"")
-                changes.add("usesCleartextTraffic=true")
-            }
-        }
-        if (patchType in listOf("backup", "all")) {
-            if (!text.contains("android:allowBackup=\"true\"")) {
-                text = text.replace("<application", "<application android:allowBackup=\"true\"")
-                changes.add("allowBackup=true")
-            }
-        }
-        if (patchType in listOf("export", "all")) {
-            // 将所有 activity/receiver/service 加 exported=true（如果缺）
-            val exportedCount = Regex("""<(activity|receiver|service)[^>]*>""").findAll(text).count {
-                val tag = it.value
-                !tag.contains("android:exported=") && !tag.contains("intent-filter")
-            }
-            if (exportedCount > 0) changes.add("提示: $exportedCount 个组件缺少 exported (需手动处理)")
         }
 
-        if (changes.isEmpty()) return ToolResult.ok(L("无需修改（Manifest 已包含所需属性）", "No changes required (Manifest contains required properties)"))
-        f.writeText(text)
+        if (AxmlParser.isBinaryAxml(rawBytes)) {
+            val wantDebuggable = if (patchType in listOf("debuggable", "all")) true else null
+            val wantBackup = if (patchType in listOf("backup", "all")) true else null
+            val wantCleartext = if (patchType in listOf("network", "all")) true else null
+            val (patchedBytes, axmlChanges) = AxmlParser.patchBinaryManifest(
+                raw = rawBytes,
+                debuggable = wantDebuggable,
+                allowBackup = wantBackup,
+                cleartextTraffic = wantCleartext
+            )
+            changes.addAll(axmlChanges)
+            if (axmlChanges.isNotEmpty()) {
+                f.writeBytes(patchedBytes)
+            }
+            // 旁路保存可读 XML 供 AI/用户参考，绝不覆盖破坏原二进制 AXML
+            runCatching {
+                File(f.parentFile, "AndroidManifest.readable.xml").writeText(AxmlParser.parseCached(f.readBytes()))
+            }
+        } else {
+            var text = String(rawBytes, Charsets.UTF_8)
+            if (patchType in listOf("debuggable", "all")) {
+                if (!text.contains("android:debuggable=\"true\"")) {
+                    text = if (text.contains("android:debuggable=\"false\"")) {
+                        text.replace("android:debuggable=\"false\"", "android:debuggable=\"true\"")
+                    } else {
+                        text.replace("<application", "<application android:debuggable=\"true\"")
+                    }
+                    changes.add("debuggable=true")
+                }
+            }
+            if (patchType in listOf("network", "all")) {
+                if (!text.contains("android:networkSecurityConfig")) {
+                    text = text.replace("<application", "<application android:networkSecurityConfig=\"@xml/network_security_config\"")
+                    changes.add("networkSecurityConfig")
+                }
+                if (!text.contains("android:usesCleartextTraffic=\"true\"")) {
+                    text = if (text.contains("android:usesCleartextTraffic=\"false\"")) {
+                        text.replace("android:usesCleartextTraffic=\"false\"", "android:usesCleartextTraffic=\"true\"")
+                    } else {
+                        text.replace("<application", "<application android:usesCleartextTraffic=\"true\"")
+                    }
+                    changes.add("usesCleartextTraffic=true")
+                }
+            }
+            if (patchType in listOf("backup", "all")) {
+                if (!text.contains("android:allowBackup=\"true\"")) {
+                    text = if (text.contains("android:allowBackup=\"false\"")) {
+                        text.replace("android:allowBackup=\"false\"", "android:allowBackup=\"true\"")
+                    } else {
+                        text.replace("<application", "<application android:allowBackup=\"true\"")
+                    }
+                    changes.add("allowBackup=true")
+                }
+            }
+            if (patchType in listOf("export", "all")) {
+                val exportedCount = Regex("""<(activity|receiver|service)[^>]*>""").findAll(text).count {
+                    val tag = it.value
+                    !tag.contains("android:exported=") && !tag.contains("intent-filter")
+                }
+                if (exportedCount > 0) changes.add("提示: $exportedCount 个组件缺少 exported (需手动处理)")
+            }
+            if (changes.isNotEmpty()) {
+                f.writeText(text)
+            }
+        }
+
+        if (changes.isEmpty()) return ToolResult.ok(L("无需修改（Manifest 已包含所需属性或无匹配可改槽位）", "No changes required"))
         val changeList = changes.joinToString("\n")
         return ToolResult.ok(
             L(
@@ -1225,7 +1318,7 @@ object SmartPatchApply : Tool {
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
         val patchId = args.str("patch_id") ?: return ToolResult.err("缺少 patch_id\n可用: ${SmartPatch.PATCHES.joinToString { it.id }}")
         val targetDir = args.str("target_dir")
-        val result = SmartPatch.applyPatch(ctx.workspace, patchId, targetDir)
+        val result = SmartPatch.applyPatch(ctx.workspace, patchId, targetDir, ctx.openApk)
         return if (result.success) ToolResult.ok(result.message) else ToolResult.err(result.message)
     }
 }
@@ -1268,7 +1361,7 @@ object RunPythonScript : Tool {
 
         val scriptName = args.str("script_name")
         val scriptContent = args.str("script_content")
-        val scriptArgs = args.str("args") ?: ""
+        val scriptArgs = args.strNonBlank("args") ?: ctx.openApk?.absolutePath ?: ""
         val timeout = args.int("timeout") ?: 60
 
         val script = if (scriptName != null) {
@@ -1434,15 +1527,16 @@ object RunNodeScript : Tool {
                 } else {
                     "'$node'"
                 }
-                val cmd = "cd '$workDir' && $execNode '${tmpScript.absolutePath}'"
+                val cmd = "cd '$workDir' && $execNode '${tmpScript.absolutePath}' 2>&1"
                 val process = ShizukuManager.execShizuku(cmd)
                 if (process != null) {
-                    val finished = process.waitFor(timeout.toLong(), java.util.concurrent.TimeUnit.SECONDS)
-                    if (finished == false) {
+                    val out = kotlinx.coroutines.withTimeoutOrNull(timeout * 1000L) {
+                        process.inputStream.bufferedReader().use { it.readText() }
+                    } ?: run {
                         process.destroyForcibly()
                         return ToolResult.err("执行超时(${timeout}s)")
                     }
-                    val out = process.inputStream.bufferedReader().use { it.readText() }
+                    process.waitFor()
                     return ToolResult.ok(out.take(8000))
                 }
             }

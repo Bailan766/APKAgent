@@ -115,7 +115,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         _currentProject.value = project
         _openApkName.value = project?.name ?: project?.importedApkPath?.let { File(it).name }
 
-        // 工作区安全更新，避免跨项目文件污染
         agentLoop?.ctx?.updateWorkspace(agentApp.currentWorkspace())
         agentLoop?.ctx?.updateOpenApk(agentApp.currentOpenApk())
 
@@ -140,6 +139,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
             return
         }
 
+        val priorContext = buildRestoredHistorySummary(_messages.value)
         _messages.update { it + ChatItem(role = Role.USER, content = text) }
         _isRunning.value = true
         currentAssistantId = null
@@ -157,9 +157,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
             try {
                 withTimeout(5 * 60 * 1000L) {
+                    val sysContext = getProjectInitialSystemContext(priorContext)
                     agentLoop?.run(
                         userText = text,
-                        initialSystemContext = getProjectInitialSystemContext()
+                        initialSystemContext = sysContext
                     )
                     // 如果因提供商未切换导致鉴权失败 (401)，自动探测匹配的预设提供商并无感重试一次
                     val err = agentLoop?.state?.value?.error.orEmpty()
@@ -189,7 +190,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                             ensureLoop(fixedCfg)
                             agentLoop?.run(
                                 userText = text,
-                                initialSystemContext = getProjectInitialSystemContext()
+                                initialSystemContext = sysContext
                             )
                         }
                     }
@@ -227,7 +228,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                 temperature = cfg.temperature,
                 ctx = ctx,
                 callbacks = this,
-                maxRounds = cfg.maxRounds
+                maxRounds = cfg.maxRounds,
+                systemExtra = cfg.systemExtra
             )
             lastConfig = cfg
         }
@@ -245,7 +247,6 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         _isRunning.value = false
         KeepAliveManager.release()
 
-        // 如果最后一条助手消息还在 streaming，将其标记为完成
         _messages.update { list ->
             val last = list.lastOrNull()
             if (last != null && last.streaming) {
@@ -282,18 +283,41 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     // ── Context Prompt ──
-    private fun getProjectInitialSystemContext(): String? {
-        val project = agentApp.currentProject.value ?: return null
-        val summaryFile = agentApp.projectStore.getAnalysisMarkdownFile(project.id)
-        val summary = runCatching { if (summaryFile.exists()) summaryFile.readText().take(10000) else "" }.getOrDefault("")
-        if (summary.isBlank()) return null
-        return AgentPrompts.projectContextHeader(
-            projectName = project.name,
-            projectDir = agentApp.projectStore.getProjectDir(project.id).absolutePath,
-            apkPath = project.importedApkPath,
-            analysisMarkdown = summary,
-            userTask = ""
-        )
+    private fun getProjectInitialSystemContext(restoredHistorySummary: String? = null): String? {
+        val project = agentApp.currentProject.value
+        val baseContext = if (project != null) {
+            val summaryFile = agentApp.projectStore.getAnalysisMarkdownFile(project.id)
+            val summary = runCatching { if (summaryFile.exists()) summaryFile.readText().take(10000) else "" }.getOrDefault("")
+            if (summary.isNotBlank()) {
+                AgentPrompts.projectContextHeader(
+                    projectName = project.name,
+                    projectDir = agentApp.projectStore.getProjectDir(project.id).absolutePath,
+                    apkPath = project.importedApkPath,
+                    analysisMarkdown = summary,
+                    userTask = ""
+                )
+            } else null
+        } else null
+
+        return when {
+            baseContext != null && !restoredHistorySummary.isNullOrBlank() -> "$baseContext\n\n$restoredHistorySummary"
+            baseContext != null -> baseContext
+            !restoredHistorySummary.isNullOrBlank() -> restoredHistorySummary
+            else -> null
+        }
+    }
+
+    private fun buildRestoredHistorySummary(existingMessages: List<ChatItem>): String? {
+        val turns = existingMessages.filter { it.role == Role.USER || it.role == Role.ASSISTANT }
+            .takeLast(6)
+        if (turns.isEmpty()) return null
+        return buildString {
+            appendLine("## 历史会话上下文摘要")
+            turns.forEach { item ->
+                val speaker = if (item.role == Role.USER) "用户" else "助手"
+                appendLine("- $speaker: ${item.content.take(400)}")
+            }
+        }
     }
 
     // ── History ──
@@ -311,10 +335,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val items = historyManager.loadHistory(agentApp.currentProject.value, id) ?: return@launch
+                agentLoop?.reset()
+                agentLoop = null
                 _messages.value = items.map { s ->
                     ChatItem(
                         id = s.id,
-                        role = Role.valueOf(s.role),
+                        role = runCatching { Role.valueOf(s.role) }.getOrDefault(Role.ASSISTANT),
                         content = s.content,
                         toolCallId = s.toolCallId,
                         toolName = s.toolName,
@@ -369,7 +395,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                 _messages.value = items.map { s ->
                     ChatItem(
                         id = s.id,
-                        role = Role.valueOf(s.role),
+                        role = runCatching { Role.valueOf(s.role) }.getOrDefault(Role.ASSISTANT),
                         content = s.content,
                         toolCallId = s.toolCallId,
                         toolName = s.toolName,
@@ -465,6 +491,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                         streaming = false
                     ) else it
                 }
+            } else if (fullContent.isNotBlank() || !fullReasoning.isNullOrBlank()) {
+                // 当响应极短（小于 40ms 节流窗口且不含换行）时补齐助手消息气泡，防止消息丢失
+                list + ChatItem(
+                    role = Role.ASSISTANT,
+                    content = fullContent,
+                    reasoningContent = fullReasoning,
+                    isThinking = false,
+                    streaming = false
+                )
             } else list
         }
         contentBuffer.clear()

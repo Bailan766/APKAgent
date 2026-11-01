@@ -1,85 +1,163 @@
 package com.apkagent.tools
 
 import com.apkagent.i18n.L
-
 import com.apkagent.agent.*
+import com.apkagent.apktools.DexParser
+import com.apkagent.apktools.Sandbox
 import kotlinx.serialization.json.*
 import java.io.File
+import java.util.zip.ZipFile
 
-class AnalyzeObfuscationTool : Tool {
+/**
+ * 混淆强度分析工具 — 快速判断 APK 是否混淆、混淆程度、使用的混淆器
+ *
+ * 修复说明：
+ * 1. 支持 workspace 相对路径解析与默认回退至 ctx.workspace。
+ * 2. 修复当工作区尚未反编译出 .smali 文件时统计出 0 个类并误报“⚪ 无明显混淆”的 Bug，
+ *    自动回退直接解析当前打开 APK 内的所有 DEX 类名与特征。
+ */
+object AnalyzeObfuscationTool : Tool {
     override val name = "analyze_obfuscation"
-    override val description get() = L("分析代码混淆情况：检测 ProGuard / R8 / 自定义混淆特征。参数：workspace（解包目录路径）。输出：混淆类型、强度评估、短类名比例、字符串加密检测。", "Analyse code confusion: Test ProGuard / R8 / Customised confusing features. Parameter: Workspace. Output: Fuzzy type, intensity assessment, short class scale, string encryption.")
-    override val parameters: JsonObject = schemaObject(
-        properties = mapOf(
-            "workspace" to strProp(L("解包目录路径", "Unpack directory path"))
-        ),
-        required = listOf("workspace")
+    override val description get() = L(
+        "分析 APK 的混淆情况（ProGuard/R8/DexGuard/商业加固），输出混淆率、短类名比例、字符串加密检测",
+        "Analyze APK obfuscation (ProGuard/R8/DexGuard/packers), reporting obfuscation rate, short class name ratio, and string encryption"
     )
 
+    override val parameters get() = buildJsonObject {
+        put("type", "object")
+        putJsonObject("properties") {
+            putJsonObject("workspace") {
+                put("type", "string")
+                put("description", L("APK 工作目录路径（留空默认当前工作区）", "APK workspace directory (defaults to current workspace)"))
+            }
+        }
+    }
+
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val workspace = args["workspace"]?.jsonPrimitive?.contentOrNull ?: return ToolResult.err(L("缺少 workspace", "Missing workspace"))
-        val dir = File(workspace)
-        if (!dir.exists()) return ToolResult.err(L("工作区不存在", "Workspace does not exist"))
+        val rawWs = args["workspace"]?.jsonPrimitive?.contentOrNull?.takeIf { it.isNotBlank() }
+        val wsDir = if (rawWs != null) Sandbox.resolve(File(rawWs), ctx.workspace) else ctx.workspace
 
-        val report = StringBuilder()
-        report.appendLine(L("🔍 混淆分析报告", "Confusion analysis"))
-        report.appendLine("═".repeat(40))
+        val smaliFiles = if (wsDir.exists()) {
+            wsDir.walkTopDown()
+                .onEnter { it.name != ".snapshots" && it.name != "audit" && it.name != "projects" }
+                .filter { it.isFile && it.extension == "smali" }
+                .take(2000)
+                .toList()
+        } else emptyList()
 
-        val smaliFiles = dir.walkTopDown().filter { it.extension == "smali" }.toList()
         var totalClasses = 0
-        var shortNameClasses = 0
-        var packageRenamed = 0
+        var shortClassNames = 0
+        var singleCharNames = 0
+        var totalMethods = 0
+        var shortMethodNames = 0
+        var encryptedStrings = 0
+        var reflectionCalls = 0
+        var sourceLabel = "Smali 工作区"
 
-        for (file in smaliFiles) {
-            totalClasses++
-            val name = file.nameWithoutExtension
-            if (name.length <= 2) shortNameClasses++
-            val parentName = file.parentFile?.name ?: ""
-            if (parentName.length <= 2 && parentName.all { it.isLetter() }) packageRenamed++
+        if (smaliFiles.isNotEmpty()) {
+            smaliFiles.forEach { file ->
+                totalClasses++
+                val className = file.nameWithoutExtension
+                if (className.length <= 2) shortClassNames++
+                if (className.length == 1) singleCharNames++
+
+                val content = runCatching { file.readText() }.getOrDefault("")
+                val methods = Regex("""\.method\s+.*?(\S+)\(""").findAll(content)
+                methods.forEach { match ->
+                    totalMethods++
+                    val methodName = match.groupValues[1]
+                    if (methodName.length <= 2 && methodName != "<init>" && methodName != "<clinit>") {
+                        shortMethodNames++
+                    }
+                }
+
+                if (content.contains("javax/crypto/Cipher") || content.contains("MessageDigest")) {
+                    encryptedStrings++
+                }
+                if (content.contains("java/lang/reflect/Method;->invoke") || content.contains("Class;->forName")) {
+                    reflectionCalls++
+                }
+            }
+        } else {
+            // 回退：直接从 APK 的 classes*.dex 解析类信息与字符串池
+            val apk = ctx.openApk
+                ?: File(wsDir, "source/base.apk").takeIf { it.exists() }
+                ?: File(wsDir, "base.apk").takeIf { it.exists() }
+                ?: return ToolResult(false, L("未找到 .smali 文件或 APK 文件，请先打开 APK", "No .smali or APK file found"))
+
+            sourceLabel = "DEX 直接分析 (${apk.name})"
+            runCatching {
+                ZipFile(apk).use { zip ->
+                    val dexEntries = zip.entries().asSequence().filter { it.name.endsWith(".dex") }.toList()
+                    for (entry in dexEntries) {
+                        val bytes = zip.getInputStream(entry).use { it.readBytes() }
+                        val info = DexParser.parseCached(bytes)
+                        totalMethods += info.methodIdsSize
+                        for (fullClass in info.classes) {
+                            totalClasses++
+                            val simple = fullClass.substringAfterLast('.').substringAfterLast('$')
+                            if (simple.length <= 2) shortClassNames++
+                            if (simple.length == 1) singleCharNames++
+                        }
+                        for (s in info.strings) {
+                            if (s == "Ljavax/crypto/Cipher;" || s == "Ljava/security/MessageDigest;") encryptedStrings++
+                            if (s == "Ljava/lang/reflect/Method;" || s == "forName") reflectionCalls++
+                        }
+                    }
+                }
+            }
         }
 
-        val hasMapping = dir.resolve("META-INF/proguard/mapping.txt").exists()
-        val proguardRules = dir.walkTopDown().filter {
-            it.name.contains("proguard") || it.name.contains("r8") || it.name == "mapping.txt"
-        }.toList()
+        val classObfuscationRate = if (totalClasses > 0) (shortClassNames * 100 / totalClasses) else 0
+        val methodObfuscationRate = if (totalMethods > 0 && smaliFiles.isNotEmpty()) (shortMethodNames * 100 / totalMethods) else classObfuscationRate
 
-        val encryptedStrings = smaliFiles.count { file ->
-            try {
-                val content = file.readText()
-                content.contains("StringBuilder;->append") && content.count { it == '\'' } > 20
-            } catch (_: Exception) { false }
+        val obfuscationLevel = when {
+            classObfuscationRate > 60 || methodObfuscationRate > 60 -> L("🔴 重度混淆", "🔴 Heavy Obfuscation")
+            classObfuscationRate > 25 || methodObfuscationRate > 25 -> L("🟡 中度混淆", "🟡 Moderate Obfuscation")
+            classObfuscationRate > 8 || methodObfuscationRate > 8 -> L("🟢 轻度混淆", "🟢 Light Obfuscation")
+            else -> L("⚪ 无明显混淆", "⚪ No Obvious Obfuscation")
         }
 
-        val resDir = dir.resolve("res")
-        val resObfuscated = if (resDir.exists()) resDir.listFiles()?.count { it.name.length <= 2 } ?: 0 else 0
-
-        val ratio = if (totalClasses > 0) shortNameClasses * 100 / totalClasses else 0
-
-        report.appendLine()
-        report.appendLine(L("📊 统计：", "Statistics:"))
-        report.appendLine("  总 smali: $totalClasses | 短类名(≤2): $shortNameClasses ($ratio%) | 重命名包: $packageRenamed")
-        report.appendLine("  字符串加密文件: $encryptedStrings | 资源混淆目录: $resObfuscated")
-        report.appendLine()
-
-        report.appendLine(L("🔎 判断：", "• Judgement:"))
-        when {
-            hasMapping -> report.appendLine(L("  ✅ 检测到 ProGuard/R8 mapping 文件", "✅ProGuard/R8Mapping file detected"))
-            ratio > 50 -> report.appendLine(L("  ⚠️ 高度疑似 ProGuard/R8 混淆（短类名 >50%）", "• High suspicion ProGuard/R8 confusion (short class > 50%)"))
-            ratio > 20 -> report.appendLine(L("  ⚠️ 疑似轻度混淆", "It seems to be slightly confused."))
-            else -> report.appendLine(L("  ℹ️ 未检测到明显混淆", "I️ No apparent confusion detected"))
+        val obfuscatorType = when {
+            singleCharNames > totalClasses * 0.4 && encryptedStrings > 5 -> L("疑似 DexGuard 或商业混淆器", "Suspected DexGuard or commercial obfuscator")
+            shortClassNames > totalClasses * 0.25 -> "ProGuard / R8"
+            else -> L("未混淆或仅开启部分优化", "Unobfuscated or partial shrinking only")
         }
-        if (encryptedStrings > smaliFiles.size / 4) report.appendLine(L("  ⚠️ 疑似字符串加密", "⚠️ Suspected string encryption"))
-        if (resObfuscated > 5) report.appendLine(L("  ⚠️ 疑似资源混淆（ResGuard）", "⚠️ Suspected resource confusion"))
 
-        val strength = when {
-            ratio > 70 && encryptedStrings > 10 -> L("🔴 强混淆", "♪ Twilight and confusion ♪")
-            ratio > 40 -> L("🟡 中等混淆", "Medium confusion")
-            ratio > 15 -> L("🟢 轻度混淆", "A slight confusion.")
-            else -> L("⚪ 无明显混淆", "No apparent confusion.")
+        val report = buildString {
+            appendLine("# 混淆分析报告")
+            appendLine("数据源: $sourceLabel")
+            appendLine()
+            appendLine("## 总体评估")
+            appendLine("- **混淆等级**: $obfuscationLevel")
+            appendLine("- **混淆器类型**: $obfuscatorType")
+            appendLine()
+            appendLine("## 详细指标")
+            appendLine("- 扫描类总数: $totalClasses")
+            appendLine("- 短类名 (≤2字符): $shortClassNames ($classObfuscationRate%)")
+            appendLine("- 单字符类名: $singleCharNames")
+            appendLine("- 方法总数: $totalMethods")
+            if (smaliFiles.isNotEmpty()) {
+                appendLine("- 短方法名 (≤2字符): $shortMethodNames ($methodObfuscationRate%)")
+            }
+            appendLine("- 加密相关引用: $encryptedStrings")
+            appendLine("- 反射调用特征: $reflectionCalls")
+            appendLine()
+            appendLine("## 逆向建议")
+            when {
+                classObfuscationRate > 60 -> {
+                    appendLine("- 类名重度混淆，建议通过字符串常量、资源 ID、Manifest 组件入口定位关键逻辑")
+                    appendLine("- 使用 `smart_search` 搜索明文 URL/API/错误提示，或结合 Frida Hook 动态追踪")
+                }
+                classObfuscationRate > 25 -> {
+                    appendLine("- 存在标准 ProGuard/R8 混淆，四大组件与接口类通常保留原名，可从 Activity/Service 顺藤摸瓜")
+                }
+                else -> {
+                    appendLine("- 代码可读性良好，可直接通过类名与方法名快速定位业务逻辑")
+                }
+            }
         }
-        report.appendLine()
-        report.appendLine("💪 混淆强度: $strength")
 
-        return ToolResult.ok(report.toString())
+        return ToolResult(true, report)
     }
 }

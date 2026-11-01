@@ -1,14 +1,13 @@
 package com.apkagent.apktools
 
 import com.apkagent.i18n.L
-
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 /**
- * DEX 文件解析器：解析头部统计信息 + 列出所有类定义。
- * 纯 Java 实现，可在 Android 直接运行。
+ * DEX 文件解析器：解析头部统计信息、完整字符串池与所有类定义。
+ * 纯 Java/Kotlin 实现，可在 Android 直接运行。
  */
 class DexParser(private val data: ByteArray) {
 
@@ -41,11 +40,12 @@ class DexParser(private val data: ByteArray) {
         val fieldIdsSize: Int,
         val methodIdsSize: Int,
         val classDefsSize: Int,
-        val classes: List<String>
+        val classes: List<String>,
+        val strings: List<String> = emptyList()
     )
 
     fun parse(): DexInfo {
-        if (data.size < 0x70) throw IllegalStateException(L("文件太小，不是合法 DEX", "It's too small. It's not legal DEX."))
+        if (data.size < 0x70) throw IllegalStateException(L("文件太小，不是合法 DEX", "File too small, not a valid DEX"))
         val magic = String(data, 0, 8, Charsets.US_ASCII)
         if (!magic.startsWith("dex\n")) throw IllegalStateException("非 DEX 文件: magic=${magic.take(8)}")
         val version = magic.substring(4, 7)
@@ -57,37 +57,39 @@ class DexParser(private val data: ByteArray) {
         buf.int // link_size
         buf.int // link_off
         buf.int // map_off
-        val stringIdsSize = buf.int
+        val stringIdsSize = buf.int.coerceAtLeast(0)
         val stringIdsOff = buf.int
-        val typeIdsSize = buf.int
+        val typeIdsSize = buf.int.coerceAtLeast(0)
         val typeIdsOff = buf.int
-        val protoIdsSize = buf.int
+        val protoIdsSize = buf.int.coerceAtLeast(0)
         buf.int // proto_off
-        val fieldIdsSize = buf.int
+        val fieldIdsSize = buf.int.coerceAtLeast(0)
         buf.int // field_off
-        val methodIdsSize = buf.int
+        val methodIdsSize = buf.int.coerceAtLeast(0)
         buf.int // method_off
-        val classDefsSize = buf.int
+        val classDefsSize = buf.int.coerceAtLeast(0)
         val classDefsOff = buf.int
 
-        // 读取字符串池（懒加载需要的）
         val strings = readStringPool(stringIdsSize, stringIdsOff)
         val types = readTypeIds(typeIdsSize, typeIdsOff, strings)
 
         val classes = mutableListOf<String>()
-        buf.position(classDefsOff)
-        for (i in 0 until classDefsSize) {
-            val classIdx = buf.int           // -> type_ids
-            val accessFlags = buf.int        // access flags
-            val superclassIdx = buf.int
-            buf.int // interfaces_off
-            buf.int // source_file_idx
-            buf.int // annotations_off
-            buf.int // class_data_off
-            buf.int // static_values_off
+        if (classDefsOff in 1 until data.size && classDefsSize > 0) {
+            buf.position(classDefsOff)
+            for (i in 0 until classDefsSize) {
+                if (buf.remaining() < 32) break
+                val classIdx = buf.int           // -> type_ids
+                buf.int                          // access_flags
+                buf.int                          // superclass_idx
+                buf.int                          // interfaces_off
+                buf.int                          // source_file_idx
+                buf.int                          // annotations_off
+                buf.int                          // class_data_off
+                buf.int                          // static_values_off
 
-            val descriptor = types.getOrElse(classIdx) { "?" }
-            classes.add(descriptorToName(descriptor))
+                val descriptor = types.getOrElse(classIdx) { "?" }
+                classes.add(descriptorToName(descriptor))
+            }
         }
 
         return DexInfo(
@@ -99,28 +101,38 @@ class DexParser(private val data: ByteArray) {
             fieldIdsSize = fieldIdsSize,
             methodIdsSize = methodIdsSize,
             classDefsSize = classDefsSize,
-            classes = classes
+            classes = classes,
+            strings = strings.toList()
         )
     }
 
     private fun readStringPool(count: Int, offset: Int): Array<String> {
-        val arr = Array(count) { "" }
-        if (offset == 0 || count == 0) return arr
-        val offsets = IntArray(count)
+        val safeCount = count.coerceIn(0, 2_000_000)
+        val arr = Array(safeCount) { "" }
+        if (offset <= 0 || offset >= data.size || safeCount == 0) return arr
+        val offsets = IntArray(safeCount)
         buf.position(offset)
-        for (i in 0 until count) offsets[i] = buf.int
-        for (i in 0 until count) {
-            buf.position(offsets[i])
-            arr[i] = readMutf8String()
+        for (i in 0 until safeCount) {
+            if (buf.remaining() < 4) break
+            offsets[i] = buf.int
+        }
+        for (i in 0 until safeCount) {
+            val strOff = offsets[i]
+            if (strOff <= 0 || strOff >= data.size) continue
+            buf.position(strOff)
+            arr[i] = try {
+                readMutf8String()
+            } catch (_: Throwable) {
+                ""
+            }
         }
         return arr
     }
 
     private fun readMutf8String(): String {
-        // uleb128 utf-16 length（忽略）
         readUleb128()
         val ba = ByteArrayOutputStream()
-        while (true) {
+        while (buf.hasRemaining()) {
             val b = buf.get().toInt() and 0xFF
             if (b == 0) break
             ba.write(b)
@@ -131,7 +143,7 @@ class DexParser(private val data: ByteArray) {
     private fun readUleb128(): Int {
         var result = 0
         var shift = 0
-        while (true) {
+        while (buf.hasRemaining() && shift < 35) {
             val b = buf.get().toInt() and 0xFF
             result = result or ((b and 0x7F) shl shift)
             if (b and 0x80 == 0) break
@@ -141,10 +153,12 @@ class DexParser(private val data: ByteArray) {
     }
 
     private fun readTypeIds(count: Int, offset: Int, strings: Array<String>): Array<String> {
-        val arr = Array(count) { "" }
-        if (offset == 0 || count == 0) return arr
+        val safeCount = count.coerceIn(0, 500_000)
+        val arr = Array(safeCount) { "" }
+        if (offset <= 0 || offset >= data.size || safeCount == 0) return arr
         buf.position(offset)
-        for (i in 0 until count) {
+        for (i in 0 until safeCount) {
+            if (buf.remaining() < 4) break
             val descIdx = buf.int
             arr[i] = strings.getOrElse(descIdx) { "?" }
         }

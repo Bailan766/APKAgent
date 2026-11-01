@@ -1,7 +1,7 @@
 package com.apkagent.apktools
 
 import com.apkagent.i18n.L
-
+import com.android.apksig.ApkVerifier
 import java.io.ByteArrayInputStream
 import java.io.File
 import java.nio.ByteBuffer
@@ -13,13 +13,20 @@ import java.util.jar.JarFile
 /**
  * APK 签名信息读取器。
  * - v1 (JAR signing): 解析 META-INF 下的 .RSA/.DSA/.EC 签名块，提取 X.509 证书。
- * - v2/v3 (APK Signature Scheme): 手动定位 APK Signing Block，提取证书链。
+ * - v2/v3 (APK Signature Scheme): 定位 APK Signing Block 提取证书链，并结合 ApkVerifier 校验。
+ *
+ * 修复说明：
+ * 1. 修复 V3_ID (0xf05368c0) 因 readIntLE().toLong() 符号位扩展为负数导致永远无法匹配 V3 签名的 Bug。
+ * 2. 修复 APK Signing Block 起始偏移量计算偏差 8 字节（sizeOfBlock 已含尾部 size 8B + magic 16B，
+ *    pairs 起点应为 cdOffset - sizeOfBlock）以及误加 8 字节对齐循环导致首轮即中断的 Bug。
+ * 3. 增加 Google 官方 apksig ApkVerifier 兜底提取，支持 v1/v2/v3/v3.1 全方案证书读取。
  */
 object SignatureReader {
 
     private const val SIG_BLOCK_MAGIC = "APK Sig Block 42"
     private const val V2_ID = 0x7109871aL
     private const val V3_ID = 0xf05368c0L
+    private const val V31_ID = 0x1b93ad61L
 
     data class SignerInfo(
         val scheme: String,
@@ -50,8 +57,25 @@ object SignatureReader {
             sb.appendLine(L("[v2/v3] 读取失败：${e.message}", "[v2/v3] Read failed: ${e.message}"))
         }
 
+        // 若手动解析未提取到证书，使用 apksig ApkVerifier 权威兜底
+        if (results.isEmpty() || results.all { it.certs.isEmpty() }) {
+            runCatching {
+                val vRes = ApkVerifier.Builder(apk).build().verify()
+                val certs = vRes.signerCertificates
+                val schemes = buildList {
+                    if (vRes.isVerifiedUsingV1Scheme) add("v1")
+                    if (vRes.isVerifiedUsingV2Scheme) add("v2")
+                    if (vRes.isVerifiedUsingV3Scheme) add("v3")
+                }
+                if (certs.isNotEmpty() || schemes.isNotEmpty()) {
+                    results.clear()
+                    results.add(SignerInfo(schemes.joinToString("+").ifBlank { "APK Signature" }, certs))
+                }
+            }
+        }
+
         if (results.isEmpty()) {
-            sb.appendLine(L("⚠ 未检测到任何签名（v1/v2/v3）。该 APK 未签名或签名格式无法识别。", "⚠ No signatures detected (v1/v2/v3). The APK is unsigned or the signature format is unrecognized."))
+            sb.appendLine(L("⚠ 未检测到任何签名（v1/v2/v3）。该 APK 未签名或签名格式无法识别。", "⚠ No signatures detected (v1/v2/v3). The APK is unsigned or unrecognized."))
             return sb.toString()
         }
 
@@ -72,8 +96,8 @@ object SignatureReader {
             sb.appendLine()
         }
 
-        if (results.none { it.scheme.startsWith("v2") || it.scheme.startsWith("v3") }) {
-            sb.appendLine(L("ℹ 仅含 v1 签名，在 Android 7.0+ 建议补充 v2 签名以保证完整性校验。", "ℹ v1-only signature; on Android 7.0+ consider adding v2 for integrity checks."))
+        if (results.none { it.scheme.contains("v2") || it.scheme.contains("v3") }) {
+            sb.appendLine(L("ℹ 仅含 v1 签名，在 Android 7.0+ 建议补充 v2/v3 签名以保证完整性校验。", "ℹ v1-only signature; on Android 7.0+ consider adding v2/v3 for integrity checks."))
         }
         return sb.toString()
     }
@@ -99,50 +123,48 @@ object SignatureReader {
         return if (certs.isEmpty()) null else SignerInfo("v1 (JAR)", certs)
     }
 
-    private fun readV2V3(apk: File): List<SignerInfo> {
+    internal fun readV2V3(apk: File): List<SignerInfo> {
         val data = apk.readBytes()
         val cdOffset = findCentralDirectoryOffset(data) ?: return emptyList()
-        // APK Signing Block 在 CD 之前
-        // magic 位于 block 尾部 16 字节
         val magicBytes = SIG_BLOCK_MAGIC.toByteArray(Charsets.US_ASCII)
-        // magic 位于 APK Signing Block 尾部 16 字节，紧邻 Central Directory 之前
-        var pos = cdOffset - 16
-        if (pos < 0) return emptyList()
-        if (!matchesAt(data, pos, magicBytes)) return emptyList()
-        // size_of_block (8 bytes long LE) 在 magic 之前
-        val sizeOfBlock = readLongLE(data, pos - 8)
-        val blockStart = pos - 8 - sizeOfBlock.toInt() + 8 // blockStart = (pos-8) - sizeOfBlock + 8
-        // block 内容：size_of_block(8) + pairs + size_of_block(8) + magic(16)
-        // pairs 起点 = blockStart + 8
-        var p = blockStart + 8
+        val magicPos = cdOffset - 16
+        if (magicPos < 16) return emptyList()
+        if (!matchesAt(data, magicPos, magicBytes)) return emptyList()
+
+        // APK Signing Block 结构：
+        // [size_of_block: uint64] + [pairs...] + [size_of_block: uint64] + [magic: 16B]
+        // 其中 size_of_block 不包含头部自身的 8 字节，因此 pairs 起点为 cdOffset - sizeOfBlock
+        val sizeOfBlock = readLongLE(data, magicPos - 8)
+        if (sizeOfBlock < 24 || sizeOfBlock > cdOffset) return emptyList()
+        val pairsStart = (cdOffset - sizeOfBlock).toInt()
+        val pairsEnd = magicPos - 8
+        if (pairsStart < 8 || pairsStart >= pairsEnd) return emptyList()
+
+        var p = pairsStart
         val out = mutableListOf<SignerInfo>()
-        while (p + 12 <= pos - 8) {
-            val pairLen = readLongLE(data, p).toInt() // length of (id+value)
-            if (pairLen <= 0 || p + 8 + pairLen > pos - 8) break
-            val id = readIntLE(data, p + 8)
+        while (p + 12 <= pairsEnd) {
+            val pairLen = readLongLE(data, p)
+            if (pairLen < 4 || p + 8 + pairLen > pairsEnd) break
+            val id = readIntLE(data, p + 8).toLong() and 0xFFFFFFFFL
             val valueStart = p + 12
-            val valueEnd = p + 8 + pairLen
+            val valueEnd = (p + 8 + pairLen).toInt()
             val value = data.copyOfRange(valueStart, valueEnd)
-            when (id.toLong()) {
+            when (id) {
                 V2_ID -> extractSigners(value, "v2 (APK Signature Scheme v2)")?.let { out.add(it) }
                 V3_ID -> extractSigners(value, "v3 (APK Signature Scheme v3)")?.let { out.add(it) }
+                V31_ID -> extractSigners(value, "v3.1 (APK Signature Scheme v3.1)")?.let { out.add(it) }
             }
             p = valueEnd
-            // pairs 按 4 字节对齐？v2 pair 是 8 字节对齐，这里粗略处理
-            while (p < pos - 8 && (p - blockStart) % 8 != 0) p++
         }
         return out
     }
 
     private fun extractSigners(value: ByteArray, scheme: String): SignerInfo? {
-        // value = length-prefixed sequence of signers
         val buf = ByteBuffer.wrap(value).order(ByteOrder.LITTLE_ENDIAN)
         val signersBlock = readLenPrefixed(buf) ?: return null
         val signer = readLenPrefixed(signersBlock) ?: return null
-        // signer = signed_data(len-prefixed) + signatures(len-prefixed) + public_key(len-prefixed)
         val signedData = readLenPrefixed(signer) ?: return null
-        // signed_data = digests(seq) + certificates(seq) + additional_attributes(seq)
-        val digests = readLenPrefixed(signedData) // skip
+        readLenPrefixed(signedData) // skip digests
         val certsBlock = readLenPrefixed(signedData) ?: return SignerInfo(scheme, emptyList())
         val cf = CertificateFactory.getInstance("X.509")
         val certs = mutableListOf<X509Certificate>()
@@ -153,7 +175,7 @@ object SignatureReader {
             try {
                 val x = cf.generateCertificate(ByteArrayInputStream(der)) as? X509Certificate
                 x?.let { certs.add(it) }
-            } catch (_: Throwable) { }
+            } catch (_: Throwable) {}
         }
         return SignerInfo(scheme, certs)
     }
@@ -161,7 +183,7 @@ object SignatureReader {
     private fun readLenPrefixed(buf: ByteBuffer): ByteBuffer? {
         if (buf.remaining() < 4) return null
         val len = buf.int
-        if (len <= 0 || len > buf.remaining()) return null
+        if (len < 0 || len > buf.remaining()) return null
         val slice = buf.slice().order(ByteOrder.LITTLE_ENDIAN)
         slice.limit(len)
         buf.position(buf.position() + len)
@@ -169,16 +191,12 @@ object SignatureReader {
     }
 
     private fun findCentralDirectoryOffset(data: ByteArray): Int? {
-        // EOCD magic 0x06054b50, 从末尾向前找
-        val eocd = intArrayOf(0x50, 0x4B, 0x05, 0x06)
         val minPos = maxOf(0, data.size - 65557)
         for (i in data.size - 22 downTo minPos) {
             if (data[i] == 0x50.toByte() && data[i + 1] == 0x4B.toByte() &&
                 data[i + 2] == 0x05.toByte() && data[i + 3] == 0x06.toByte()
             ) {
-                // CD offset at EOCD + 16
-                val off = readIntLE(data, i + 16)
-                return off
+                return readIntLE(data, i + 16)
             }
         }
         return null
@@ -191,7 +209,7 @@ object SignatureReader {
             ((data[off + 3].toInt() and 0xFF) shl 24)
 
     private fun readLongLE(data: ByteArray, off: Int): Long =
-        readIntLE(data, off).toLong() and 0xFFFFFFFFL or
+        (readIntLE(data, off).toLong() and 0xFFFFFFFFL) or
             ((readIntLE(data, off + 4).toLong() and 0xFFFFFFFFL) shl 32)
 
     private fun matchesAt(data: ByteArray, off: Int, pattern: ByteArray): Boolean {

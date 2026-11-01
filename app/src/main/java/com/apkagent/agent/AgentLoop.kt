@@ -1,5 +1,7 @@
 package com.apkagent.agent
 
+import com.apkagent.apktools.Sandbox
+import com.apkagent.apktools.strNonBlank
 import com.apkagent.i18n.L
 import com.apkagent.i18n.AgentPrompts
 import kotlinx.coroutines.*
@@ -27,7 +29,8 @@ interface AgentCallbacks {
  * 1. 废除硬编码阶段锁：全量工具开放给大模型自主决策与调度；
  * 2. 移除关键字误杀逻辑：彻底避免“已完成”等思考字样导致意外早退；
  * 3. 事务化工具调度：读操作安全并发，写/重打包操作串行执行，杜绝文件竞争；
- * 4. 原生支持 DeepSeek-R1 独立思考流与硬取消。
+ * 4. 原生支持 DeepSeek-R1 独立思考流与硬取消；
+ * 5. 智能轻量快照：仅备份被修改的目标文本/XML/Smali 文件，避免每次复制百兆 APK。
  */
 class AgentLoop(
     private val client: OpenAIClient,
@@ -36,7 +39,8 @@ class AgentLoop(
     private val temperature: Double,
     val ctx: ToolContext,
     private val callbacks: AgentCallbacks,
-    private val maxRounds: Int = 50
+    private val maxRounds: Int = 50,
+    private val systemExtra: String = ""
 ) {
     private val json = Json { ignoreUnknownKeys = true }
     private val messages = mutableListOf<ChatMessage>()
@@ -46,7 +50,14 @@ class AgentLoop(
     private val _state = MutableStateFlow(AgentState())
     val state: StateFlow<AgentState> = _state.asStateFlow()
 
-    private fun systemPrompt(): String = AgentPrompts.systemPrompt()
+    companion object {
+        private const val MAX_TOOL_OUTPUT_CHARS = 24_000
+    }
+
+    private fun systemPrompt(): String {
+        val base = AgentPrompts.systemPrompt()
+        return if (systemExtra.isNotBlank()) "$base\n\n## 用户附加指令\n$systemExtra" else base
+    }
 
     /** 立即取消当前 Agent 的执行与网络连接 */
     fun cancel() {
@@ -60,8 +71,8 @@ class AgentLoop(
 
         try {
             AuditLogger.init(ctx.workspace)
+            AuditLogger.newSession()
         } catch (_: Exception) {}
-        AuditLogger.newSession()
 
         val needContinue = runInternal(userText, initialSystemContext)
 
@@ -98,8 +109,8 @@ class AgentLoop(
         try {
             for (round in 0 until maxRounds) {
                 currentCoroutineContext().ensureActive()
+                AuditLogger.nextRound()
 
-                // 全量开放已注册工具，让大模型自主决策
                 val toolDefs = registry.toToolDefs().ifEmpty { null }
 
                 val request = ChatRequest(
@@ -135,7 +146,6 @@ class AgentLoop(
                     )
                 )
 
-                // 记录使用过的工具并更新阶段指示
                 result.toolCalls.forEach { usedTools.add(it.name) }
                 updatePhase()
 
@@ -143,13 +153,18 @@ class AgentLoop(
                 val executedList = executeToolsSafely(result.toolCalls)
                 for (exec in executedList) {
                     callbacks.onToolCallComplete(exec)
-                    messages.add(ChatMessage(role = "tool", content = exec.result, toolCallId = exec.id))
+                    val cappedResult = if (exec.result.length > MAX_TOOL_OUTPUT_CHARS) {
+                        exec.result.take(MAX_TOOL_OUTPUT_CHARS) + "\n…(输出过长，已截断至 $MAX_TOOL_OUTPUT_CHARS 字符)"
+                    } else {
+                        exec.result
+                    }
+                    messages.add(ChatMessage(role = "tool", content = cappedResult, toolCallId = exec.id))
                 }
 
                 updatePhase()
 
                 // 用户在权限对话框全部拒绝时停止
-                if (executedList.isNotEmpty() && executedList.all { !it.success && it.result.contains(L("拒绝", "Denied")) }) {
+                if (executedList.isNotEmpty() && executedList.all { !it.success && it.result.contains(L("拒绝", "Deny")) }) {
                     callbacks.onFinished()
                     return false
                 }
@@ -183,15 +198,15 @@ class AgentLoop(
         toolCalls: List<PendingToolCall>
     ): List<ExecutedToolCall> = coroutineScope {
         val writeToolNames = setOf(
-            "apk_unpack", "apk_repack", "apk_sign", "apk_patch_manifest",
-            "dex_edit", "dex_assemble", "smart_patch_apply", "auto_patch",
-            "file_write", "ext_file_write"
+            "apk_unpack", "apk_repack", "apk_sign", "apk_enhanced_sign", "apk_zipalign",
+            "apk_patch_manifest", "apk_remove_signature_check",
+            "dex_edit", "dex_assemble", "smart_patch", "smart_patch_apply", "auto_patch",
+            "file_write", "ext_file_write", "create_script", "run_script"
         )
 
         val hasWriteTool = toolCalls.any { it.name in writeToolNames }
 
         if (hasWriteTool || toolCalls.size == 1) {
-            // 包含写操作时按序串行执行，确保前后依赖与文件事务安全
             val results = mutableListOf<ExecutedToolCall>()
             for (call in toolCalls) {
                 ensureActive()
@@ -210,7 +225,6 @@ class AgentLoop(
             }
             results
         } else {
-            // 纯读取/分析类工具并发加速
             toolCalls.map { call ->
                 async(Dispatchers.IO) {
                     callbacks.onToolCallStart(call)
@@ -236,24 +250,54 @@ class AgentLoop(
             return ToolResult.err(L("拒绝执行", "Deny execution"))
         }
 
-        // DANGER 级工具：执行前创建快照
+        val riskLevel = ToolRiskLevel.infer(call.name)
+        val args = call.parsedArgs ?: JsonObject(emptyMap())
+
+        // DANGER 级工具：仅备份即将修改的目标小文件（排除 .apk/.dex/.so 等大二进制文件，避免性能卡顿）
         var snapshot: SnapshotManager.Snapshot? = null
-        if (ToolRiskLevel.infer(call.name) == ToolRiskLevel.DANGER) {
+        if (riskLevel == ToolRiskLevel.DANGER) {
             try {
                 val ws = ctx.workspace
                 if (ws.exists()) {
-                    val files = ws.listFiles()?.filter { it.isFile && !it.name.startsWith(".") } ?: emptyList()
-                    snapshot = SnapshotManager.create(call.name, files, ws)
+                    val candidates = mutableListOf<File>()
+                    listOf("path", "smali_path", "manifest_path", "script_path").forEach { key ->
+                        args.strNonBlank(key)?.let { p ->
+                            val f = Sandbox.resolve(File(p), ws)
+                            if (f.exists() && f.isFile && f.length() < 2_000_000) candidates.add(f)
+                        }
+                    }
+                    if (candidates.isEmpty()) {
+                        ws.walkTopDown()
+                            .maxDepth(3)
+                            .onEnter { it.name != ".snapshots" && it.name != "audit" && it.name != "projects" }
+                            .filter {
+                                it.isFile && it.length() < 1_000_000 &&
+                                    it.extension.lowercase() in setOf("xml", "smali", "py", "js", "sh", "json")
+                            }
+                            .take(25)
+                            .forEach { candidates.add(it) }
+                    }
+                    snapshot = SnapshotManager.create(call.name, candidates.distinct(), ws)
                 }
             } catch (_: Exception) {}
         }
 
+        val startMs = System.currentTimeMillis()
         return try {
-            val args = call.parsedArgs ?: JsonObject(emptyMap())
-            tool.execute(args, ctx)
+            val res = tool.execute(args, ctx)
+            val durationMs = System.currentTimeMillis() - startMs
+            runCatching {
+                AuditLogger.log(call.name, call.arguments, res.content, res.success, durationMs, riskLevel)
+            }
+            res
         } catch (e: Throwable) {
+            val durationMs = System.currentTimeMillis() - startMs
             val rollbackHint = if (snapshot != null) " (可使用快照 ${snapshot.id} 回滚)" else ""
-            ToolResult.err("工具异常：${e.message ?: e.javaClass.simpleName}$rollbackHint")
+            val errMsg = "工具异常：${e.message ?: e.javaClass.simpleName}$rollbackHint"
+            runCatching {
+                AuditLogger.log(call.name, call.arguments, errMsg, false, durationMs, riskLevel)
+            }
+            ToolResult.err(errMsg)
         }
     }
 

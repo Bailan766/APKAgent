@@ -1,159 +1,203 @@
 package com.apkagent.apktools.advanced
 
 import com.apkagent.i18n.L
-
+import com.android.apksig.ApkVerifier
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
 import com.apkagent.agent.strProp
 import com.apkagent.agent.schemaObject
-import com.apkagent.apktools.str
-import com.apkagent.apktools.int
-import com.apkagent.apktools.bool
+import com.apkagent.apktools.Sandbox
+import com.apkagent.apktools.SignatureReader
+import com.apkagent.apktools.strNonBlank
 import kotlinx.serialization.json.JsonObject
-import java.io.ByteArrayInputStream
 import java.io.File
+import java.security.MessageDigest
 import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
+import java.text.SimpleDateFormat
+import java.util.Locale
 import java.util.zip.ZipFile
 
 /**
- * 证书详情查看器：解析 APK 签名证书的详细信息。
+ * APK 证书详情查看工具。
  *
- * 功能：
- * 1. 读取 APK 的签名证书（META-INF/下的.RSA/.DSA/.EC文件）
- * 2. 解析 X.509 证书详细信息
- * 3. 显示颁发者、使用者、有效期、序列号、指纹等
- * 4. 检查证书是否过期
- * 5. 支持 v1/v2/v3 签名方案检测
+ * 修复说明：
+ * 1. 支持通过 ApkVerifier 与 APK Signing Block 提取纯 v2/v3 签名 APK 的证书（不仅限于 META-INF v1）。
+ * 2. 修复 detectSignatureSchemes 误用 app-metadata.properties 判断 v2/v3 的 Bug，改为使用 ApkVerifier 精确校验。
+ * 3. 支持 apk_path 缺省回退至当前打开的 APK 并基于 workspace 解析相对路径。
  */
 object CertificateViewer : Tool {
     override val name = "apk_certificate"
-    override val description get() = L("查看 APK 签名证书详情：颁发者、使用者、有效期、指纹、签名方案等。", "Read details of the APK signature certificate: issuer, user, validity period, fingerprint, signature program, etc.")
+    override val description get() = L(
+        "查看 APK 签名证书的完整信息（颁发者、有效期、指纹、公钥算法、签名方案版本）。",
+        "View full APK signing certificate details (Subject, Issuer, validity, fingerprints, public key, and signature schemes)."
+    )
     override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp(L("APK 文件路径", "AAK File Path"))
+            "apk_path" to strProp(L("APK 文件路径（留空默认当前打开的 APK）", "APK file path (defaults to currently open APK)"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path", "Missing ack Countries"))
-        val apkFile = File(apkPath)
-        if (!apkFile.exists()) return ToolResult(false, "文件不存在: $apkPath")
+        val rawPath = args.strNonBlank("apk_path")
+        val apkFile = when {
+            rawPath != null -> Sandbox.resolve(File(rawPath), ctx.workspace)
+            ctx.openApk != null -> ctx.openApk!!
+            else -> File(ctx.workspace, "base.apk")
+        }
+        if (!apkFile.exists() || !apkFile.isFile) {
+            return ToolResult(false, "文件不存在: ${apkFile.absolutePath}")
+        }
 
         return try {
-            val certificates = extractCertificates(apkFile)
-            if (certificates.isEmpty()) {
-                return ToolResult(false, L("APK 中未找到签名证书", "Could not close temporary folder: %s"))
+            val verifyResult = runCatching { ApkVerifier.Builder(apkFile).build().verify() }.getOrNull()
+            val certs = extractCertificates(apkFile, verifyResult)
+            if (certs.isEmpty()) {
+                return ToolResult(false, L("未找到签名证书（APK 可能未签名）", "No signing certificate found (APK may be unsigned)"))
             }
 
+            val schemes = detectSignatureSchemes(apkFile, verifyResult)
             val sb = StringBuilder()
-            sb.appendLine(L("🔐 APK 签名证书详情：", "Could not close temporary folder: %s"))
+            sb.appendLine("🔐 APK 签名证书详情：${apkFile.name}")
+            sb.appendLine("签名方案: ${schemes.joinToString(", ").ifBlank { "未知" }}")
+            if (verifyResult != null) {
+                sb.appendLine("签名校验状态: ${if (verifyResult.isVerified) "✅ 校验通过" else "⚠️ 校验未通过"}")
+            }
             sb.appendLine()
 
-            // 检测签名方案
-            val signSchemes = detectSignatureSchemes(apkFile)
-            sb.appendLine("📋 签名方案: ${signSchemes.joinToString(", ")}")
-            sb.appendLine()
-
-            certificates.forEachIndexed { index, cert ->
-                sb.appendLine("📜 证书 ${index + 1}:")
-                sb.appendLine(L("   颁发者 (Issuer):", "Issuer (Issuer):"))
-                sb.appendLine("     ${cert.issuerX500Principal.name}")
-                sb.appendLine(L("   使用者 (Subject):", "User (Subject):"))
-                sb.appendLine("     ${cert.subjectX500Principal.name}")
-                sb.appendLine("   序列号: ${cert.serialNumber.toString(16)}")
-                sb.appendLine(L("   版本: X.509 v${cert.version}", "Version: X.509 v${cert.version}"))
-                sb.appendLine("   签名算法: ${cert.sigAlgName}")
-                sb.appendLine(L("   有效期:", "Duration:"))
-                sb.appendLine("     开始: ${cert.notBefore}")
-                sb.appendLine("     结束: ${cert.notAfter}")
-                sb.appendLine("     状态: ${if (cert.hasExpired()) "❌ 已过期" else "✅ 有效"}")
-                sb.appendLine(L("   指纹:", "Fingerprint:"))
-
-                // 计算各种指纹
-                val md5 = cert.encoded.getMessageDigest("MD5")
-                val sha1 = cert.encoded.getMessageDigest("SHA-1")
-                val sha256 = cert.encoded.getMessageDigest("SHA-256")
-
-                sb.appendLine("     MD5:    $md5")
-                sb.appendLine("     SHA-1:  $sha1")
-                sb.appendLine("     SHA-256: $sha256")
-
-                // 公钥信息
-                sb.appendLine(L("   公钥:", "Public key:"))
-                sb.appendLine("     算法: ${cert.publicKey.algorithm}")
-                sb.appendLine("     长度: ${cert.publicKey.encoded.size * 8} bits")
-
+            certs.forEachIndexed { index, cert ->
+                if (certs.size > 1) {
+                    sb.appendLine("━━ 证书 #${index + 1} ━━")
+                }
+                sb.appendLine(formatCertificate(cert))
                 sb.appendLine()
             }
 
             ToolResult(true, sb.toString())
         } catch (e: Exception) {
-            ToolResult(false, "解析证书失败: ${e.message}")
+            ToolResult(false, "读取证书失败: ${e.message}")
         }
     }
 
-    private fun extractCertificates(apkFile: File): List<X509Certificate> {
-        val certificates = mutableListOf<X509Certificate>()
+    private fun extractCertificates(apkFile: File, verifyResult: ApkVerifier.Result?): List<X509Certificate> {
+        if (verifyResult != null && verifyResult.signerCertificates.isNotEmpty()) {
+            return verifyResult.signerCertificates
+        }
+
+        val v2v3Certs = runCatching {
+            SignatureReader.readV2V3(apkFile).flatMap { it.certs }
+        }.getOrDefault(emptyList())
+        if (v2v3Certs.isNotEmpty()) return v2v3Certs.distinct()
+
+        val certs = mutableListOf<X509Certificate>()
         ZipFile(apkFile).use { zip ->
             zip.entries().toList().forEach { entry ->
-                if (entry.name.startsWith("META-INF/") &&
-                    (entry.name.endsWith(".RSA") || entry.name.endsWith(".DSA") ||
-                     entry.name.endsWith(".EC") || entry.name.endsWith(".SF"))) {
+                val upper = entry.name.uppercase()
+                if (upper.startsWith("META-INF/") &&
+                    (upper.endsWith(".RSA") || upper.endsWith(".DSA") || upper.endsWith(".EC"))
+                ) {
                     try {
-                        val data = zip.getInputStream(entry).readBytes()
-                        val cf = CertificateFactory.getInstance("X.509")
-                        val certs = cf.generateCertificates(ByteArrayInputStream(data))
-                        certs.forEach { cert ->
-                            if (cert is X509Certificate) {
-                                certificates.add(cert)
+                        zip.getInputStream(entry).use { input ->
+                            val cf = CertificateFactory.getInstance("X.509")
+                            val certCollection = cf.generateCertificates(input)
+                            certCollection.forEach { cert ->
+                                if (cert is X509Certificate) {
+                                    certs.add(cert)
+                                }
                             }
                         }
-                    } catch (e: Exception) {
-                        // 忽略无法解析的证书
-                    }
+                    } catch (_: Exception) {}
                 }
             }
         }
-        return certificates
+        return certs
     }
 
-    private fun detectSignatureSchemes(apkFile: File): List<String> {
+    private fun detectSignatureSchemes(apkFile: File, verifyResult: ApkVerifier.Result?): List<String> {
         val schemes = mutableListOf<String>()
-        ZipFile(apkFile).use { zip ->
-            val entries = zip.entries().toList().map { it.name }
-
-            // v1 (JAR signing)
-            if (entries.any { it.startsWith("META-INF/") && it.endsWith(".SF") }) {
-                schemes.add("v1 (JAR)")
-            }
-
-            // v2/v3 (APK Signature Scheme)
-            // 需要检查 APK Signing Block，这里简化检测
-            if (entries.any { it == "META-INF/com/android/build/gradle/app-metadata.properties" }) {
-                schemes.add("v2/v3 (Android Gradle)")
-            }
+        if (verifyResult != null) {
+            if (verifyResult.isVerifiedUsingV1Scheme) schemes.add("v1 (JAR Signing)")
+            if (verifyResult.isVerifiedUsingV2Scheme) schemes.add("v2 (APK Signature Scheme v2)")
+            if (verifyResult.isVerifiedUsingV3Scheme) schemes.add("v3 (APK Signature Scheme v3)")
+            if (schemes.isNotEmpty()) return schemes
         }
 
-        if (schemes.isEmpty()) {
-            schemes.add(L("未知", "Unknown"))
+        ZipFile(apkFile).use { zip ->
+            val hasV1 = zip.entries().toList().any {
+                val u = it.name.uppercase()
+                u.startsWith("META-INF/") && (u.endsWith(".SF") || u.endsWith(".RSA") || u.endsWith(".EC"))
+            }
+            if (hasV1) schemes.add("v1 (JAR Signing)")
+        }
+
+        runCatching {
+            SignatureReader.readV2V3(apkFile).forEach { info ->
+                if (info.scheme !in schemes) schemes.add(info.scheme)
+            }
         }
         return schemes
     }
 
-    private fun ByteArray.getMessageDigest(algorithm: String): String {
-        val md = java.security.MessageDigest.getInstance(algorithm)
-        val digest = md.digest(this)
-        return digest.joinToString(":") { "%02X".format(it) }
+    private fun formatCertificate(cert: X509Certificate): String {
+        val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault())
+        val encoded = cert.encoded
+
+        val md5 = digest(encoded, "MD5")
+        val sha1 = digest(encoded, "SHA-1")
+        val sha256 = digest(encoded, "SHA-256")
+
+        val sb = StringBuilder()
+        sb.appendLine("📋 基本信息:")
+        sb.appendLine("  主题 (Subject): ${cert.subjectX500Principal.name}")
+        sb.appendLine("  颁发者 (Issuer): ${cert.issuerX500Principal.name}")
+        sb.appendLine("  序列号: ${cert.serialNumber.toString(16).uppercase()}")
+        sb.appendLine("  版本: v${cert.version}")
+        sb.appendLine()
+
+        sb.appendLine("📅 有效期:")
+        sb.appendLine("  开始时间: ${dateFormat.format(cert.notBefore)}")
+        sb.appendLine("  结束时间: ${dateFormat.format(cert.notAfter)}")
+        val now = System.currentTimeMillis()
+        val isValid = now >= cert.notBefore.time && now <= cert.notAfter.time
+        sb.appendLine("  状态: ${if (isValid) L("✅ 有效", "✅ Valid") else L("❌ 已过期或未生效", "❌ Expired or not yet valid")}")
+        sb.appendLine()
+
+        sb.appendLine("🔑 密钥信息:")
+        sb.appendLine("  签名算法: ${cert.sigAlgName}")
+        sb.appendLine("  公钥算法: ${cert.publicKey.algorithm}")
+        sb.appendLine("  公钥长度: ${getKeySize(cert)} bits")
+        sb.appendLine()
+
+        sb.appendLine("🔍 证书指纹:")
+        sb.appendLine("  MD5:    $md5")
+        sb.appendLine("  SHA-1:  $sha1")
+        sb.appendLine("  SHA-256: $sha256")
+
+        if (cert.subjectX500Principal.name.contains("Android Debug", ignoreCase = true)) {
+            sb.appendLine()
+            sb.appendLine(L("⚠️ 这是 Android Debug 调试证书（非正式发布签名）", "⚠️ This is an Android Debug certificate"))
+        }
+
+        return sb.toString()
     }
 
-    private fun X509Certificate.hasExpired(): Boolean {
+    private fun digest(data: ByteArray, algorithm: String): String {
+        val md = MessageDigest.getInstance(algorithm)
+        val hash = md.digest(data)
+        return hash.joinToString(":") { "%02X".format(it) }
+    }
+
+    private fun getKeySize(cert: X509Certificate): Int {
         return try {
-            checkValidity()
-            false
-        } catch (e: Exception) {
-            true
+            when (val pk = cert.publicKey) {
+                is java.security.interfaces.RSAPublicKey -> pk.modulus.bitLength()
+                is java.security.interfaces.ECPublicKey -> pk.params.order.bitLength()
+                is java.security.interfaces.DSAPublicKey -> pk.params.p.bitLength()
+                else -> -1
+            }
+        } catch (_: Exception) {
+            -1
         }
     }
 }

@@ -1,19 +1,17 @@
 package com.apkagent.agent
 
 import com.apkagent.i18n.L
-
 import android.util.Log
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import java.io.File
-import java.text.SimpleDateFormat
 import java.util.*
 
 /**
  * 操作审计日志。
  * 记录所有工具调用的完整信息：工具名、参数、结果摘要、耗时、成功/失败。
- * 用于事后分析、调试、复现问题。
+ * 全部方法加锁保证并发工具执行时的线程安全。
  */
 object AuditLogger {
     private const val TAG = "AuditLog"
@@ -38,18 +36,14 @@ object AuditLogger {
     private var currentRound = 0
     private val buffer = mutableListOf<AuditEntry>()
 
-    /**
-     * 初始化审计日志文件。
-     */
+    @Synchronized
     fun init(workspaceDir: File) {
         val auditDir = File(workspaceDir, "audit").apply { mkdirs() }
         logFile = File(auditDir, "audit_${sessionId}.jsonl")
-        Log.i(TAG, "审计日志初始化: ${logFile?.absolutePath}")
+        try { Log.i(TAG, "审计日志初始化: ${logFile?.absolutePath}") } catch (_: Throwable) {}
     }
 
-    /**
-     * 记录工具调用。
-     */
+    @Synchronized
     fun log(
         toolName: String,
         arguments: String,
@@ -71,40 +65,37 @@ object AuditLogger {
 
         buffer.add(entry)
 
-        // 异步写入文件
         try {
             val line = json.encodeToString(entry)
             logFile?.appendText(line + "\n")
 
-            // 日志文件大小检查
             logFile?.let { file ->
                 if (file.length() > MAX_LOG_SIZE) {
                     rotateLog(file)
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, L("写入审计日志失败: ${e.message}", "Writing to Audit Log failed: ${e.message}"))
+            try { Log.w(TAG, L("写入审计日志失败: ${e.message}", "Writing to Audit Log failed: ${e.message}")) } catch (_: Throwable) {}
         }
     }
 
+    @Synchronized
     fun nextRound() { currentRound++ }
 
+    @Synchronized
     fun getSessionId(): String = sessionId
 
+    @Synchronized
     fun newSession() {
         sessionId = UUID.randomUUID().toString().take(8)
         currentRound = 0
         buffer.clear()
     }
 
-    /**
-     * 获取最近 N 条审计条目。
-     */
+    @Synchronized
     fun recent(n: Int = 20): List<AuditEntry> = buffer.takeLast(n)
 
-    /**
-     * 获取当前会话统计。
-     */
+    @Synchronized
     fun stats(): String {
         val total = buffer.size
         val success = buffer.count { it.success }
@@ -117,9 +108,9 @@ object AuditLogger {
         try {
             val rotated = File(file.parent, "audit_${sessionId}_${System.currentTimeMillis()}.jsonl")
             file.renameTo(rotated)
-            Log.i(TAG, "日志轮转: ${rotated.name}")
+            try { Log.i(TAG, "日志轮转: ${rotated.name}") } catch (_: Throwable) {}
         } catch (e: Exception) {
-            Log.w(TAG, "日志轮转失败: ${e.message}")
+            try { Log.w(TAG, "日志轮转失败: ${e.message}") } catch (_: Throwable) {}
         }
     }
 }

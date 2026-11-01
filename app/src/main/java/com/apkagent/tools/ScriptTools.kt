@@ -1,176 +1,182 @@
 package com.apkagent.tools
 
 import com.apkagent.i18n.L
-
 import com.apkagent.agent.*
 import com.apkagent.apktools.PythonRunner
+import com.apkagent.apktools.Sandbox
+import com.apkagent.runtime.RuntimeManager
 import com.apkagent.shizuku.ShizukuManager
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import java.io.File
 
 /**
- * AI 自建脚本 — 创建并执行任意脚本（Python/Node/Bash）
+ * 动态脚本创建与执行工具 — 让 AI 能够自己写脚本解决未知问题
+ *
+ * 修复说明：
+ * 1. 修复 CreateScriptTool 保存到 workspace/scripts/ 而 RunScriptTool 只查找 workspace/ 根目录导致文件找不到的路径不一致 Bug。
+ * 2. 修复 RunScriptTool 先 waitFor() 后读取 inputStream 导致输出超过 64KB 管道缓冲区时死锁的 Bug。
+ * 3. 在 Shizuku 模式下追加 2>&1 重定向，确保 Python/Node 异常堆栈（stderr）能完整返回给 AI。
  */
-class CreateScriptTool : Tool {
+object CreateScriptTool : Tool {
     override val name = "create_script"
-    override val description get() = L("在工作区创建脚本文件。支持 Python/Node.js/Bash。参数：filename（文件名如 script.py）、content（脚本内容）、scriptType（python/node/bash）。", "Creates a script file in the workspace. Support for Python/Node.js/Bash. Parameters: filename (file name such as script.py), variable (script content), scriptType (python/node/bash).")
-    override val parameters: JsonObject = schemaObject(
-        properties = mapOf(
-            "filename" to strProp(L("脚本文件名（如 analyze.py、hook.js、scan.sh）", "Script file name (e. g. analize.py, hook.js, scan.sh)")),
-            "content" to strProp(L("脚本完整内容", "Script Full")),
-            "scriptType" to strProp(L("脚本类型", "Script Type"), listOf("python", "node", "bash"))
-        ),
-        required = listOf("filename", "content")
+    override val description get() = L(
+        "创建自定义脚本（Python/JavaScript/Shell）用于解决特殊问题（如自定义解密算法、批量处理、Frida Hook）",
+        "Create custom scripts (Python/JavaScript/Shell) for custom decryption, batch processing, or Frida hooks"
     )
 
-    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        // 兼容 AI 传不同的参数名
-        val filename = args["filename"]?.jsonPrimitive?.contentOrNull
-            ?: args["script_name"]?.jsonPrimitive?.contentOrNull
-            ?: args["name"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err(L("缺少 filename（试传: filename/script_name/name）", "Missing filename (test: filename/script name/name)"))
-        val content = args["content"]?.jsonPrimitive?.contentOrNull
-            ?: args["script_content"]?.jsonPrimitive?.contentOrNull
-            ?: args["code"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err(L("缺少 content（试传: content/script_content/code）", "Missing content (test transfer: request/script content/code)"))
-        val scriptType = args["scriptType"]?.jsonPrimitive?.contentOrNull ?: guessType(filename)
-
-        val scriptDir = File(ctx.workspace, "scripts")
-        scriptDir.mkdirs()
-        val scriptFile = File(scriptDir, filename)
-        scriptFile.writeText(content)
-
-        // 自动添加 shebang 和执行权限
-        if (scriptType == "bash" && !content.startsWith("#!")) {
-            scriptFile.writeText("#!/bin/sh\n$content")
+    override val parameters get() = buildJsonObject {
+        put("type", "object")
+        putJsonObject("properties") {
+            putJsonObject("filename") {
+                put("type", "string")
+                put("description", L("脚本文件名（如 decrypt.py, hook.js, batch.sh）", "Script filename (e.g., decrypt.py, hook.js, batch.sh)"))
+            }
+            putJsonObject("content") {
+                put("type", "string")
+                put("description", L("脚本完整代码内容", "Full script source code"))
+            }
+            putJsonObject("description") {
+                put("type", "string")
+                put("description", L("脚本用途说明", "Script description"))
+            }
         }
-        scriptFile.setExecutable(true)
-
-        // Shizuku 确保权限
-        if (ShizukuManager.isAuthorized()) {
-            ShizukuManager.chmod(scriptFile.absolutePath, "755")
+        putJsonArray("required") {
+            add("filename")
+            add("content")
         }
-
-        return ToolResult.ok("\u2705 脚本已创建：${scriptFile.absolutePath}\n类型：$scriptType\n大小：${content.length} 字符\n\n使用 run_script 工具执行此脚本。")
     }
 
-    private fun guessType(filename: String): String = when {
-        filename.endsWith(".py") -> "python"
-        filename.endsWith(".js") -> "node"
-        filename.endsWith(".sh") || filename.endsWith(".bash") -> "bash"
-        else -> "bash"
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val filename = args["filename"]?.jsonPrimitive?.contentOrNull?.trim()
+            ?: return ToolResult(false, L("缺少 filename 参数", "Missing filename parameter"))
+        val content = args["content"]?.jsonPrimitive?.contentOrNull
+            ?: return ToolResult(false, L("缺少 content 参数", "Missing content parameter"))
+        val desc = args["description"]?.jsonPrimitive?.contentOrNull ?: ""
+
+        val scriptFile = if (filename.contains('/') || filename.contains('\\')) {
+            Sandbox.resolve(File(filename), ctx.workspace)
+        } else {
+            val scriptsDir = File(ctx.workspace, "scripts")
+            scriptsDir.mkdirs()
+            File(scriptsDir, filename)
+        }
+        scriptFile.parentFile?.mkdirs()
+
+        return try {
+            scriptFile.writeText(content)
+            scriptFile.setExecutable(true)
+            ToolResult(
+                true,
+                "✅ 脚本已创建: ${scriptFile.absolutePath}\n用途: $desc\n大小: ${content.length} 字节\n\n可使用 `run_script` 工具执行此脚本"
+            )
+        } catch (e: Exception) {
+            ToolResult(false, "创建脚本失败: ${e.message}")
+        }
     }
 }
 
-/**
- * 执行任意脚本文件 — 优先通过 Shizuku shell 权限执行
- */
-class RunScriptTool : Tool {
+object RunScriptTool : Tool {
     override val name = "run_script"
-    override val description get() = L("执行工作区内的脚本文件。通过 Shizuku shell 权限执行，绕过权限限制。参数：scriptPath（脚本路径）、args（命令行参数）、timeout（超时秒数，默认60）。", "Script document in the implementation area. Runs through Shizuku shell privileges, bypassing them. Parameters: scriptPath (script path), args (command line parameter), timeout (hours over seconds, default 60).")
-    override val parameters: JsonObject = schemaObject(
-        properties = mapOf(
-            "scriptPath" to strProp(L("脚本文件路径（工作区内或绝对路径）", "Script file path (working area or absolute path)")),
-            "args" to strProp(L("命令行参数（可选）", "Command line parameters (optional)")),
-            "timeout" to intProp(L("超时秒数，默认 60", "Timeout seconds, default 60"))
-        ),
-        required = listOf("scriptPath")
+    override val description get() = L(
+        "执行工作区中的脚本（支持 .py/.js/.sh），可传递参数",
+        "Execute scripts (.py/.js/.sh) in the workspace with optional arguments"
     )
 
-    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val scriptPath = args["scriptPath"]?.jsonPrimitive?.contentOrNull
-            ?: args["script_path"]?.jsonPrimitive?.contentOrNull
-            ?: args["path"]?.jsonPrimitive?.contentOrNull
-            ?: return ToolResult.err(L("缺少 scriptPath（试传: scriptPath/script_path/path）", "Missing scriptPath (test: scriptPath/script path/path)"))
-        val scriptArgs = args["args"]?.jsonPrimitive?.contentOrNull ?: ""
-        val timeout = (args["timeout"]?.jsonPrimitive?.intOrNull ?: 60) * 1000L
-
-        // 防御：AI 有时把解释器名（sh/bash/python3/node）当 scriptPath 传入
-        val knownInterpreters = setOf("sh", "bash", "python3", "python", "node")
-        var actualScriptPath = scriptPath
-        var actualArgs = scriptArgs
-        if (scriptPath in knownInterpreters && scriptArgs.isNotBlank()) {
-            // AI 传反了：scriptPath 是解释器，args 才是真正的脚本路径
-            actualScriptPath = scriptArgs.split(Regex("""\s+""")).firstOrNull() ?: scriptArgs
-            actualArgs = scriptArgs.split(Regex("""\s+""")).drop(1).joinToString(" ")
-        }
-
-        val scriptFile = File(actualScriptPath).let { f ->
-            if (f.isAbsolute) f else File(ctx.workspace, actualScriptPath)
-        }
-        if (!scriptFile.exists()) return ToolResult.err("脚本不存在: ${scriptFile.absolutePath}")
-
-        // 确定解释器 — 使用完整路径，Shizuku shell PATH 很有限
-        val interpreter = when {
-            scriptFile.name.endsWith(".py") -> {
-                PythonRunner.findPython() ?: "python3"
+    override val parameters get() = buildJsonObject {
+        put("type", "object")
+        putJsonObject("properties") {
+            putJsonObject("script_path") {
+                put("type", "string")
+                put("description", L("脚本路径（相对工作区或绝对路径，也可传入文件名）", "Script path (relative to workspace, filename in scripts/, or absolute path)"))
             }
-            scriptFile.name.endsWith(".js") -> {
-                // 优先找 NodeRunner 的路径
-                val nodePath = listOf(
-                    "/data/local/tmp/apkagent_node/bin/node",
-                    "/data/data/com.termux/files/usr/bin/node",
-                    "/data/data/com.termux.nix/files/usr/bin/node",
-                    "/sdcard/APKAgent/node/bin/node"
-                ).firstOrNull { File(it).exists() }
-                nodePath ?: "node"
+            putJsonObject("script") {
+                put("type", "string")
+                put("description", L("脚本文件名（兼容别名）", "Script filename (alias for script_path)"))
             }
-            scriptFile.name.endsWith(".sh") || scriptFile.name.endsWith(".bash") -> "sh"
-            scriptFile.canExecute() -> scriptFile.absolutePath
-            else -> "sh"
+            putJsonObject("args") {
+                put("type", "string")
+                put("description", L("传递给脚本的命令行参数（可选）", "Command-line arguments passed to the script (optional)"))
+            }
+            putJsonObject("timeout") {
+                put("type", "integer")
+                put("description", L("超时时间（秒，默认 60）", "Timeout in seconds (default 60)"))
+            }
+        }
+    }
+
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult = withContext(Dispatchers.IO) {
+        val actualScriptPath = (args["script_path"]?.jsonPrimitive?.contentOrNull
+            ?: args["script"]?.jsonPrimitive?.contentOrNull)?.trim()
+            ?: return@withContext ToolResult(false, L("缺少 script_path 参数", "Missing script_path parameter"))
+        val scriptArgs = args["args"]?.jsonPrimitive?.contentOrNull?.trim() ?: ""
+        val timeout = (args["timeout"]?.jsonPrimitive?.intOrNull ?: 60).coerceIn(5, 600)
+
+        val candidates = listOf(
+            Sandbox.resolve(File(actualScriptPath), ctx.workspace),
+            File(ctx.workspace, "scripts/$actualScriptPath"),
+            File(ctx.workspace, "scripts/${File(actualScriptPath).name}")
+        )
+        val scriptFile = candidates.firstOrNull { it.exists() && it.isFile }
+            ?: return@withContext ToolResult(false, "脚本文件不存在: $actualScriptPath")
+
+        // 如果无命令行参数且是 .py 脚本，优先走 PythonRunner（支持自动部署到 /data/local/tmp）
+        if (scriptFile.extension.equals("py", ignoreCase = true) && scriptArgs.isBlank()) {
+            val pyRes = PythonRunner.execute(scriptFile, timeoutSeconds = timeout, workDir = ctx.workspace)
+            if (pyRes.success || pyRes.output != null) {
+                return@withContext ToolResult(
+                    pyRes.success,
+                    "脚本执行完成 (${scriptFile.name})\n\n输出:\n${pyRes.combined.take(10000)}"
+                )
+            }
         }
 
-        val argsStr = if (actualArgs.isNotBlank()) " $actualArgs" else ""
-        val cmd = "$interpreter '${scriptFile.absolutePath}'$argsStr"
+        val runtimeManager = RuntimeManager(ctx.appContext)
+        val command = when (scriptFile.extension.lowercase()) {
+            "py" -> {
+                val pythonCmd = PythonRunner.findPython() ?: runtimeManager.getPythonCommand()
+                    ?: return@withContext ToolResult(false, L("Python 环境未安装，请先在设置中安装 Python 运行时", "Python runtime is not installed"))
+                "'$pythonCmd' '${scriptFile.absolutePath}' $scriptArgs 2>&1"
+            }
+            "js" -> {
+                val nodeCmd = runtimeManager.getNodeCommand()
+                    ?: return@withContext ToolResult(false, L("Node.js 环境未安装，请先在设置中安装 Node.js 运行时", "Node.js runtime is not installed"))
+                "'$nodeCmd' '${scriptFile.absolutePath}' $scriptArgs 2>&1"
+            }
+            "sh" -> "sh '${scriptFile.absolutePath}' $scriptArgs 2>&1"
+            else -> return@withContext ToolResult(false, "不支持的脚本类型: .${scriptFile.extension}")
+        }
 
-        return try {
-            // 优先用 Shizuku shell 权限执行
-            if (ShizukuManager.isAuthorized()) {
-                val workDir = ctx.workspace.absolutePath
-                val fullCmd = "cd '$workDir' && $cmd"
-                val process = ShizukuManager.execShizuku(fullCmd)
-                    ?: return ToolResult.err(L("Shizuku 执行失败", "Shizuku execution failed"))
-
-                val finished = process.waitFor(timeout, java.util.concurrent.TimeUnit.MILLISECONDS)
-                if (finished == false) {
-                    process.destroyForcibly()
-                    return ToolResult.err("脚本执行超时（${timeout/1000}秒）")
-                }
-
-                val output = process.inputStream.bufferedReader().readText()
-                val exitCode = process.exitValue()
-
-                return if (exitCode == 0) {
-                    ToolResult.ok("\u2705 脚本执行成功 (exit=$exitCode, Shizuku shell):\n\n${output.take(10000)}")
+        try {
+            withTimeout(timeout * 1000L) {
+                val process = if (ShizukuManager.isAuthorized()) {
+                    ShizukuManager.execShizuku("cd '${ctx.workspace.absolutePath}' && $command")
                 } else {
-                    ToolResult.err("\u274c 脚本执行失败 (exit=$exitCode):\n\n${output.take(10000)}")
+                    ProcessBuilder("sh", "-c", command)
+                        .directory(ctx.workspace)
+                        .redirectErrorStream(true)
+                        .start()
+                } ?: return@withTimeout ToolResult(false, L("无法启动脚本进程", "Unable to start script process"))
+
+                // 先完整读取输出流再 waitFor，防止超过 64KB 缓冲区死锁
+                val stdout = process.inputStream.bufferedReader().use { it.readText() }
+                val exitCode = process.waitFor()
+
+                val output = buildString {
+                    appendLine("脚本执行完成 (退出码: $exitCode)")
+                    if (stdout.isNotBlank()) {
+                        appendLine("\n输出:")
+                        appendLine(stdout.take(10000))
+                    }
                 }
+                ToolResult(exitCode == 0, output)
             }
-
-            // 回退到普通 ProcessBuilder
-            val pb = ProcessBuilder(interpreter, scriptFile.absolutePath, *actualArgs.split(" ").filter { it.isNotBlank() }.toTypedArray())
-            pb.directory(ctx.workspace)
-            pb.environment()["APKAGENT_WORKSPACE"] = ctx.workspace.absolutePath
-            ctx.openApk?.let { pb.environment()["APKAGENT_APK"] = it.absolutePath }
-            pb.redirectErrorStream(true)
-
-            val process = pb.start()
-            val finished = process.waitFor(timeout, java.util.concurrent.TimeUnit.MILLISECONDS)
-            if (finished == false) {
-                process.destroyForcibly()
-                return ToolResult.err("脚本执行超时（${timeout/1000}秒）")
-            }
-
-            val output = process.inputStream.bufferedReader().readText()
-            val exitCode = process.exitValue()
-
-            if (exitCode == 0) {
-                ToolResult.ok("\u2705 脚本执行成功 (exit=$exitCode):\n\n${output.take(10000)}")
-            } else {
-                ToolResult.err("\u274c 脚本执行失败 (exit=$exitCode):\n\n${output.take(10000)}")
-            }
+        } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+            ToolResult(false, "脚本执行超时 (${timeout}秒)")
         } catch (e: Exception) {
-            ToolResult.err("执行异常: ${e.message}")
+            ToolResult(false, "执行脚本异常: ${e.message}")
         }
     }
 }

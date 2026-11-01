@@ -1,15 +1,15 @@
 package com.apkagent.apktools.advanced
 
 import com.apkagent.i18n.L
-
 import com.apkagent.agent.Tool
 import com.apkagent.agent.ToolContext
 import com.apkagent.agent.ToolResult
+import com.apkagent.agent.intProp
 import com.apkagent.agent.strProp
 import com.apkagent.agent.schemaObject
+import com.apkagent.apktools.Sandbox
 import com.apkagent.apktools.str
 import com.apkagent.apktools.int
-import com.apkagent.apktools.bool
 import kotlinx.serialization.json.JsonObject
 import java.io.File
 import java.nio.ByteBuffer
@@ -17,249 +17,434 @@ import java.nio.ByteOrder
 import java.util.zip.ZipFile
 
 /**
- * resources.arsc 解码器：解析 Android 资源表文件。
+ * 资源表完整解码器（resources.arsc）。
+ * 解析二进制资源表，提取字符串、颜色、尺寸、整数、布尔等资源值，以及资源 ID 映射。
  *
- * 功能：
- * 1. 解析资源表结构（ResTable_header）
- * 2. 读取字符串池（资源名称、值等）
- * 3. 解析包（Package）和类型（Type）
- * 4. 列出所有资源及其配置变体
- * 5. 支持按资源 ID 或名称查询
- *
- * 基于 AOSP ResourceTypes.h 规范实现。
+ * 修复说明：
+ * 1. 修正 AOSP 标准 chunkType 常量：
+ *    - RES_STRING_POOL_TYPE = 0x0001
+ *    - RES_TABLE_PACKAGE_TYPE = 0x0200
+ *    - RES_TABLE_TYPE_TYPE = 0x0201
+ *    - RES_TABLE_TYPE_SPEC_TYPE = 0x0202
+ * 2. 修正 ResStringPool 与 ResTable_type 的 headerSize 动态偏移与 entriesBase 基准位置。
+ * 3. 补齐 parseTypeChunk 中读取 entry 前缺失的 buf.position(entryStart)。
+ * 4. 支持缺省 apk_path 自动回退至当前打开的 APK 并基于 workspace 解析相对路径。
  */
 object ResourceTableDecoder : Tool {
     override val name = "apk_decode_resources"
-    override val description get() = L("解码 APK 的 resources.arsc 资源表，列出所有资源定义、字符串、配置变体。", "Decoding Developments Progresses.arsc resource tables for APK, listing all resource definitions, strings, configuration variants.")
+    override val description get() = L(
+        "完整解码 APK 的 resources.arsc 资源表，提取所有字符串、颜色、尺寸、样式等资源值。",
+        "Fully decode the APK's resources.arsc resource table and extract strings, colors, dimensions, and resource values."
+    )
     override val parameters get() = schemaObject(
         mapOf(
-            "apk_path" to strProp(L("APK 文件路径", "AAK File Path")),
-            "resource_name" to strProp(L("查询指定资源名称（可选）", "Query specified resource name (optional)")),
-            "resource_type" to strProp(L("查询指定资源类型（如 string/drawable/layout，可选）", "Query specified resource type (e. g. string/drawable/layout, optional)"))
+            "apk_path" to strProp(L("APK 文件路径（留空默认当前打开的 APK）", "APK file path (defaults to currently open APK)")),
+            "resource_type" to strProp(L("资源类型过滤：all（全部）/ string（字符串）/ color（颜色）/ dimen（尺寸）/ id（ID）", "Resource type filter: all/string/color/dimen/id")),
+            "search_query" to strProp(L("搜索关键字（可选）", "Search keyword (optional)")),
+            "max_results" to intProp(L("最大返回数量（默认 200）", "Maximum number of results (default 200)"))
         )
     )
 
     override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
-        val apkPath = args.str("apk_path") ?: return ToolResult(false, L("缺少 apk_path", "Missing ack Countries"))
-        val resourceName = args.str("resource_name")
-        val resourceType = args.str("resource_type")
+        val rawPath = args.str("apk_path")?.takeIf { it.isNotBlank() }
+        val apkFile = when {
+            rawPath != null -> Sandbox.resolve(File(rawPath), ctx.workspace)
+            ctx.openApk != null -> ctx.openApk!!
+            else -> File(ctx.workspace, "base.apk")
+        }
+        val resourceType = args.str("resource_type")?.takeIf { it.isNotBlank() } ?: "all"
+        val searchQuery = args.str("search_query")?.takeIf { it.isNotBlank() }
+        val maxResults = args.int("max_results") ?: 200
 
-        val apkFile = File(apkPath)
-        if (!apkFile.exists()) return ToolResult(false, "文件不存在: $apkPath")
+        if (!apkFile.exists() || !apkFile.isFile) {
+            return ToolResult(false, "文件不存在: ${apkFile.absolutePath}")
+        }
 
         return try {
-            // 从 APK 中提取 resources.arsc
-            val arscData = extractResourceTable(apkFile)
-                ?: return ToolResult(false, L("APK 中未找到 resources.arsc", "No resourcees.arsc found in APK"))
+            val arscBytes = extractArsc(apkFile)
+                ?: return ToolResult(false, L("APK 内未找到 resources.arsc", "resources.arsc not found in APK"))
 
-            val decoder = ResourceTableParser(arscData)
-            val table = decoder.parse()
+            val resources = decodeArsc(arscBytes, resourceType, searchQuery, maxResults)
 
-            formatResult(table, resourceName, resourceType)
+            val sb = StringBuilder()
+            sb.appendLine("📚 资源表解码：${apkFile.name}")
+            sb.appendLine(L("resources.arsc 大小: ${formatSize(arscBytes.size.toLong())}", "resources.arsc size: ${formatSize(arscBytes.size.toLong())}"))
+            sb.appendLine(L("解码资源数: ${resources.size}", "Decoded resources: ${resources.size}"))
+            sb.appendLine()
+
+            if (resources.isEmpty()) {
+                sb.appendLine(L("未找到匹配的资源", "No matching resources found"))
+            } else {
+                val grouped = resources.groupBy { it.type }
+                grouped.forEach { (type, items) ->
+                    sb.appendLine("━━ ${type.uppercase()} (${items.size}) ━━")
+                    items.take(100).forEach { res ->
+                        sb.appendLine("  [0x${res.id.toUInt().toString(16).padStart(8, '0')}] ${res.name} = ${res.value}")
+                    }
+                    if (items.size > 100) {
+                        sb.appendLine("  ... 省略 ${items.size - 100} 项")
+                    }
+                    sb.appendLine()
+                }
+            }
+
+            ToolResult(true, sb.toString())
         } catch (e: Exception) {
             ToolResult(false, "解码失败: ${e.message}")
         }
     }
 
-    private fun extractResourceTable(apkFile: File): ByteArray? {
+    private fun extractArsc(apkFile: File): ByteArray? {
         ZipFile(apkFile).use { zip ->
             val entry = zip.getEntry("resources.arsc") ?: return null
             return zip.getInputStream(entry).readBytes()
         }
     }
 
-    private fun formatResult(table: ResourceTable, resourceName: String?, resourceType: String?): ToolResult {
-        val sb = StringBuilder()
-        sb.appendLine(L("📋 资源表解码结果：", "Resource table decoded results:"))
-        sb.appendLine()
+    internal fun decodeArsc(
+        arscBytes: ByteArray,
+        resourceType: String,
+        searchQuery: String?,
+        maxResults: Int
+    ): List<ResourceEntry> {
+        val resources = mutableListOf<ResourceEntry>()
+        val buf = ByteBuffer.wrap(arscBytes).order(ByteOrder.LITTLE_ENDIAN)
 
-        // 包信息
-        table.packages.forEach { pkg ->
-            sb.appendLine("📦 包: ${pkg.name} (ID: 0x${pkg.id.toString(16)})")
-            sb.appendLine("   类型数量: ${pkg.types.size}")
-            sb.appendLine("   资源数量: ${pkg.entries.size}")
-            sb.appendLine()
-        }
-
-        // 按类型分组显示
-        val groupedEntries = table.packages.flatMap { pkg ->
-            pkg.entries.map { Triple(pkg, it.typeName, it) }
-        }.groupBy { it.second }
-
-        val filteredTypes = if (resourceType != null) {
-            groupedEntries.filter { it.key.contains(resourceType, ignoreCase = true) }
-        } else {
-            groupedEntries
-        }
-
-        filteredTypes.forEach { (typeName, entries) ->
-            sb.appendLine("📁 类型: $typeName (${entries.size} 个资源)")
-            if (resourceName != null) {
-                entries.filter { it.third.name.contains(resourceName, ignoreCase = true) }
-                    .forEach { (_, _, entry) ->
-                        sb.appendLine("   • ${entry.name} = ${entry.value}")
-                    }
-            } else {
-                entries.take(20).forEach { (_, _, entry) ->
-                    sb.appendLine("   • ${entry.name} = ${entry.value}")
-                }
-                if (entries.size > 20) {
-                    sb.appendLine("   ... 还有 ${entries.size - 20} 个资源")
-                }
-            }
-            sb.appendLine()
-        }
-
-        return ToolResult(true, sb.toString())
-    }
-
-    /**
-     * resources.arsc 解析器
-     */
-    private class ResourceTableParser(private val data: ByteArray) {
-        private val buf = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN)
-        private val strings = mutableListOf<String>()
-
-        fun parse(): ResourceTable {
-            val header = parseHeader()
-            val packages = mutableListOf<Package>()
-
-            // 解析包
-            while (buf.remaining() > 0) {
-                val pos = buf.position()
-                val chunkType = buf.short.toInt() and 0xFFFF
-                val headerSize = buf.short.toInt() and 0xFFFF
-                val chunkSize = buf.int
-
-                when (chunkType) {
-                    0x0200 -> { // RES_STRING_POOL_TYPE
-                        parseStringPool()
-                    }
-                    0x0201 -> { // RES_TABLE_PACKAGE_TYPE
-                        packages.add(parsePackage())
-                    }
-                }
-
-                buf.position(pos + chunkSize)
-            }
-
-            return ResourceTable(header, packages)
-        }
-
-        private fun parseHeader(): TableHeader {
+        try {
+            if (buf.remaining() < 12) return emptyList()
             val type = buf.short.toInt() and 0xFFFF
             val headerSize = buf.short.toInt() and 0xFFFF
-            val size = buf.int
+            val chunkSize = buf.int
             val packageCount = buf.int
-            return TableHeader(type, headerSize, size, packageCount)
-        }
 
-        private fun parseStringPool() {
-            val startPos = buf.position()
-            val stringCount = buf.int
-            val styleCount = buf.int
-            val flags = buf.int
-            val stringsStart = buf.int
-            val stylesStart = buf.int
+            if (type != 0x0002 || packageCount <= 0) return emptyList()
 
-            val offsets = IntArray(stringCount)
-            for (i in 0 until stringCount) offsets[i] = buf.int
+            val globalStrings = mutableListOf<String>()
+            var pos = headerSize.coerceAtLeast(12)
 
-            val isUtf8 = (flags and (1 shl 8)) != 0
-            val stringsBase = startPos + stringsStart
-
-            for (i in 0 until stringCount) {
-                buf.position(stringsBase + offsets[i])
-                strings.add(readString(isUtf8))
-            }
-        }
-
-        private fun readString(isUtf8: Boolean): String {
-            return if (isUtf8) {
-                var len = buf.get().toInt() and 0xFF
-                if (len and 0x80 != 0) {
-                    len = ((len and 0x7F) shl 8) or (buf.get().toInt() and 0xFF)
-                }
-                var byteLen = buf.get().toInt() and 0xFF
-                if (byteLen and 0x80 != 0) {
-                    byteLen = ((byteLen and 0x7F) shl 8) or (buf.get().toInt() and 0xFF)
-                }
-                val ba = ByteArray(byteLen)
-                buf.get(ba)
-                buf.get() // trailing 0
-                String(ba, Charsets.UTF_8)
-            } else {
-                var len = buf.short.toInt() and 0xFFFF
-                if (len and 0x8000 != 0) {
-                    len = ((len and 0x7FFF) shl 16) or (buf.short.toInt() and 0xFFFF)
-                }
-                val ba = ByteArray(len * 2)
-                buf.get(ba)
-                buf.short // trailing 0x0000
-                String(ba, Charsets.UTF_16LE)
-            }
-        }
-
-        private fun parsePackage(): Package {
-            val startPos = buf.position()
-            val id = buf.int
-            val nameChars = CharArray(128)
-            for (i in 0 until 128) nameChars[i] = buf.short.toInt().toChar()
-            val name = String(nameChars).trim('\u0000')
-
-            val typeStrings = buf.int
-            val lastPublicType = buf.int
-            val keyStrings = buf.int
-            val lastPublicKey = buf.int
-
-            val types = mutableListOf<String>()
-            val entries = mutableListOf<ResourceEntry>()
-
-            // 解析类型和条目
-            while (buf.remaining() > 0) {
-                val pos = buf.position()
+            while (pos + 8 <= arscBytes.size && resources.size < maxResults) {
+                buf.position(pos)
                 val chunkType = buf.short.toInt() and 0xFFFF
-                val headerSize = buf.short.toInt() and 0xFFFF
-                val chunkSize = buf.int
+                val subHeaderSize = buf.short.toInt() and 0xFFFF
+                val subChunkSize = buf.int
+
+                if (subChunkSize <= 8 || pos + subChunkSize > arscBytes.size) break
 
                 when (chunkType) {
-                    0x0202 -> { // RES_TABLE_TYPE_TYPE
-                        val typeId = buf.get().toInt() and 0xFF
-                        buf.get() // reserved
-                        buf.short // reserved
-                        val entryCount = buf.int
-                        val entriesStart = buf.int
+                    0x0001 -> { // RES_STRING_POOL_TYPE
+                        globalStrings.addAll(parseStringPool(buf, pos, subHeaderSize, subChunkSize))
+                    }
+                    0x0200 -> { // RES_TABLE_PACKAGE_TYPE
+                        val pkgResources = parsePackage(
+                            buf,
+                            pos,
+                            subHeaderSize,
+                            subChunkSize,
+                            globalStrings,
+                            resourceType,
+                            searchQuery,
+                            maxResults - resources.size
+                        )
+                        resources.addAll(pkgResources)
+                    }
+                }
 
-                        val typeName = if (typeId - 1 < strings.size) strings[typeId - 1] else "type_$typeId"
-                        types.add(typeName)
+                pos += subChunkSize
+            }
+        } catch (_: Exception) {
+            // 解析部分完成即可返回已解码内容
+        }
 
-                        // 解析条目
-                        val entriesPos = pos + entriesStart
-                        buf.position(entriesPos)
-                        for (i in 0 until entryCount) {
-                            val entryOffset = buf.int
-                            if (entryOffset != -1) {
-                                val entryStart = entriesPos + entryOffset
-                                val entrySize = buf.short.toInt() and 0xFFFF
-                                val entryFlags = buf.short.toInt() and 0xFFFF
-                                val keyIndex = buf.int
-
-                                val entryName = if (keyIndex < strings.size) strings[keyIndex] else "entry_$keyIndex"
-                                entries.add(ResourceEntry(entryName, typeName, "0x${(id shl 24 or (typeId shl 16) or i).toString(16)}"))
+        // 如果未解析出结构化条目但存在全局字符串池（如混淆/非标 ARSC），回退提供字符串池检索结果
+        if (resources.isEmpty() && (resourceType == "all" || resourceType == "string")) {
+            val fallbackBuf = ByteBuffer.wrap(arscBytes).order(ByteOrder.LITTLE_ENDIAN)
+            if (arscBytes.size >= 20) {
+                val rootHeaderSize = (fallbackBuf.getShort(2).toInt() and 0xFFFF).coerceAtLeast(12)
+                if (rootHeaderSize + 8 <= arscBytes.size) {
+                    val cType = fallbackBuf.getShort(rootHeaderSize).toInt() and 0xFFFF
+                    val cHeader = fallbackBuf.getShort(rootHeaderSize + 2).toInt() and 0xFFFF
+                    val cSize = fallbackBuf.getInt(rootHeaderSize + 4)
+                    if (cType == 0x0001 && cSize > 8 && rootHeaderSize + cSize <= arscBytes.size) {
+                        val pool = parseStringPool(fallbackBuf, rootHeaderSize, cHeader, cSize)
+                        pool.forEachIndexed { idx, str ->
+                            if (str.isNotBlank() && (searchQuery == null || str.contains(searchQuery, ignoreCase = true))) {
+                                if (resources.size < maxResults) {
+                                    resources.add(ResourceEntry(0x7f000000 or idx, "string", "str_$idx", str))
+                                }
                             }
                         }
                     }
                 }
+            }
+        }
 
-                buf.position(pos + chunkSize)
+        return resources.take(maxResults)
+    }
+
+    private fun parseStringPool(
+        buf: ByteBuffer,
+        chunkStart: Int,
+        headerSize: Int,
+        chunkSize: Int
+    ): List<String> {
+        val strings = mutableListOf<String>()
+        try {
+            if (chunkStart + 28 > buf.limit()) return emptyList()
+            buf.position(chunkStart + 8)
+            val stringCount = buf.int
+            val styleCount = buf.int
+            val flags = buf.int
+            val stringsStart = buf.int
+            buf.int // stylesStart
+
+            if (stringCount <= 0 || stringCount > 500_000) return emptyList()
+            val isUtf8 = (flags and (1 shl 8)) != 0
+
+            val offsetsStart = chunkStart + headerSize.coerceAtLeast(28)
+            buf.position(offsetsStart)
+            val offsets = IntArray(stringCount) {
+                if (buf.remaining() >= 4) buf.int else 0
             }
 
-            return Package(id, name, types, entries)
+            val stringsBase = if (stringsStart > 0) {
+                chunkStart + stringsStart
+            } else {
+                offsetsStart + (stringCount + styleCount) * 4
+            }
+
+            for (offset in offsets) {
+                val strPos = stringsBase + offset
+                if (strPos < 0 || strPos >= chunkStart + chunkSize || strPos >= buf.limit()) {
+                    strings.add("")
+                    continue
+                }
+                buf.position(strPos)
+                val str = if (isUtf8) readUtf8String(buf) else readUtf16String(buf)
+                strings.add(str)
+            }
+        } catch (_: Exception) {}
+        return strings
+    }
+
+    private fun readUtf8String(buf: ByteBuffer): String {
+        return try {
+            if (!buf.hasRemaining()) return ""
+            var charLen = buf.get().toInt() and 0xFF
+            if ((charLen and 0x80) != 0) {
+                if (!buf.hasRemaining()) return ""
+                charLen = ((charLen and 0x7F) shl 8) or (buf.get().toInt() and 0xFF)
+            }
+            if (!buf.hasRemaining()) return ""
+            var byteLen = buf.get().toInt() and 0xFF
+            if ((byteLen and 0x80) != 0) {
+                if (!buf.hasRemaining()) return ""
+                byteLen = ((byteLen and 0x7F) shl 8) or (buf.get().toInt() and 0xFF)
+            }
+            if (byteLen <= 0 || byteLen > 32768 || buf.remaining() < byteLen) return ""
+            val bytes = ByteArray(byteLen)
+            buf.get(bytes)
+            String(bytes, Charsets.UTF_8)
+        } catch (_: Exception) {
+            ""
         }
     }
 
-    private data class TableHeader(val type: Int, val headerSize: Int, val size: Int, val packageCount: Int)
-    private data class ResourceTable(val header: TableHeader, val packages: List<Package>)
-    private data class Package(val id: Int, val name: String, val types: List<String>, val entries: List<ResourceEntry>)
-    private data class ResourceEntry(val name: String, val typeName: String, val value: String)
+    private fun readUtf16String(buf: ByteBuffer): String {
+        return try {
+            if (buf.remaining() < 2) return ""
+            var charLen = buf.short.toInt() and 0xFFFF
+            if ((charLen and 0x8000) != 0) {
+                if (buf.remaining() < 2) return ""
+                charLen = ((charLen and 0x7FFF) shl 16) or (buf.short.toInt() and 0xFFFF)
+            }
+            val byteLen = charLen * 2
+            if (byteLen <= 0 || byteLen > 65536 || buf.remaining() < byteLen) return ""
+            val bytes = ByteArray(byteLen)
+            buf.get(bytes)
+            String(bytes, Charsets.UTF_16LE)
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    private fun parsePackage(
+        buf: ByteBuffer,
+        chunkStart: Int,
+        headerSize: Int,
+        chunkSize: Int,
+        globalStrings: List<String>,
+        resourceType: String,
+        searchQuery: String?,
+        maxResults: Int
+    ): List<ResourceEntry> {
+        val resources = mutableListOf<ResourceEntry>()
+        try {
+            if (chunkStart + 288 > buf.limit()) return emptyList()
+            buf.position(chunkStart + 8)
+            val packageId = buf.int
+
+            // 跳过包名（128 个 char16 = 256 字节）
+            buf.position(chunkStart + 8 + 4 + 256)
+            val typeStringsOffset = buf.int
+            buf.int // lastPublicType
+            val keyStringsOffset = buf.int
+            buf.int // lastPublicKey
+
+            val typeStrings = if (typeStringsOffset > 0 && chunkStart + typeStringsOffset + 8 <= buf.limit()) {
+                val tsPos = chunkStart + typeStringsOffset
+                val tsHeader = buf.getShort(tsPos + 2).toInt() and 0xFFFF
+                val tsSize = buf.getInt(tsPos + 4)
+                parseStringPool(buf, tsPos, tsHeader, tsSize)
+            } else emptyList()
+
+            val keyStrings = if (keyStringsOffset > 0 && chunkStart + keyStringsOffset + 8 <= buf.limit()) {
+                val ksPos = chunkStart + keyStringsOffset
+                val ksHeader = buf.getShort(ksPos + 2).toInt() and 0xFFFF
+                val ksSize = buf.getInt(ksPos + 4)
+                parseStringPool(buf, ksPos, ksHeader, ksSize)
+            } else emptyList()
+
+            var pos = chunkStart + headerSize.coerceAtLeast(288)
+            val endPos = (chunkStart + chunkSize).coerceAtMost(buf.limit())
+
+            while (pos + 8 <= endPos && resources.size < maxResults) {
+                buf.position(pos)
+                val subType = buf.short.toInt() and 0xFFFF
+                val subHeaderSize = buf.short.toInt() and 0xFFFF
+                val subSize = buf.int
+
+                if (subSize <= 8 || pos + subSize > endPos) break
+
+                if (subType == 0x0201) { // RES_TABLE_TYPE_TYPE
+                    val typeResources = parseTypeChunk(
+                        buf,
+                        pos,
+                        subHeaderSize,
+                        subSize,
+                        packageId,
+                        typeStrings,
+                        keyStrings,
+                        globalStrings,
+                        resourceType,
+                        searchQuery,
+                        maxResults - resources.size
+                    )
+                    resources.addAll(typeResources)
+                }
+
+                pos += subSize
+            }
+        } catch (_: Exception) {}
+        return resources
+    }
+
+    private fun parseTypeChunk(
+        buf: ByteBuffer,
+        chunkStart: Int,
+        headerSize: Int,
+        chunkSize: Int,
+        packageId: Int,
+        typeStrings: List<String>,
+        keyStrings: List<String>,
+        globalStrings: List<String>,
+        resourceType: String,
+        searchQuery: String?,
+        maxResults: Int
+    ): List<ResourceEntry> {
+        val resources = mutableListOf<ResourceEntry>()
+        try {
+            if (chunkStart + 20 > buf.limit()) return emptyList()
+            buf.position(chunkStart + 8)
+            val typeId = buf.get().toInt() and 0xFF
+            val flags = buf.get().toInt() and 0xFF
+            buf.short // reserved
+            val entryCount = buf.int
+            val entriesStart = buf.int
+
+            if (entryCount <= 0 || entryCount > 200_000) return emptyList()
+            val typeName = typeStrings.getOrNull(typeId - 1) ?: "type_$typeId"
+            if (resourceType != "all" && !typeName.equals(resourceType, ignoreCase = true)) {
+                return emptyList()
+            }
+
+            val isSparse = (flags and 0x01) != 0
+            if (isSparse) return emptyList()
+
+            val offsetsPos = chunkStart + headerSize
+            if (offsetsPos + entryCount * 4 > chunkStart + chunkSize) return emptyList()
+            buf.position(offsetsPos)
+            val entryOffsets = IntArray(entryCount) { buf.int }
+
+            val entriesBase = chunkStart + entriesStart
+            val chunkEnd = (chunkStart + chunkSize).coerceAtMost(buf.limit())
+
+            for (i in 0 until entryCount) {
+                if (resources.size >= maxResults) break
+                val entryOffset = entryOffsets[i]
+                if (entryOffset == -1) continue // NO_ENTRY
+
+                val entryStart = entriesBase + entryOffset
+                if (entryStart < 0 || entryStart + 16 > chunkEnd) continue
+
+                buf.position(entryStart)
+                val entrySize = buf.short.toInt() and 0xFFFF
+                val entryFlags = buf.short.toInt() and 0xFFFF
+                val keyIndex = buf.int
+
+                val keyName = keyStrings.getOrNull(keyIndex) ?: "res_$i"
+                val resId = (packageId shl 24) or (typeId shl 16) or i
+
+                // 非 complex (bag) 资源紧跟 8 字节 Res_value
+                if ((entryFlags and 0x0001) == 0) {
+                    val valuePos = entryStart + entrySize.coerceAtLeast(8)
+                    if (valuePos + 8 > chunkEnd) continue
+                    buf.position(valuePos)
+                    buf.short // valueSize
+                    buf.get() // res0
+                    val dataType = buf.get().toInt() and 0xFF
+                    val data = buf.int
+
+                    val value = formatResourceValue(dataType, data, globalStrings)
+                    if (searchQuery == null ||
+                        keyName.contains(searchQuery, ignoreCase = true) ||
+                        value.contains(searchQuery, ignoreCase = true)
+                    ) {
+                        resources.add(ResourceEntry(resId, typeName, keyName, value))
+                    }
+                }
+            }
+        } catch (_: Exception) {}
+        return resources
+    }
+
+    private fun formatResourceValue(dataType: Int, data: Int, globalStrings: List<String>): String {
+        return when (dataType) {
+            0x00 -> "null"
+            0x01 -> "@0x${data.toUInt().toString(16)}"
+            0x02 -> "?0x${data.toUInt().toString(16)}"
+            0x03 -> globalStrings.getOrNull(data) ?: "string#$data"
+            0x04 -> java.lang.Float.intBitsToFloat(data).toString()
+            0x05 -> "${data and 0xFFFFFF}dp"
+            0x10 -> data.toString()
+            0x11 -> "0x${data.toUInt().toString(16)}"
+            0x12 -> if (data != 0) "true" else "false"
+            0x1c, 0x1d, 0x1e, 0x1f -> "#${data.toUInt().toString(16).padStart(8, '0')}"
+            else -> "0x${data.toUInt().toString(16)} (type=0x${dataType.toString(16)})"
+        }
+    }
+
+    private fun formatSize(bytes: Long): String {
+        return when {
+            bytes < 1024 -> "$bytes B"
+            bytes < 1024 * 1024 -> "${bytes / 1024} KB"
+            else -> "${"%.1f".format(bytes / (1024.0 * 1024.0))} MB"
+        }
+    }
+
+    internal data class ResourceEntry(
+        val id: Int,
+        val type: String,
+        val name: String,
+        val value: String
+    )
 }
