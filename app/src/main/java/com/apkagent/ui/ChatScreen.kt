@@ -233,7 +233,9 @@ fun ChatScreen(
     pendingConfirmation?.let { req ->
         PermissionDialog(
             call = req.call,
-            onResult = { allow -> req.decision.complete(allow) }
+            onResult = { allow ->
+                if (allow) vm.approvePendingToolCall() else vm.denyPendingToolCall()
+            }
         )
     }
 
@@ -243,10 +245,8 @@ fun ChatScreen(
             onDismiss = { showHistory = false },
             onSelect = { item ->
                 showHistory = false
-                vm.restoreHistory(item.id)
-            },
-            onDelete = { item -> vm.deleteHistory(item.id) },
-            onClearAll = { vm.clearAllHistory() }
+                vm.loadHistory(item.id)
+            }
         )
     }
 }
@@ -627,7 +627,7 @@ private fun StudioDashboard(padding: PaddingValues, onQuickPrompt: (String) -> U
                             Text(desc, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         }
                         Icon(
-                            Icons.AutoMirrored.Filled.ArrowForward,
+                            Icons.Default.ArrowForward,
                             null,
                             tint = MaterialTheme.colorScheme.primary,
                             modifier = Modifier.size(16.dp)
@@ -644,9 +644,7 @@ private fun StudioDashboard(padding: PaddingValues, onQuickPrompt: (String) -> U
 private fun HistorySheet(
     historyList: List<HistoryItem>,
     onDismiss: () -> Unit,
-    onSelect: (HistoryItem) -> Unit,
-    onDelete: (HistoryItem) -> Unit,
-    onClearAll: () -> Unit
+    onSelect: (HistoryItem) -> Unit
 ) {
     val s = LocalAppStrings.current
     AlertDialog(
@@ -656,18 +654,12 @@ private fun HistorySheet(
                 Icon(Icons.Default.History, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
                 Text(s.history, fontWeight = FontWeight.Bold, fontSize = 17.sp)
-                Spacer(Modifier.weight(1f))
-                if (historyList.isNotEmpty()) {
-                    TextButton(onClick = onClearAll) {
-                        Text(s.clearAll, color = MaterialTheme.colorScheme.error, fontSize = 12.sp)
-                    }
-                }
             }
         },
         text = {
             if (historyList.isEmpty()) {
                 Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
-                    Text(s.noHistory, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(s.noHistoryYet, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             } else {
                 LazyColumn(
@@ -694,20 +686,18 @@ private fun HistorySheet(
                                         maxLines = 1
                                     )
                                     Text(
-                                        "${item.apkName} · ${item.messageCount} 消息",
+                                        "${item.apkName} · ${item.messageCount} msgs",
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 11.sp,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
-                                IconButton(onClick = { onDelete(item) }) {
-                                    Icon(
-                                        Icons.Default.Delete,
-                                        null,
-                                        tint = MaterialTheme.colorScheme.error.copy(alpha = 0.7f),
-                                        modifier = Modifier.size(18.dp)
-                                    )
-                                }
+                                Icon(
+                                    Icons.Default.ArrowForward,
+                                    null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(16.dp)
+                                )
                             }
                         }
                     }

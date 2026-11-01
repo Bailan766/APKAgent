@@ -13,7 +13,7 @@
   <img alt="Android" src="https://img.shields.io/badge/Android-8.0%2B-green"/>
   <img alt="Kotlin" src="https://img.shields.io/badge/Kotlin-2.0-blue"/>
   <img alt="Compose" src="https://img.shields.io/badge/Jetpack%20Compose-Material3-purple"/>
-  <img alt="Version" src="https://img.shields.io/badge/version-4.1.0-orange"/>
+  <img alt="Version" src="https://img.shields.io/badge/version-4.2.0-orange"/>
 </p>
 
 ---
