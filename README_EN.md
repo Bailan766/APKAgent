@@ -17,9 +17,9 @@
 
 ## Overview
 
-APKAgent is not just an â€œAPK chat appâ€? It is a **project-based reverse-engineering workbench**:
+APKAgent is not just an â€œAPK chat appâ€. It is a **project-based reverse-engineering workbench**:
 
-- Import an APK or installed app â†?create an isolated project directory
+- Import an APK or installed app â†’ create an isolated project directory
 - Auto-generate a pre-analysis summary so the AI is not working from an empty context
 - Drive analysis, decompile, patch, repack, and sign via Agent + tool calling
 - Keep project history, files, script runtimes, and an export loop in one place
@@ -32,9 +32,9 @@ Goal: turn one-off APK ops into a **manageable project workflow**.
 
 The UI and AI system prompt support **Chinese** and **English**.
 
-- Open **Settings â†?Language**
+- Open **Settings â†’ Language**
 - Choices: *System default* / *ä¸­æ–‡* / *English*
-- Default follows the device locale (`zh*` â†?Chinese, otherwise English)
+- Default follows the device locale (`zh*` â†’ Chinese, otherwise English)
 - Switching language updates UI strings immediately; the agent system prompt follows the same preference so replies match the UI language
 
 > Note: many low-level tool result messages are still Chinese. The English system prompt tells the model to keep answering the user in English.
@@ -43,11 +43,11 @@ The UI and AI system prompt support **Chinese** and **English**.
 
 ## Product shape
 
-1. **Project workspace** â€?`source/`, `analysis/`, `chat/`, `exports/`, `patches/`, `scripts/`
-2. **Pre-analysis first** â€?package/version/SDK, permissions, DEX/native/assets, certs, basic risk hints
-3. **AI Agent + tools** â€?OpenAI-compatible APIs for manifest/DEX/sign/patch/repack
-4. **Runtimes** â€?Python, Node.js, Shizuku, built-in terminal (`RuntimeManager`)
-5. **Sensitive-op confirmation** â€?DANGER/CAUTION tools require explicit UI approval
+1. **Project workspace** â€” `source/`, `analysis/`, `chat/`, `exports/`, `patches/`, `scripts/`
+2. **Pre-analysis first** â€” package/version/SDK, permissions, DEX/native/assets, certs, basic risk hints
+3. **AI Agent + tools** â€” OpenAI-compatible APIs for manifest/DEX/sign/patch/repack
+4. **Runtimes** â€” Python, Node.js, Shizuku, built-in terminal (`RuntimeManager`)
+5. **Sensitive-op confirmation** â€” DANGER/CAUTION tools require explicit UI approval
 
 ---
 
