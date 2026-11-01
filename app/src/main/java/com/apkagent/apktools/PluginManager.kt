@@ -12,15 +12,15 @@ import java.net.URL
 import java.util.zip.ZipInputStream
 
 /**
- * 插件系统 — AI 可自行下载/缓存/管理 APK 逆向分析插件。
+ * 插件系统 �?AI 可自行下�?缓存/管理 APK 逆向分析插件�?
  *
- * 插件目录结构： workspace/plugins/
+ * 插件目录结构�?workspace/plugins/
  *   ├── catalog.json          # 内置插件清单
  *   ├── frida-scripts/         # Frida Hook 脚本
  *   ├── smali-patches/         # 通用 smali 补丁
- *   ├── deobfuscation/         # 反混淆脚本
- *   ├── unpackers/             # 加固壳脱壳脚本
- *   └── custom/                # 用户自定义
+ *   ├── deobfuscation/         # 反混淆脚�?
+ *   ├── unpackers/             # 加固壳脱壳脚�?
+ *   └── custom/                # 用户自定�?
  */
 object PluginManager {
 
@@ -35,30 +35,30 @@ object PluginManager {
         val installed: Boolean = false
     )
 
-    /** 内置插件清单 — AI 不用联网就能看 */
+    /** 内置插件清单 �?AI 不用联网就能�?*/
     val BUILTIN_CATALOG: List<PluginInfo> = listOf(
         // Frida 脚本
-        PluginInfo("frida-antiroot", L("绕过 Root 检测", "Bypass root detection"), L("Frida 脚本绕过常见 Root/Magisk 检测", "Frida script bypasses common Root/Magisk tests"), "frida", null, "antiroot.js"),
+        PluginInfo("frida-antiroot", L("绕过 Root 检�?, "Bypass root detection"), L("Frida 脚本绕过常见 Root/Magisk 检�?, "Frida script bypasses common Root/Magisk tests"), "frida", null, "antiroot.js"),
         PluginInfo("frida-sslpin", L("绕过 SSL Pinning", "Around SSL Pinning"), L("Frida 脚本绕过 OkHttp/TrustManager/SSLSocket SSL Pinning", "Frida script bypassing OkHttp/TrustManager/SSLSocket SSL Pinning"), "frida", null, "ssl_unpin.js"),
-        PluginInfo("frida-emucheck", L("反模拟器检测", "Anti-simulator detection"), L("Frida 脚本绕过模拟器/虚拟机检测", "Frida script bypassing simulator/virtual machine testing"), "frida", null, "antiemu.js"),
-        PluginInfo("frida-tracer", L("API 调用追踪", "API Call Track"), L("Frida 脚本追踪指定类/方法的所有调用", "Frida script tracks all calls for specified classes/methods"), "frida", null, "tracer.js"),
-        PluginInfo("frida-classdump", L("类名 Dump", "Classname Dump"), L("Frida 脚本 dump 运行时加载的所有类名", "All class names loaded while running Frida script dump"), "frida", null, "classdump.js"),
+        PluginInfo("frida-emucheck", L("反模拟器检�?, "Anti-simulator detection"), L("Frida 脚本绕过模拟�?虚拟机检�?, "Frida script bypassing simulator/virtual machine testing"), "frida", null, "antiemu.js"),
+        PluginInfo("frida-tracer", L("API 调用追踪", "API Call Track"), L("Frida 脚本追踪指定�?方法的所有调�?, "Frida script tracks all calls for specified classes/methods"), "frida", null, "tracer.js"),
+        PluginInfo("frida-classdump", L("类名 Dump", "Classname Dump"), L("Frida 脚本 dump 运行时加载的所有类�?, "All class names loaded while running Frida script dump"), "frida", null, "classdump.js"),
         // Smali 补丁
-        PluginInfo("smali-debug-true", L("启用 Debuggable", "Enable Debuggable"), L("修改 Manifest 及 smali 使 APK 可调试", "Modify Manifest and smali to debug APK"), "smali", null, "debug_true.patch"),
-        PluginInfo("smali-anti-tamper", L("绕过完整性检测", "Go around the integrity test."), L("通用 smali patch 绕过 CRC/MD5/SHA 完整性校验", "171. General sm ADOPTION bypass CRC/MD5/SHA Complete School Check"), "smali", null, "anti_tamper.patch"),
-        PluginInfo("smali-fake-sign", L("伪造签名", "Falsification of signatures"), L("smali 层返回伪造的系统签名信息", "Smali Layer returns forged system signature information"), "smali", null, "fake_sign.patch"),
-        PluginInfo("smali-vip-bypass", L("VIP 绕过模板", "VIP bypassing templates"), L("通用 VIP/会员状态检查绕过模板", "Generic VIP/ turnover template"), "smali", null, "vip_bypass.patch"),
-        // 反混淆
+        PluginInfo("smali-debug-true", L("启用 Debuggable", "Enable Debuggable"), L("修改 Manifest �?smali �?APK 可调�?, "Modify Manifest and smali to debug APK"), "smali", null, "debug_true.patch"),
+        PluginInfo("smali-anti-tamper", L("绕过完整性检�?, "Go around the integrity test."), L("通用 smali patch 绕过 CRC/MD5/SHA 完整性校�?, "171. General sm ADOPTION bypass CRC/MD5/SHA Complete School Check"), "smali", null, "anti_tamper.patch"),
+        PluginInfo("smali-fake-sign", L("伪造签�?, "Falsification of signatures"), L("smali 层返回伪造的系统签名信息", "Smali Layer returns forged system signature information"), "smali", null, "fake_sign.patch"),
+        PluginInfo("smali-vip-bypass", L("VIP 绕过模板", "VIP bypassing templates"), L("通用 VIP/会员状态检查绕过模�?, "Generic VIP/ turnover template"), "smali", null, "vip_bypass.patch"),
+        // 反混�?
         PluginInfo("deobfuscate-proguard", L("ProGuard 映射恢复", "ProGuard Map Restoration"), L("利用 mapping.txt 恢复混淆类名", "Resume confusing names using mapping.txt"), "deobfuscation", null, "proguard_restore.py"),
-        PluginInfo("deobfuscate-rename", L("智能重命名", "Smart Rename"), L("Python 脚本基于调用关系重命名混淆类", "Python script is confused by calling relationships for renaming Category"), "deobfuscation", null, "smart_rename.py"),
+        PluginInfo("deobfuscate-rename", L("智能重命�?, "Smart Rename"), L("Python 脚本基于调用关系重命名混淆类", "Python script is confused by calling relationships for renaming Category"), "deobfuscation", null, "smart_rename.py"),
         // 脱壳
-        PluginInfo("unpacker-frida", L("Frida 通用脱壳", "Frida Universal Shell Off"), L("Frida 脚本 dump DEX 从内存（通用脱壳）", "Frida script dump DEX from memory (general dehull)"), "unpackers", null, "dex_dump.js"),
-        PluginInfo("unpacker-inline", L("Inline Hook 脱壳", "Inline Hook"), L("inline hook 脱壳脚本（需 root）", "Inline hook shell script (root required)"), "unpackers", null, "inline_unpack.js"),
+        PluginInfo("unpacker-frida", L("Frida 通用脱壳", "Frida Universal Shell Off"), L("Frida 脚本 dump DEX 从内存（通用脱壳�?, "Frida script dump DEX from memory (general dehull)"), "unpackers", null, "dex_dump.js"),
+        PluginInfo("unpacker-inline", L("Inline Hook 脱壳", "Inline Hook"), L("inline hook 脱壳脚本（需 root�?, "Inline hook shell script (root required)"), "unpackers", null, "inline_unpack.js"),
         // 分析工具
-        PluginInfo("analyze-api", L("API 端点提取", "API peer extraction"), L("Python 脚本提取 APK 中所有 HTTP/API 端点", "Python script extracts all HTTP/API endpoints from APK"), "analysis", null, "extract_apis.py"),
-        PluginInfo("analyze-hardcode", L("硬编码扫描", "Hard Encoding Scan"), L("Python 扫描 APK 中硬编码的密钥/Token/URL", "Python scans the key for the coder for the Python for the heart for the user for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one, and for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is of for the for the for the one, and is for the for the for the for the for, for the for the for for the for for the for for for, for the for for, for for the for for for, for for for the for the for for for for for for for for for for the for for"), "analysis", null, "find_secrets.py"),
+        PluginInfo("analyze-api", L("API 端点提取", "API peer extraction"), L("Python 脚本提取 APK 中所�?HTTP/API 端点", "Python script extracts all HTTP/API endpoints from APK"), "analysis", null, "extract_apis.py"),
+        PluginInfo("analyze-hardcode", L("硬编码扫�?, "Hard Encoding Scan"), L("Python 扫描 APK 中硬编码的密�?Token/URL", "Python scans the key for the coder for the Python for the heart for the user for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one, and for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is of for the for the for the one, and is for the for the for the for the for, for the for the for for the for for the for for for, for the for for, for for the for for for, for for for the for the for for for for for for for for for for the for for"), "analysis", null, "find_secrets.py"),
         PluginInfo("analyze-permissions", L("权限分析", "Competence analysis"), L("分析 APK 权限 & 导出组件安全风险", "Analyse APK Permissions & Export Component Security Risks"), "analysis", null, "perm_check.py"),
-        PluginInfo("skill-rea", L("REA 逆向工程方法论", "REA Reverse Engineering Guide"), L("内置 Reverse Engineer Anything 证据链与全平台逆向方法论", "Built-in Reverse Engineer Anything methodology"), "skills", null, "SKILL.md", installed = true),
+        PluginInfo("skill-rea", L("REA 逆向工程方法�?, "REA Reverse Engineering Guide"), L("内置 Reverse Engineer Anything 证据链与全平台逆向方法�?, "Built-in Reverse Engineer Anything methodology"), "skills", null, "SKILL.md", installed = true),
     )
 
     /** 获取内置插件的代码内容（内置的非下载插件用这个） */
@@ -73,21 +73,21 @@ object PluginManager {
         }
     }
 
-    /** 下载插件到 workspace/plugins/ 目录 */
+    /** 下载插件�?workspace/plugins/ 目录 */
     suspend fun download(url: String, destDir: File, timeoutSeconds: Int = 60): String = withContext(Dispatchers.IO) {
         val name = url.substringAfterLast('/').substringBefore('?')
         val dest = File(destDir, name)
         dest.parentFile?.mkdirs()
-        Logger.i("Plugin", "下载: $url → $dest")
+        Logger.i("Plugin", "下载: $url �?$dest")
         try {
             withTimeout(timeoutSeconds * 1000L) {
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = 10000; conn.readTimeout = timeoutSeconds * 1000
-                conn.setRequestProperty("User-Agent", "APKAgent/4.3.0")
+                conn.setRequestProperty("User-Agent", "APKAgent/4.3.1")
                 conn.connect()
                 if (conn.responseCode != 200) return@withTimeout "HTTP ${conn.responseCode}"
                 conn.inputStream.use { input -> dest.outputStream().use { output -> input.copyTo(output) } }
-                // 如果是 zip，解压
+                // 如果�?zip，解�?
                 if (name.endsWith(".zip")) {
                     ZipInputStream(dest.inputStream()).use { zis ->
                         var entry = zis.nextEntry
@@ -101,9 +101,9 @@ object PluginManager {
                             zis.closeEntry(); entry = zis.nextEntry
                         }
                     }
-                    dest.delete(); "已下载并解压到 ${destDir.absolutePath}"
+                    dest.delete(); "已下载并解压�?${destDir.absolutePath}"
                 } else {
-                    "已下载: ${dest.absolutePath} (${dest.length()/1024}KB)"
+                    "已下�? ${dest.absolutePath} (${dest.length()/1024}KB)"
                 }
             }
         } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
@@ -113,7 +113,7 @@ object PluginManager {
         }
     }
 
-    /** 工作区下的插件目录 */
+    /** 工作区下的插件目�?*/
     fun pluginDir(workspace: File): File = File(workspace, "plugins").apply { if (!exists()) mkdirs() }
 
     /** AI 可直接使用的内置插件内容 */
@@ -124,17 +124,17 @@ object PluginManager {
         val code = getBuiltinCode(pluginId) ?: return null
         val dest = File(catDir, info.filename)
         dest.writeText(code)
-        Logger.i("Plugin", "安装内置: ${info.name} → ${dest.absolutePath}")
+        Logger.i("Plugin", "安装内置: ${info.name} �?${dest.absolutePath}")
         return dest.absolutePath
     }
 
     // ──── 内置插件代码 ────
 
     private val FRIDA_ANTI_ROOT = """
-// Frida: 绕过常见 Root/Magisk 检测
+// Frida: 绕过常见 Root/Magisk 检�?
 Java.perform(function() {
     console.log("[√] Anti-Root bypass loaded");
-    // 伪造 Build.TAGS
+    // 伪�?Build.TAGS
     var Build = Java.use("android.os.Build");
     Build.TAGS.value = "release-keys";
     // Hook RootBeer 等检测库
@@ -142,7 +142,7 @@ Java.perform(function() {
         var RootBeer = Java.use("com.scottyab.rootbeer.RootBeer");
         RootBeer.isRooted.implementation = function() { console.log("[+] Spoofed isRooted=false"); return false; };
     } catch(e) {}
-    // 常见检测方法
+    // 常见检测方�?
     var methods = ["checkRootMethod1", "checkRootMethod2", "checkRootMethod3", "isRooted", "detectRoot", "checkSuBinary"];
     methods.forEach(function(m) {
         try {
@@ -187,13 +187,13 @@ Java.perform(function() {
 """.trimIndent()
 
     private val SMALI_ANTI_TAMPER = """
-# Smali Patch: 绕过 APK 完整性校验
-# 搜索以下模式并 patch:
-# 1. CRC32 校验 → 替换为返回预期值
-# 2. MD5/SHA 签名校验 → 返回 true
-# 3. APK 签名比对 → 绕过
+# Smali Patch: 绕过 APK 完整性校�?
+# 搜索以下模式�?patch:
+# 1. CRC32 校验 �?替换为返回预期�?
+# 2. MD5/SHA 签名校验 �?返回 true
+# 3. APK 签名比对 �?绕过
 
-# 使用方法: 反编译 DEX 后搜索以下关键调用:
+# 使用方法: 反编�?DEX 后搜索以下关键调�?
 # - java/util/zip/CRC32;->getValue()J
 # - java/security/MessageDigest;->digest
 # - android/content/pm/PackageManager;->getPackageInfo
@@ -205,28 +205,28 @@ Java.perform(function() {
     private val SMALI_VIP_BYPASS = """
 # Smali Patch: 通用 VIP/会员绕过模板
 # 
-# 搜索关键字:
+# 搜索关键�?
 # - "vip" / "is_vip" / "isVip" / "member_type"
 # - "isPro" / "isPremium" / "user_level"
 # - "getVipLevel" / "getMemberType" / "checkVip"
 #
-# Patch: 将返回 int 的方法改为返回 >0 的值
-#       将返回 boolean 的方法改为返回 true
+# Patch: 将返�?int 的方法改为返�?>0 的�?
+#       将返�?boolean 的方法改为返�?true
 # 
 # 示例:
 # .method public isVip()Z
 #     .locals 1
 # +   const/4 v0, 0x1
 # +   return v0
-#     ... 原代码
+#     ... 原代�?
 # .end method
 """.trimIndent()
 
     private val SMALI_DEBUG_TRUE = """
 # Smali Patch: 启用 Debuggable
-# 修改 AndroidManifest.xml 中 <application> 标签：
+# 修改 AndroidManifest.xml �?<application> 标签�?
 # android:debuggable="true"
 # 
-# 使用 apk_unpack 解包 → 修改 AndroidManifest → apk_repack → apk_sign
+# 使用 apk_unpack 解包 �?修改 AndroidManifest �?apk_repack �?apk_sign
 """.trimIndent()
 }

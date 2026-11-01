@@ -13,8 +13,8 @@ android {
         applicationId = "com.apkagent"
         minSdk = 26
         targetSdk = 35
-        versionCode = 43
-        versionName = "4.3.0"
+        versionCode = 44
+        versionName = "4.3.1"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -79,7 +79,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.kotlinx.serialization.json)
 
-    // 逆向引擎：smali 反编译/回编译 + APK 签名
+    // 逆向引擎：smali 反编�?回编�?+ APK 签名
     implementation(libs.smali.dexlib2)
     implementation(libs.smali.baksmali)
     implementation(libs.smali)
@@ -89,7 +89,7 @@ dependencies {
     implementation(libs.bouncycastle.bcprov)
     implementation(libs.bouncycastle.bcpkix)
 
-    // Shizuku 系统级权限
+    // Shizuku 系统级权�?
     implementation(libs.shizuku.api)
     implementation(libs.shizuku.provider)
 

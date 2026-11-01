@@ -88,8 +88,12 @@ class AgentLoop(
             systemInjected = true
         }
 
-        // 用户指令增量
-        messages.add(ChatMessage(role = "user", content = userText))
+        // 用户指令增量（若上一轮因异常中断残留了末尾 user 消息，则直接替换避免连续 user 报错）
+        if (messages.lastOrNull()?.role == "user") {
+            messages[messages.lastIndex] = ChatMessage(role = "user", content = userText)
+        } else {
+            messages.add(ChatMessage(role = "user", content = userText))
+        }
 
         try {
             for (round in 0 until maxRounds) {

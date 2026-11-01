@@ -161,6 +161,38 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                         userText = text,
                         initialSystemContext = getProjectInitialSystemContext()
                     )
+                    // 如果因提供商未切换导致鉴权失败 (401)，自动探测匹配的预设提供商并无感重试一次
+                    val err = agentLoop?.state?.value?.error.orEmpty()
+                    if (err.isNotEmpty() && cfg.providerId != "custom" &&
+                        (err.contains("鉴权失败") || err.contains("401") || err.contains("invalid", ignoreCase = true) || err.contains("auth", ignoreCase = true))
+                    ) {
+                        val probed = OpenAIClient.probeWorkingProvider(cfg.apiKey)
+                        if (probed != null && probed.first.id != cfg.providerId) {
+                            val (matchedProvider, matchedModels) = probed
+                            val newModel = matchedProvider.defaultModel.takeIf { it in matchedModels }
+                                ?: matchedModels.firstOrNull()
+                                ?: matchedProvider.defaultModel
+                            val fixedCfg = cfg.copy(
+                                providerId = matchedProvider.id,
+                                baseUrl = matchedProvider.baseUrl,
+                                model = newModel
+                            )
+                            agentApp.settingsStore.save(fixedCfg)
+                            _messages.update { list ->
+                                val cleaned = if (list.lastOrNull()?.role == Role.ERROR) list.dropLast(1) else list
+                                cleaned + ChatItem(
+                                    role = Role.SYSTEM,
+                                    content = "✅ 已自动识别您的 API Key 属于【${matchedProvider.label}】，已切换至 $newModel 并继续执行"
+                                )
+                            }
+                            agentLoop = null
+                            ensureLoop(fixedCfg)
+                            agentLoop?.run(
+                                userText = text,
+                                initialSystemContext = getProjectInitialSystemContext()
+                            )
+                        }
+                    }
                 }
                 Logger.i("VM", "执行完成")
                 saveHistory(text)

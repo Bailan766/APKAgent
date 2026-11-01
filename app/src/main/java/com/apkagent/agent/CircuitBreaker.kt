@@ -1,13 +1,17 @@
 package com.apkagent.agent
 
 import com.apkagent.i18n.L
-
 import android.util.Log
 import kotlinx.coroutines.delay
 
 /**
+ * 不可重试的客户端异常（例如 HTTP 400/401/403/404），不触发断路器熔断也不重试。
+ */
+class NonRetryableApiException(val httpCode: Int, message: String) : IllegalStateException(message)
+
+/**
  * 断路器 + 指数退避。
- * 连续失败达到阈值后L("熔断", "Circuit open")，短路后续请求，快速失败。
+ * 连续失败达到阈值后熔断，短路后续请求，快速失败。
  * 经过冷却期后半开，允许一次试探请求。
  */
 class CircuitBreaker(
@@ -54,6 +58,9 @@ class CircuitBreaker(
             val result = operation()
             onSuccess()
             result
+        } catch (e: NonRetryableApiException) {
+            // 4xx 客户端配置错误（如 Key 错误/模型不存在）不应计入服务端熔断
+            throw e
         } catch (e: Exception) {
             onFailure()
             throw e
@@ -72,12 +79,18 @@ class CircuitBreaker(
             try {
                 return execute(operation)
             } catch (e: CircuitOpenException) {
-                throw e // 断路器熔断不重试
+                throw e
+            } catch (e: NonRetryableApiException) {
+                throw e
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
             } catch (e: Exception) {
                 lastException = e
-                val wait = calculateBackoff(attempt)
-                Log.w(TAG, "重试 ${attempt + 1}/$maxRetries，等待 ${wait}ms: ${e.message}")
-                delay(wait)
+                if (attempt < maxRetries - 1) {
+                    val wait = calculateBackoff(attempt)
+                    Log.w(TAG, "重试 ${attempt + 1}/$maxRetries，等待 ${wait}ms: ${e.message}")
+                    delay(wait)
+                }
             }
         }
         throw lastException ?: IllegalStateException(L("重试耗尽", "Retries exhausted"))

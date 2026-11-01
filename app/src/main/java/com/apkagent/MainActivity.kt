@@ -17,9 +17,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
-import com.apkagent.store.SettingsStore
 import com.apkagent.ui.APKAgentTheme
-import com.apkagent.ui.SetupScreen
 import com.apkagent.ui.ThemeState
 import com.apkagent.i18n.LocalAppStrings
 import com.apkagent.i18n.LocaleManager
@@ -30,20 +28,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try { enableEdgeToEdge() } catch (_: Throwable) {}
-        
-        // Android 16: 启用预测性返回手势动画
-        if (android.os.Build.VERSION.SDK_INT >= 33) {
-            try {
-                onBackPressedDispatcher.addCallback(this, 
-                    object : androidx.activity.OnBackPressedCallback(true) {
-                        override fun handleOnBackPressed() {
-                            // 让 Compose 的 BackHandler 处理
-                        }
-                    }
-                )
-            } catch (_: Throwable) {}
-        }
-        
+
         setContent {
             val theme by remember { mutableStateOf(ThemeState.currentTheme) }
             val lang by LocaleManager.language.collectAsState()
@@ -70,11 +55,10 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AppEntry() {
     val ctx = LocalContext.current
-    val settingsStore = remember { SettingsStore(ctx) }
+    val settingsStore = remember { (ctx.applicationContext as ApkAgentApp).settingsStore }
     var setupDone by remember { mutableStateOf(settingsStore.isSetupCompleted()) }
     var showTerminal by remember { mutableStateOf(false) }
 
-    // 使用 AnimatedContent 实现预测性返回动画
     AnimatedContent(
         targetState = showTerminal to setupDone,
         transitionSpec = {
@@ -113,11 +97,10 @@ private fun AppEntry() {
 @Composable
 private fun AppNav(onOpenTerminal: () -> Unit = {}) {
     val nav = rememberNavController()
-    
+
     NavHost(
-        navController = nav, 
+        navController = nav,
         startDestination = "projects",
-        // Android 16 预测性返回手势动画
         enterTransition = {
             slideInHorizontally(
                 initialOffsetX = { fullWidth -> fullWidth },

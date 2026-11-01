@@ -1,7 +1,11 @@
 package com.apkagent.ui
 
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.provider.Settings
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
@@ -33,34 +37,42 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.apkagent.ApkAgentApp
 import com.apkagent.agent.OpenAIClient
-import android.os.Build
-import android.os.PowerManager
-import android.provider.Settings
-import com.apkagent.shizuku.ShizukuManager
-import com.apkagent.service.KeepAliveManager
-import com.apkagent.store.AgentConfig
-import com.apkagent.store.AiProvider
 import com.apkagent.i18n.AppLanguage
 import com.apkagent.i18n.LocalAppStrings
-import com.apkagent.i18n.LocaleManager
+import com.apkagent.service.KeepAliveManager
+import com.apkagent.shizuku.ShizukuManager
+import com.apkagent.store.AgentConfig
+import com.apkagent.store.AiProvider
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTerminal: () -> Unit = {}) {
+fun SettingsScreen(
+    onBack: () -> Unit,
+    onOpenAbout: () -> Unit = {},
+    onOpenTerminal: () -> Unit = {}
+) {
     val context = LocalContext.current
     val app = context.applicationContext as ApkAgentApp
     val s = LocalAppStrings.current
     var language by remember { mutableStateOf(app.settingsStore.getLanguage()) }
     var showLangMenu by remember { mutableStateOf(false) }
-    val cfg = app.settingsStore.config.value
+
+    val cfg by app.settingsStore.config.collectAsState()
     val scope = rememberCoroutineScope()
     val snackbar = remember { SnackbarHostState() }
 
     var selectedProviderId by remember { mutableStateOf(cfg.providerId) }
     var apiKey by remember { mutableStateOf(cfg.apiKey) }
-    var model by remember { mutableStateOf(cfg.model) }
+    var baseUrl by remember {
+        mutableStateOf(cfg.baseUrl.ifBlank { AiProvider.byId(cfg.providerId).baseUrl })
+    }
+    var model by remember {
+        mutableStateOf(cfg.model.ifBlank { AiProvider.byId(cfg.providerId).defaultModel })
+    }
     var temp by remember { mutableDoubleStateOf(cfg.temperature) }
     var sysExtra by remember { mutableStateOf(cfg.systemExtra) }
     var showKey by remember { mutableStateOf(false) }
@@ -68,13 +80,148 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
     var showProviderMenu by remember { mutableStateOf(false) }
 
     val selectedProvider = AiProvider.byId(selectedProviderId)
-    var customBaseUrl by remember { mutableStateOf(if (selectedProviderId == "custom") cfg.baseUrl else "") }
-    var customModel by remember { mutableStateOf(if (selectedProviderId == "custom") cfg.model else "") }
 
-    // 动态模型列表状态
+    // 动态模型列表与在线校验状态
     var dynamicModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoadingModels by remember { mutableStateOf(false) }
     var modelFetchError by remember { mutableStateOf<String?>(null) }
+    var verifySuccessMsg by remember { mutableStateOf<String?>(null) }
+
+    // 统一保存函数：对所有字段做规范化兜底并立即持久化
+    fun saveCurrentConfig(
+        pid: String = selectedProviderId,
+        rawUrl: String = baseUrl,
+        rawKey: String = apiKey,
+        rawModel: String = model,
+        temperature: Double = temp,
+        extra: String = sysExtra
+    ) {
+        val provider = AiProvider.byId(pid)
+        val cleanKey = OpenAIClient.sanitizeApiKey(rawKey)
+        val cleanUrl = OpenAIClient.normalizeBaseUrl(rawUrl).ifBlank {
+            provider.baseUrl.ifBlank { "https://api.deepseek.com/v1" }
+        }
+        val cleanModel = rawModel.trim().ifBlank {
+            provider.defaultModel.ifBlank {
+                dynamicModels.firstOrNull() ?: provider.models.firstOrNull() ?: "deepseek-chat"
+            }
+        }
+        val newCfg = AgentConfig(
+            providerId = pid,
+            baseUrl = cleanUrl,
+            apiKey = cleanKey,
+            model = cleanModel,
+            temperature = temperature,
+            systemExtra = extra
+        )
+        app.settingsStore.save(newCfg)
+    }
+
+    // 退出页面时强制保存一次，确保左滑返回或点击返回箭头不丢失任何输入
+    val handleBack = {
+        saveCurrentConfig()
+        onBack()
+    }
+    BackHandler { handleBack() }
+
+    // 智能验证 API Key 并拉取可用模型（支持跨平台自动识别回退）
+    fun verifyAndFetchModels(autoTriggered: Boolean = false) {
+        val cleanKey = OpenAIClient.sanitizeApiKey(apiKey)
+        if (cleanKey.isBlank() && selectedProviderId != "ollama") {
+            if (!autoTriggered) {
+                scope.launch { snackbar.showSnackbar(s.enterApiKeyFirst) }
+            }
+            return
+        }
+        apiKey = cleanKey
+        saveCurrentConfig(rawKey = cleanKey)
+
+        isLoadingModels = true
+        modelFetchError = null
+        if (!autoTriggered) verifySuccessMsg = null
+
+        scope.launch(Dispatchers.IO) {
+            val targetUrl = baseUrl.ifBlank { selectedProvider.baseUrl }
+            val client = OpenAIClient(targetUrl, cleanKey)
+            val result = client.fetchAvailableModels(
+                fallbackModels = selectedProvider.models,
+                testModel = model.ifBlank { selectedProvider.defaultModel }
+            )
+
+            result.onSuccess { models ->
+                withContext(Dispatchers.Main) {
+                    dynamicModels = models
+                    if (models.isNotEmpty() && (model.isBlank() || (model !in models && selectedProviderId != "custom"))) {
+                        val preferred = selectedProvider.defaultModel.takeIf { it in models } ?: models.first()
+                        model = preferred
+                    }
+                    saveCurrentConfig(rawKey = cleanKey, rawModel = model)
+                    verifySuccessMsg = "API Key 验证有效 (${selectedProvider.label} · ${models.size} 个模型)"
+                    modelFetchError = null
+                    isLoadingModels = false
+                    if (!autoTriggered) {
+                        snackbar.showSnackbar("✅ $verifySuccessMsg")
+                    }
+                }
+            }.onFailure { err ->
+                // 如果用户未修改自定义 URL 且报鉴权错误，自动探测该 Key 属于哪个预设平台
+                val isUsingDefaultPresetUrl = selectedProviderId != "custom" &&
+                    OpenAIClient.normalizeBaseUrl(baseUrl) == OpenAIClient.normalizeBaseUrl(selectedProvider.baseUrl)
+                val probed = if (isUsingDefaultPresetUrl || baseUrl.isBlank()) {
+                    OpenAIClient.probeWorkingProvider(cleanKey)
+                } else null
+
+                withContext(Dispatchers.Main) {
+                    if (probed != null) {
+                        val (matchedProvider, matchedModels) = probed
+                        selectedProviderId = matchedProvider.id
+                        baseUrl = matchedProvider.baseUrl
+                        dynamicModels = matchedModels
+                        model = matchedProvider.defaultModel.takeIf { it in matchedModels }
+                            ?: matchedModels.firstOrNull()
+                            ?: matchedProvider.defaultModel
+                        saveCurrentConfig(
+                            pid = matchedProvider.id,
+                            rawUrl = matchedProvider.baseUrl,
+                            rawKey = cleanKey,
+                            rawModel = model
+                        )
+                        verifySuccessMsg = "已自动识别为【${matchedProvider.label}】并完成配置"
+                        modelFetchError = null
+                        isLoadingModels = false
+                        snackbar.showSnackbar("✅ $verifySuccessMsg")
+                    } else {
+                        modelFetchError = err.message
+                        verifySuccessMsg = null
+                        isLoadingModels = false
+                        if (!autoTriggered) {
+                            snackbar.showSnackbar(s.fmt(s.fetchFailed, "msg" to err.message?.take(60)))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 当用户输入/粘贴 API Key 后，自动根据特征前缀切换平台并在后台静默校验
+    LaunchedEffect(apiKey) {
+        val clean = OpenAIClient.sanitizeApiKey(apiKey)
+        if (clean.length >= 12) {
+            if (selectedProviderId != "custom") {
+                AiProvider.detectFromKeyPrefix(clean)?.let { detected ->
+                    if (detected.id != selectedProviderId) {
+                        selectedProviderId = detected.id
+                        baseUrl = detected.baseUrl
+                        model = detected.defaultModel
+                        dynamicModels = emptyList()
+                    }
+                }
+            }
+            saveCurrentConfig(rawKey = clean)
+            delay(450)
+            verifyAndFetchModels(autoTriggered = true)
+        }
+    }
 
     // Theme state
     var currentTheme by remember { mutableStateOf(ThemeState.currentTheme) }
@@ -90,40 +237,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 ThemeState.currentTheme = AppTheme.CUSTOM_WALLPAPER
                 currentTheme = AppTheme.CUSTOM_WALLPAPER
                 scope.launch { snackbar.showSnackbar(s.wallpaperSet) }
-            } catch (e: Throwable) {
+            } catch (_: Throwable) {
                 scope.launch { snackbar.showSnackbar(s.wallpaperLoadFailed) }
-            }
-        }
-    }
-
-    // 获取可用模型列表
-    fun fetchModels() {
-        if (apiKey.isBlank()) {
-            scope.launch { snackbar.showSnackbar(s.enterApiKeyFirst) }
-            return
-        }
-        isLoadingModels = true
-        modelFetchError = null
-        scope.launch(Dispatchers.IO) {
-            val baseUrl = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl
-            val client = OpenAIClient(baseUrl, apiKey)
-            val result = client.fetchAvailableModels()
-            result.onSuccess { models ->
-                dynamicModels = models
-                if (models.isNotEmpty()) {
-                    // 如果当前模型不在列表中，自动选择第一个
-                    if (model !in models) {
-                        model = models.first()
-                    }
-                    snackbar.showSnackbar(s.fmt(s.modelsFetched, "n" to models.size))
-                } else {
-                    snackbar.showSnackbar(s.noModels)
-                }
-                isLoadingModels = false
-            }.onFailure { e ->
-                modelFetchError = e.message
-                snackbar.showSnackbar(s.fmt(s.fetchFailed, "msg" to e.message?.take(50)))
-                isLoadingModels = false
             }
         }
     }
@@ -133,7 +248,23 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
         topBar = {
             TopAppBar(
                 title = { Text(s.settings) },
-                navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back) } }
+                navigationIcon = {
+                    IconButton(onClick = handleBack) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back)
+                    }
+                },
+                actions = {
+                    TextButton(
+                        onClick = {
+                            saveCurrentConfig()
+                            verifyAndFetchModels(autoTriggered = false)
+                        }
+                    ) {
+                        Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(s.save, fontWeight = FontWeight.Bold)
+                    }
+                }
             )
         }
     ) { padding ->
@@ -145,8 +276,340 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // ── 1. AI 模型与 API Key 配置（置顶第一优先级） ──
+            SectionTitle(s.sectionAi)
 
-            // ── Language ──
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(
+                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // 实时生效状态指示条
+                    val isConfigured = cfg.isValid()
+                    Surface(
+                        color = if (isConfigured)
+                            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                        else
+                            MaterialTheme.colorScheme.error.copy(alpha = 0.14f),
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                imageVector = if (isConfigured) Icons.Default.CheckCircle else Icons.Default.Warning,
+                                contentDescription = null,
+                                tint = if (isConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = if (isConfigured) {
+                                    "当前已生效：${AiProvider.byId(cfg.providerId).label} · ${cfg.model}"
+                                } else {
+                                    "尚未填写 API Key — 粘贴后将自动识别并保存"
+                                },
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                color = if (isConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                            )
+                        }
+                    }
+
+                    // AI 提供商选择
+                    ExposedDropdownMenuBox(
+                        expanded = showProviderMenu,
+                        onExpandedChange = { showProviderMenu = it }
+                    ) {
+                        OutlinedTextField(
+                            value = selectedProvider.label,
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(s.aiProvider) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showProviderMenu) },
+                            modifier = Modifier.fillMaxWidth().menuAnchor()
+                        )
+                        ExposedDropdownMenu(
+                            expanded = showProviderMenu,
+                            onDismissRequest = { showProviderMenu = false }
+                        ) {
+                            AiProvider.PRESETS.forEach { p ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Column {
+                                            Text(p.label, fontWeight = FontWeight.Medium)
+                                            if (p.baseUrl.isNotBlank()) {
+                                                Text(p.baseUrl, fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                                            }
+                                        }
+                                    },
+                                    onClick = {
+                                        selectedProviderId = p.id
+                                        showProviderMenu = false
+                                        dynamicModels = emptyList()
+                                        modelFetchError = null
+                                        verifySuccessMsg = null
+                                        if (p.id != "custom") {
+                                            baseUrl = p.baseUrl
+                                            model = p.defaultModel
+                                        }
+                                        saveCurrentConfig(
+                                            pid = p.id,
+                                            rawUrl = if (p.id != "custom") p.baseUrl else baseUrl,
+                                            rawModel = if (p.id != "custom") p.defaultModel else model
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        if (p.id == selectedProviderId) {
+                                            Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                                        }
+                                    }
+                                )
+                            }
+                        }
+                    }
+
+                    // API Key 输入框（支持一键粘贴、清空、显示/隐藏，实时自动保存）
+                    OutlinedTextField(
+                        value = apiKey,
+                        onValueChange = { newValue ->
+                            apiKey = newValue
+                            modelFetchError = null
+                            saveCurrentConfig(rawKey = newValue)
+                        },
+                        label = { Text("API Key") },
+                        placeholder = { Text(s.pasteApiKey) },
+                        singleLine = true,
+                        visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                        modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                // 一键粘贴按钮
+                                IconButton(
+                                    onClick = {
+                                        val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                        val pasted = cm?.primaryClip?.getItemAt(0)?.coerceToText(context)?.toString().orEmpty()
+                                        if (pasted.isNotBlank()) {
+                                            val clean = OpenAIClient.sanitizeApiKey(pasted)
+                                            apiKey = clean
+                                            saveCurrentConfig(rawKey = clean)
+                                        }
+                                    }
+                                ) {
+                                    Icon(Icons.Default.ContentPaste, "粘贴", modifier = Modifier.size(18.dp))
+                                }
+                                if (apiKey.isNotEmpty()) {
+                                    IconButton(
+                                        onClick = {
+                                            apiKey = ""
+                                            verifySuccessMsg = null
+                                            modelFetchError = null
+                                            saveCurrentConfig(rawKey = "")
+                                        }
+                                    ) {
+                                        Icon(Icons.Default.Clear, "清空", modifier = Modifier.size(18.dp))
+                                    }
+                                }
+                                TextButton(onClick = { showKey = !showKey }) {
+                                    Text(if (showKey) s.hide else s.show, fontSize = 12.sp)
+                                }
+                            }
+                        }
+                    )
+
+                    // API Base URL（直接展示，所有提供商均可查看或修改为中转站地址）
+                    OutlinedTextField(
+                        value = baseUrl,
+                        onValueChange = { newUrl ->
+                            baseUrl = newUrl
+                            saveCurrentConfig(rawUrl = newUrl)
+                        },
+                        label = { Text("API Base URL (接口地址)") },
+                        placeholder = { Text("https://api.deepseek.com/v1") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth(),
+                        trailingIcon = {
+                            if (selectedProvider.baseUrl.isNotBlank() && baseUrl != selectedProvider.baseUrl) {
+                                TextButton(
+                                    onClick = {
+                                        baseUrl = selectedProvider.baseUrl
+                                        saveCurrentConfig(rawUrl = selectedProvider.baseUrl)
+                                    }
+                                ) {
+                                    Text("默认", fontSize = 11.sp)
+                                }
+                            }
+                        }
+                    )
+
+                    // 模型名称（既可直接编辑输入任意模型名，也可从下拉菜单选择）
+                    val candidateModels = remember(dynamicModels, selectedProviderId) {
+                        (dynamicModels + selectedProvider.models).distinct()
+                    }
+                    var modelExpanded by remember { mutableStateOf(false) }
+
+                    ExposedDropdownMenuBox(
+                        expanded = modelExpanded && candidateModels.isNotEmpty(),
+                        onExpandedChange = { if (candidateModels.isNotEmpty()) modelExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = model,
+                            onValueChange = { newModel ->
+                                model = newModel
+                                saveCurrentConfig(rawModel = newModel)
+                            },
+                            singleLine = true,
+                            label = { Text("${s.model} (可下拉选择或直接输入)") },
+                            trailingIcon = {
+                                if (candidateModels.isNotEmpty()) {
+                                    IconButton(onClick = { modelExpanded = !modelExpanded }) {
+                                        ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded)
+                                    }
+                                }
+                            },
+                            modifier = Modifier.fillMaxWidth().menuAnchor()
+                        )
+                        if (candidateModels.isNotEmpty()) {
+                            ExposedDropdownMenu(
+                                expanded = modelExpanded,
+                                onDismissRequest = { modelExpanded = false }
+                            ) {
+                                candidateModels.forEach { m ->
+                                    DropdownMenuItem(
+                                        text = { Text(m) },
+                                        onClick = {
+                                            model = m
+                                            modelExpanded = false
+                                            saveCurrentConfig(rawModel = m)
+                                        },
+                                        leadingIcon = {
+                                            if (m == model) {
+                                                Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // 快捷模型标签（一键切换）
+                    if (candidateModels.isNotEmpty()) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            items(candidateModels.take(8)) { m ->
+                                FilterChip(
+                                    selected = model == m,
+                                    onClick = {
+                                        model = m
+                                        saveCurrentConfig(rawModel = m)
+                                    },
+                                    label = { Text(m, fontSize = 11.sp) }
+                                )
+                            }
+                        }
+                    }
+
+                    // 校验状态反馈
+                    if (verifySuccessMsg != null) {
+                        Text(
+                            text = "✅ $verifySuccessMsg",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                    if (modelFetchError != null) {
+                        Text(
+                            text = "⚠️ $modelFetchError",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.error
+                        )
+                    }
+
+                    // 操作按钮行：验证并获取模型 + 保存配置
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { verifyAndFetchModels(autoTriggered = false) },
+                            enabled = (apiKey.isNotBlank() || selectedProviderId == "ollama") && !isLoadingModels,
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            if (isLoadingModels) {
+                                CircularProgressIndicator(
+                                    Modifier.size(16.dp),
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(Modifier.width(6.dp))
+                                Text(s.fetching, fontSize = 12.sp)
+                            } else {
+                                Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
+                                Spacer(Modifier.width(6.dp))
+                                Text("验证 Key / 获取模型", fontSize = 12.sp)
+                            }
+                        }
+
+                        Button(
+                            onClick = {
+                                saveCurrentConfig()
+                                scope.launch {
+                                    snackbar.showSnackbar(
+                                        s.fmt(s.savedAs, "name" to "${selectedProvider.label} (${model.ifBlank { selectedProvider.defaultModel }})")
+                                    )
+                                }
+                            },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(10.dp)
+                        ) {
+                            Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(s.save, fontSize = 12.sp)
+                        }
+                    }
+
+                    // 高级参数折叠区（温度 + 附加系统提示词）
+                    TextButton(
+                        onClick = { showAdvanced = !showAdvanced },
+                        contentPadding = PaddingValues(0.dp)
+                    ) {
+                        Text(if (showAdvanced) s.collapseAdvanced else s.expandAdvanced, fontSize = 12.sp)
+                    }
+                    if (showAdvanced) {
+                        Text(s.temperature.format(temp), fontSize = 13.sp)
+                        Slider(
+                            value = temp.toFloat(),
+                            onValueChange = {
+                                temp = it.toDouble()
+                                saveCurrentConfig(temperature = temp)
+                            },
+                            valueRange = 0f..2f,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        OutlinedTextField(
+                            value = sysExtra,
+                            onValueChange = {
+                                sysExtra = it
+                                saveCurrentConfig(extra = sysExtra)
+                            },
+                            label = { Text(s.systemExtra) },
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp)
+                        )
+                    }
+                }
+            }
+
+            // ── 2. 语言 / Language ──
             SectionTitle(s.sectionLanguage)
             Text(s.languageHint, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             ExposedDropdownMenuBox(expanded = showLangMenu, onExpandedChange = { showLangMenu = it }) {
@@ -156,7 +619,9 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                     AppLanguage.EN -> s.langEn
                 }
                 OutlinedTextField(
-                    value = langLabel, onValueChange = {}, readOnly = true,
+                    value = langLabel,
+                    onValueChange = {},
+                    readOnly = true,
                     label = { Text(s.languageLabel) },
                     trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLangMenu) },
                     modifier = Modifier.fillMaxWidth().menuAnchor()
@@ -184,7 +649,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 }
             }
 
-            // ── 主题 ──
+            // ── 3. 主题 ──
             SectionTitle(s.sectionTheme)
             Text(s.chooseColorScheme, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -199,29 +664,31 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                     )
                 }
             }
-            // 壁纸按钮
             TextButton(onClick = { wallpaperLauncher.launch("image/*") }) {
                 Icon(Icons.Default.Wallpaper, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(6.dp))
                 Text(s.chooseWallpaper, fontSize = 13.sp)
             }
             if (ThemeState.wallpaperPath != null) {
-                Text("${s.wallpaperPrefix}${ThemeState.wallpaperPath!!.takeLast(30)}", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    "${s.wallpaperPrefix}${ThemeState.wallpaperPath!!.takeLast(30)}",
+                    fontSize = 10.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
 
-            // ── Shizuku ──
+            // ── 4. Shizuku & 系统权限 ──
             SectionTitle(s.sectionPermissions)
             ShizukuStatusCard()
             BatteryOptimizationCard()
 
-            // ── Python ──
+            // ── 5. Python & 终端 ──
             SectionTitle(s.sectionPython)
             PythonStatusCard()
 
-            // 内置终端入口
             OutlinedButton(
                 onClick = onOpenTerminal,
-                modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
                 shape = RoundedCornerShape(12.dp)
             ) {
                 Icon(Icons.Default.Terminal, null, modifier = Modifier.size(18.dp))
@@ -229,101 +696,7 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 Text(s.openBuiltinTerminal, fontSize = 13.sp)
             }
 
-            // ── AI Provider ──
-            SectionTitle(s.sectionAi)
-            Text(s.aiHint, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-
-            ExposedDropdownMenuBox(expanded = showProviderMenu, onExpandedChange = { showProviderMenu = it }) {
-                OutlinedTextField(
-                    value = selectedProvider.label, onValueChange = {}, readOnly = true,
-                    label = { Text(s.aiProvider) },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showProviderMenu) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor()
-                )
-                ExposedDropdownMenu(expanded = showProviderMenu, onDismissRequest = { showProviderMenu = false }) {
-                    AiProvider.PRESETS.forEach { p ->
-                        DropdownMenuItem(
-                            text = { Text(p.label) },
-                            onClick = {
-                                selectedProviderId = p.id; showProviderMenu = false
-                                if (p.id != "custom") { model = p.defaultModel; customBaseUrl = ""; customModel = "" }
-                                dynamicModels = emptyList() // 切换提供商时清空动态列表
-                            },
-                            leadingIcon = {
-                                if (p.id == selectedProviderId) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
-                            }
-                        )
-                    }
-                }
-            }
-
-            // API Key 输入
-            OutlinedTextField(value = apiKey, onValueChange = { apiKey = it }, label = { Text("API Key") },
-                placeholder = { Text(s.pasteApiKey) }, singleLine = true,
-                visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
-                modifier = Modifier.fillMaxWidth(),
-                trailingIcon = { TextButton(onClick = { showKey = !showKey }) { Text(if (showKey) s.hide else s.show, fontSize = 12.sp) } })
-
-            // 自动获取模型按钮
-            Button(
-                onClick = { fetchModels() },
-                enabled = apiKey.isNotBlank() && !isLoadingModels,
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                if (isLoadingModels) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                    Spacer(Modifier.width(8.dp))
-                    Text(s.fetching)
-                } else {
-                    Icon(Icons.Default.Refresh, null, modifier = Modifier.size(18.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(s.fetchModels)
-                }
-            }
-
-            // 模型选择下拉框
-            val allModels = if (dynamicModels.isNotEmpty()) dynamicModels else selectedProvider.models
-            if (allModels.isNotEmpty()) {
-                var modelExpanded by remember { mutableStateOf(false) }
-                ExposedDropdownMenuBox(expanded = modelExpanded, onExpandedChange = { modelExpanded = it }) {
-                    OutlinedTextField(
-                        value = model, onValueChange = {}, readOnly = true,
-                        label = { Text(s.model) },
-                        supportingText = { if (dynamicModels.isNotEmpty()) Text(s.fmt(s.modelsFetchedHint, "n" to dynamicModels.size), fontSize = 10.sp) },
-                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = modelExpanded) },
-                        modifier = Modifier.fillMaxWidth().menuAnchor()
-                    )
-                    ExposedDropdownMenu(expanded = modelExpanded, onDismissRequest = { modelExpanded = false }) {
-                        allModels.forEach { m ->
-                            DropdownMenuItem(text = { Text(m) }, onClick = { model = m; modelExpanded = false },
-                                leadingIcon = { if (m == model) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary) })
-                        }
-                    }
-                }
-            } else if (selectedProvider.id == "custom") {
-                // 自定义提供商：手动输入模型名
-                OutlinedTextField(value = customModel, onValueChange = { customModel = it }, label = { Text(s.modelName) }, singleLine = true, modifier = Modifier.fillMaxWidth())
-            }
-
-            // 错误提示
-            if (modelFetchError != null) {
-                Text("⚠️ $modelFetchError", fontSize = 11.sp, color = MaterialTheme.colorScheme.error)
-            }
-
-            Text(s.temperature.format(temp), fontSize = 13.sp)
-            Slider(value = temp.toFloat(), onValueChange = { temp = it.toDouble() }, valueRange = 0f..2f, modifier = Modifier.fillMaxWidth())
-
-            TextButton(onClick = { showAdvanced = !showAdvanced }) { Text(if (showAdvanced) s.collapseAdvanced else s.expandAdvanced, fontSize = 12.sp) }
-            if (showAdvanced) {
-                OutlinedTextField(value = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl,
-                    onValueChange = { if (selectedProvider.id == "custom") customBaseUrl = it },
-                    label = { Text("API Base URL") }, enabled = selectedProvider.id == "custom", singleLine = true, modifier = Modifier.fillMaxWidth())
-                OutlinedTextField(value = sysExtra, onValueChange = { sysExtra = it }, label = { Text(s.systemExtra) }, modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp))
-            }
-
-            // ── 关于 ──
+            // ── 6. 关于 ──
             SectionTitle(s.sectionAbout)
             Card(
                 modifier = Modifier.fillMaxWidth().clickable { onOpenAbout() },
@@ -350,17 +723,8 @@ fun SettingsScreen(onBack: () -> Unit, onOpenAbout: () -> Unit = {}, onOpenTermi
                 }
             }
 
-            Spacer(Modifier.padding(4.dp))
-            Button(onClick = {
-                val baseUrl = if (selectedProvider.id == "custom") customBaseUrl else selectedProvider.baseUrl
-                val finalModel = if (selectedProvider.id == "custom") customModel else model
-                val newCfg = AgentConfig(selectedProviderId, baseUrl, apiKey.trim(), finalModel.trim(), temp, sysExtra)
-                app.settingsStore.save(newCfg)
-                scope.launch { snackbar.showSnackbar(s.fmt(s.savedAs, "name" to selectedProvider.label)) }
-            }, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Check, null); Spacer(Modifier.padding(4.dp)); Text(s.save)
-            }
             Text(s.apiKeyEncrypted, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(16.dp))
         }
     }
 }
@@ -381,13 +745,26 @@ private fun ThemeChip(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
         else -> Color(0xFF888888)
     }
 
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.width(64.dp).clickable { onClick() }) {
+    Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        modifier = Modifier.width(64.dp).clickable { onClick() }
+    ) {
         Box(
             modifier = Modifier.size(44.dp).clip(CircleShape).background(previewColor)
-                .then(if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, CircleShape) else Modifier.border(1.dp, Color.Gray.copy(alpha = 0.3f), CircleShape)),
+                .then(
+                    if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    else Modifier.border(1.dp, Color.Gray.copy(alpha = 0.3f), CircleShape)
+                ),
             contentAlignment = Alignment.Center
         ) {
-            if (selected) Icon(Icons.Default.Check, null, tint = if (theme.isDark) Color.White else Color.Black, modifier = Modifier.size(20.dp))
+            if (selected) {
+                Icon(
+                    Icons.Default.Check,
+                    null,
+                    tint = if (theme.isDark) Color.White else Color.Black,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
         }
         Spacer(Modifier.height(4.dp))
         Text(theme.localizedLabel(), fontSize = 10.sp, maxLines = 1)
@@ -396,7 +773,12 @@ private fun ThemeChip(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
 
 @Composable
 private fun SectionTitle(text: String) {
-    Text(text, style = MaterialTheme.typography.titleSmall, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmall,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(top = 8.dp)
+    )
 }
 
 @Composable
@@ -407,7 +789,7 @@ private fun ShizukuStatusCard() {
     val scope = rememberCoroutineScope()
     var requesting by remember { mutableStateOf(false) }
 
-    data class StatusInfo(val text: String, val color: androidx.compose.ui.graphics.Color, val label: String?, val action: (() -> Unit)?)
+    data class StatusInfo(val text: String, val color: Color, val label: String?, val action: (() -> Unit)?)
     val statusInfo = when (status) {
         is ShizukuManager.Status.Authorized -> StatusInfo(
             s.shizukuAuthorized + if (status.uid > 0) " (UID: ${status.uid})" else "",
@@ -427,14 +809,23 @@ private fun ShizukuStatusCard() {
         )
     }
 
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp)) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(12.dp)
+    ) {
         Row(Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Filled.Security, contentDescription = null, tint = statusInfo.color, modifier = Modifier.size(20.dp))
             Spacer(Modifier.width(10.dp))
             Text(statusInfo.text, fontSize = 12.sp, color = statusInfo.color, modifier = Modifier.weight(1f))
             if (statusInfo.label != null && statusInfo.action != null) {
-                Button(onClick = { if (!requesting) statusInfo.action!!.invoke() }, enabled = !requesting, contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)) {
-                    if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp) else Text(statusInfo.label!!, fontSize = 12.sp)
+                Button(
+                    onClick = { if (!requesting) statusInfo.action!!.invoke() },
+                    enabled = !requesting,
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    else Text(statusInfo.label!!, fontSize = 12.sp)
                 }
             }
         }
@@ -445,7 +836,7 @@ private fun ShizukuStatusCard() {
 private fun BatteryOptimizationCard() {
     val s = LocalAppStrings.current
     val context = LocalContext.current
-    var isIgnoring by remember { mutableStateOf(KeepAliveManager.isIgnoringBatteryOptimizations(context)) }
+    val isIgnoring by remember { mutableStateOf(KeepAliveManager.isIgnoringBatteryOptimizations(context)) }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -466,11 +857,7 @@ private fun BatteryOptimizationCard() {
             )
             Spacer(Modifier.width(8.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    s.batteryWhitelist,
-                    fontSize = 13.sp,
-                    fontWeight = FontWeight.Medium
-                )
+                Text(s.batteryWhitelist, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                 Text(
                     if (isIgnoring) s.batteryExempted else s.batteryNotExempted,
                     fontSize = 11.sp,
@@ -485,7 +872,6 @@ private fun BatteryOptimizationCard() {
                         }
                         context.startActivity(intent)
                     } catch (_: Throwable) {
-                        // 部分设备不支持，打开电池优化列表
                         try {
                             context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                         } catch (_: Throwable) {}
@@ -501,7 +887,6 @@ private fun BatteryOptimizationCard() {
 @Composable
 private fun PythonStatusCard() {
     val s = LocalAppStrings.current
-    val context = LocalContext.current
     var checking by remember { mutableStateOf(true) }
     var available by remember { mutableStateOf(false) }
     var pythonPath by remember { mutableStateOf<String?>(null) }
@@ -519,7 +904,11 @@ private fun PythonStatusCard() {
         }
     }
 
-    Card(Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant), shape = RoundedCornerShape(12.dp)) {
+    Card(
+        Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(12.dp)
+    ) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
@@ -544,7 +933,6 @@ private fun PythonStatusCard() {
                     Text(s.fmt(s.pathLabel, "path" to pythonPath), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(s.fmt(s.versionLabel, "ver" to version), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                // 手动配置路径
                 Spacer(Modifier.height(8.dp))
                 OutlinedTextField(
                     value = customPath,
@@ -566,10 +954,7 @@ private fun PythonStatusCard() {
                         }
                     }
                 )
-                Text(
-                    s.pythonTermuxHint,
-                    fontSize = 10.sp, color = MaterialTheme.colorScheme.outline
-                )
+                Text(s.pythonTermuxHint, fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
             }
         }
     }
