@@ -187,4 +187,10 @@ val StringsEn = AppStrings(
     themeMd3Mono = "MD3 mono",
     themeWallpaper = "Custom wallpaper",
     themeWallpaperDark = "Custom wallpaper (dark)",
+    executionModeLabel = "Automation Mode",
+    modeFast = "⚡ Fast Mode",
+    modeFastDesc = "Auto-approves sensitive tools without stopping for manual confirmation",
+    modeSafe = "🛡️ Safe Mode",
+    modeSafeDesc = "Prompt for manual confirmation dialog before sensitive operations",
+    allowAndSwitchFast = "⚡ Allow & Switch to Fast Mode",
 )

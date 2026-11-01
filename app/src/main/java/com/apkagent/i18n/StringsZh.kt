@@ -187,4 +187,10 @@ val StringsZh = AppStrings(
     themeMd3Mono = "MD3 黑白灰",
     themeWallpaper = "自定义壁纸",
     themeWallpaperDark = "自定义壁纸(暗)",
+    executionModeLabel = "自动化运行模式",
+    modeFast = "⚡ 快速模式",
+    modeFastDesc = "敏感操作（写入、DEX修改、补丁、签名等）自动放行，无需手动确认",
+    modeSafe = "🛡️ 安全模式",
+    modeSafeDesc = "每个敏感工具执行前弹出弹窗，需人工审核确认后执行",
+    allowAndSwitchFast = "⚡ 允许并切换为快速模式",
 )

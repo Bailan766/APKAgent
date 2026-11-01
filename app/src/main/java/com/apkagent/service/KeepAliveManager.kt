@@ -7,12 +7,12 @@ import android.os.PowerManager
 import com.apkagent.util.Logger
 
 /**
- * 后台保活管理器 — 管理前台服务 + WakeLock。
+ * 后台保活管理器 — 管理前台服务 + WakeLock + ColorOS 流体云药丸胶囊状态同步。
  *
  * 用法：
  *   KeepAliveManager.acquire(context)  // Agent 开始任务时调用
  *   KeepAliveManager.release()          // Agent 任务结束时调用
- *   KeepAliveManager.updateTask(L("分析 DEX...", "DEX..."))  // 更新通知文字
+ *   KeepAliveManager.updateTask(...)    // 更新流体云与通知文字
  */
 object KeepAliveManager {
 
@@ -54,16 +54,27 @@ object KeepAliveManager {
             wakeLock = null
             // 停止前台服务
             service?.let {
-                // service 在 onDestroy 中会调用 onServiceDestroyed
                 try { it.stopSelf() } catch (_: Throwable) {}
             }
-            Logger.i(TAG, L("WakeLock + 前台服务已释放", "WakeLock + Front desk service Experienced"))
+            Logger.i(TAG, L("WakeLock + 前台服务已释放", "WakeLock + Front desk service released"))
         }
     }
 
-    /** 更新通知文字（如当前正在执行什么任务） */
+    /**
+     * 更新通知文字与 ColorOS 流体云胶囊
+     */
+    fun updateTask(
+        taskName: String,
+        apkName: String? = null,
+        status: String? = null,
+        progress: Int? = null
+    ) {
+        service?.updateNotification(taskName, apkName, status, progress)
+    }
+
+    /** 简化更新重载 */
     fun updateTask(taskName: String) {
-        service?.updateNotification("正在执行：$taskName")
+        service?.updateNotification(taskName)
     }
 
     /** 是否正在保活 */
@@ -86,7 +97,7 @@ object KeepAliveManager {
             service = null
             // 如果 service 被系统杀死但 refCount > 0，清理状态
             if (refCount > 0) {
-                Logger.w(TAG, L("前台服务被系统杀死，清理状态", "The front desk service was systematically killed. Clean up."))
+                Logger.w(TAG, L("前台服务被系统杀死，清理状态", "The front desk service was killed. Clean up."))
                 wakeLock?.let { if (it.isHeld) it.release() }
                 wakeLock = null
                 refCount = 0

@@ -38,6 +38,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.apkagent.ApkAgentApp
+import com.apkagent.store.ExecutionMode
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -61,6 +62,7 @@ fun ChatScreen(
     val openApkName by vm.openApkName.collectAsStateWithLifecycle()
     val historyList by vm.historyList.collectAsStateWithLifecycle()
     val pendingConfirmation by vm.pendingConfirmation.collectAsStateWithLifecycle()
+    val executionMode by vm.executionMode.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
     var input by remember { mutableStateOf("") }
@@ -124,6 +126,20 @@ fun ChatScreen(
                                     color = if (isRunning) MaterialTheme.colorScheme.primary else Color(0xFF10B981)
                                 )
                             }
+                            Spacer(Modifier.width(4.dp))
+                            Surface(
+                                shape = RoundedCornerShape(4.dp),
+                                color = if (executionMode == ExecutionMode.FAST) Color(0xFFF59E0B).copy(alpha = 0.18f) else Color(0xFF3B82F6).copy(alpha = 0.18f),
+                                modifier = Modifier.clickable { vm.toggleExecutionMode() }
+                            ) {
+                                Text(
+                                    if (executionMode == ExecutionMode.FAST) "⚡ 快速" else "🛡️ 安全",
+                                    modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (executionMode == ExecutionMode.FAST) Color(0xFFF59E0B) else Color(0xFF60A5FA)
+                                )
+                            }
                         }
                         Text(
                             openApkName?.let { s.fmt(s.importedPrefix, "name" to it) } ?: s.androidReverseAnalysis,
@@ -174,6 +190,11 @@ fun ChatScreen(
                             text = { Text(s.settings) },
                             onClick = { showMenu = false; onOpenSettings() },
                             leadingIcon = { Icon(Icons.Default.Settings, null) }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (executionMode == ExecutionMode.FAST) "切换为安全模式 (每次确认)" else "切换为快速模式 (自动放行)") },
+                            onClick = { showMenu = false; vm.toggleExecutionMode() },
+                            leadingIcon = { Icon(if (executionMode == ExecutionMode.FAST) Icons.Default.Security else Icons.Default.Bolt, null) }
                         )
                         DropdownMenuItem(
                             text = { Text(s.clearChat) },
@@ -235,6 +256,9 @@ fun ChatScreen(
             call = req.call,
             onResult = { allow ->
                 if (allow) vm.approvePendingToolCall() else vm.denyPendingToolCall()
+            },
+            onAllowAndSwitchFast = {
+                vm.approveAndSwitchToFastMode()
             }
         )
     }

@@ -11,6 +11,22 @@ import kotlinx.coroutines.flow.asStateFlow
 import com.apkagent.i18n.AppLanguage
 import com.apkagent.i18n.LocaleManager
 
+enum class ExecutionMode(
+    val id: String,
+    val titleZh: String,
+    val titleEn: String,
+    val descZh: String,
+    val descEn: String
+) {
+    FAST("fast", "快速模式", "Fast Mode", "自动化逆向免拦截，敏感操作自动放行执行", "Autonomous reverse engineering, auto-approves sensitive operations"),
+    SAFE("safe", "安全模式", "Safe Mode", "高风险敏感操作逐步弹窗确认", "Prompts for confirmation before executing high-risk operations");
+
+    companion object {
+        fun fromId(id: String?): ExecutionMode =
+            values().firstOrNull { it.id.equals(id, ignoreCase = true) } ?: FAST
+    }
+}
+
 data class AgentConfig(
     val providerId: String = "deepseek",
     val baseUrl: String = "https://api.deepseek.com/v1",
@@ -18,10 +34,12 @@ data class AgentConfig(
     val model: String = "deepseek-chat",
     val temperature: Double = 0.6,
     val systemExtra: String = "",
-    val maxRounds: Int = 100
+    val maxRounds: Int = 100,
+    val executionMode: String = ExecutionMode.FAST.id
 ) {
     fun isValid(): Boolean = (providerId == "ollama" || apiKey.trim().isNotBlank()) && model.trim().isNotBlank()
     fun provider(): AiProvider = AiProvider.byId(providerId)
+    fun mode(): ExecutionMode = ExecutionMode.fromId(executionMode)
 }
 
 class SettingsStore(private val context: Context) {
@@ -111,6 +129,7 @@ class SettingsStore(private val context: Context) {
                 provider.models.firstOrNull() ?: "deepseek-chat"
             }
         }
+        val savedMode = readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.FAST.id
         AgentConfig(
             providerId = pid,
             baseUrl = resolvedUrl,
@@ -118,7 +137,8 @@ class SettingsStore(private val context: Context) {
             model = resolvedModel,
             temperature = (readStringSafe(KEY_TEMP) ?: "0.6").toDoubleOrNull() ?: 0.6,
             systemExtra = readStringSafe(KEY_SYS) ?: "",
-            maxRounds = (readStringSafe(KEY_MAX_ROUNDS) ?: "100").toIntOrNull() ?: 100
+            maxRounds = (readStringSafe(KEY_MAX_ROUNDS) ?: "100").toIntOrNull() ?: 100,
+            executionMode = savedMode
         )
     } catch (e: Throwable) {
         Log.e("SettingsStore", "读取失败", e)
@@ -136,10 +156,12 @@ class SettingsStore(private val context: Context) {
                 provider.models.firstOrNull() ?: "deepseek-chat"
             }
         }
+        val cleanMode = if (cfg.executionMode.equals("safe", ignoreCase = true)) "safe" else "fast"
         val normalized = cfg.copy(
             baseUrl = cleanUrl,
             apiKey = cleanKey,
-            model = cleanModel
+            model = cleanModel,
+            executionMode = cleanMode
         )
 
         val writeTo: (SharedPreferences) -> Unit = { sp ->
@@ -151,6 +173,7 @@ class SettingsStore(private val context: Context) {
                 .putString(KEY_TEMP, normalized.temperature.toString())
                 .putString(KEY_SYS, normalized.systemExtra)
                 .putString(KEY_MAX_ROUNDS, normalized.maxRounds.toString())
+                .putString(KEY_EXECUTION_MODE, normalized.executionMode)
                 .commit()
         }
 
@@ -212,6 +235,13 @@ class SettingsStore(private val context: Context) {
         LocaleManager.setLanguage(lang)
     }
 
+    fun getExecutionMode(): ExecutionMode = ExecutionMode.fromId(readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.FAST.id)
+
+    fun setExecutionMode(mode: ExecutionMode) {
+        val cur = _config.value
+        save(cur.copy(executionMode = mode.id))
+    }
+
     companion object {
         private const val KEY_PROVIDER = "provider"
         private const val KEY_BASE = "base_url"
@@ -224,5 +254,6 @@ class SettingsStore(private val context: Context) {
         private const val KEY_NODE_INSTALLED = "node_installed"
         private const val KEY_MAX_ROUNDS = "max_rounds"
         private const val KEY_LANGUAGE = "app_language"
+        private const val KEY_EXECUTION_MODE = "execution_mode"
     }
 }

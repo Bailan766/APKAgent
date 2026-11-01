@@ -203,7 +203,11 @@ fun ToolCard(item: ChatItem) {
 
 /** 敏感操作权限确认弹窗（Cyber Security 质询卡片） */
 @Composable
-fun PermissionDialog(call: PendingToolCall, onResult: (Boolean) -> Unit) {
+fun PermissionDialog(
+    call: PendingToolCall,
+    onResult: (Boolean) -> Unit,
+    onAllowAndSwitchFast: (() -> Unit)? = null
+) {
     var handled by remember { mutableStateOf(false) }
     val onAction = { allow: Boolean ->
         if (!handled) {
@@ -265,11 +269,27 @@ fun PermissionDialog(call: PendingToolCall, onResult: (Boolean) -> Unit) {
             }
         },
         confirmButton = {
-            Button(
-                onClick = { onAction(true) },
-                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
-            ) {
-                Text(LocalAppStrings.current.allowExecute, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (onAllowAndSwitchFast != null) {
+                    OutlinedButton(
+                        onClick = {
+                            if (!handled) {
+                                handled = true
+                                onAllowAndSwitchFast()
+                            }
+                        },
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF59E0B)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF59E0B))
+                    ) {
+                        Text(LocalAppStrings.current.allowAndSwitchFast, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                Button(
+                    onClick = { onAction(true) },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
+                ) {
+                    Text(LocalAppStrings.current.allowExecute, fontWeight = FontWeight.Bold)
+                }
             }
         },
         dismissButton = {

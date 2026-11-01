@@ -193,6 +193,12 @@ data class AppStrings(
     val themeMd3Mono: String,
     val themeWallpaper: String,
     val themeWallpaperDark: String,
+    val executionModeLabel: String,
+    val modeFast: String,
+    val modeFastDesc: String,
+    val modeSafe: String,
+    val modeSafeDesc: String,
+    val allowAndSwitchFast: String,
 ) {
     /** Replace `{key}` placeholders, e.g. fmt(s.importedPrefix, "name" to apkName). */
     fun fmt(template: String, vararg pairs: Pair<String, Any?>): String {

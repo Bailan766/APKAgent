@@ -42,6 +42,7 @@ import com.apkagent.i18n.LocalAppStrings
 import com.apkagent.service.KeepAliveManager
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.AgentConfig
+import com.apkagent.store.ExecutionMode
 import com.apkagent.store.AiProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -87,6 +88,8 @@ fun SettingsScreen(
     var modelFetchError by remember { mutableStateOf<String?>(null) }
     var verifySuccessMsg by remember { mutableStateOf<String?>(null) }
 
+    var execMode by remember { mutableStateOf(app.settingsStore.getExecutionMode()) }
+
     // 统一保存函数：对所有字段做规范化兜底并立即持久化
     fun saveCurrentConfig(
         pid: String = selectedProviderId,
@@ -94,7 +97,8 @@ fun SettingsScreen(
         rawKey: String = apiKey,
         rawModel: String = model,
         temperature: Double = temp,
-        extra: String = sysExtra
+        extra: String = sysExtra,
+        mode: ExecutionMode = execMode
     ) {
         val provider = AiProvider.byId(pid)
         val cleanKey = OpenAIClient.sanitizeApiKey(rawKey)
@@ -112,9 +116,11 @@ fun SettingsScreen(
             apiKey = cleanKey,
             model = cleanModel,
             temperature = temperature,
-            systemExtra = extra
+            systemExtra = extra,
+            executionMode = mode.id
         )
         app.settingsStore.save(newCfg)
+        app.settingsStore.setExecutionMode(mode)
     }
 
     // 退出页面时强制保存一次，确保左滑返回或点击返回箭头不丢失任何输入
@@ -605,6 +611,125 @@ fun SettingsScreen(
                             label = { Text(s.systemExtra) },
                             modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp)
                         )
+                    }
+                }
+            }
+
+            // ── 1.5 自动化运行模式 / Execution Mode ──
+            SectionTitle(s.executionModeLabel)
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.Bolt,
+                            contentDescription = null,
+                            tint = Color(0xFFF59E0B),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            s.executionModeLabel,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                    }
+                    Text(
+                        "控制 Agent 自动化执行时的敏感操作拦截策略。默认采用快速模式，实现无阻碍自动化逆向。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+
+                    // 快速模式选项
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (execMode == ExecutionMode.FAST) Color(0xFFF59E0B).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (execMode == ExecutionMode.FAST) Color(0xFFF59E0B) else Color.Transparent
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                execMode = ExecutionMode.FAST
+                                saveCurrentConfig(mode = ExecutionMode.FAST)
+                            }
+                    ) {
+                        Row(
+                            Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = execMode == ExecutionMode.FAST,
+                                onClick = {
+                                    execMode = ExecutionMode.FAST
+                                    saveCurrentConfig(mode = ExecutionMode.FAST)
+                                }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    s.modeFast + " (推荐)",
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = if (execMode == ExecutionMode.FAST) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    s.modeFastDesc,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+
+                    // 安全模式选项
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (execMode == ExecutionMode.SAFE) Color(0xFF3B82F6).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                        border = androidx.compose.foundation.BorderStroke(
+                            1.dp,
+                            if (execMode == ExecutionMode.SAFE) Color(0xFF3B82F6) else Color.Transparent
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                execMode = ExecutionMode.SAFE
+                                saveCurrentConfig(mode = ExecutionMode.SAFE)
+                            }
+                    ) {
+                        Row(
+                            Modifier.padding(12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            RadioButton(
+                                selected = execMode == ExecutionMode.SAFE,
+                                onClick = {
+                                    execMode = ExecutionMode.SAFE
+                                    saveCurrentConfig(mode = ExecutionMode.SAFE)
+                                }
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    s.modeSafe,
+                                    fontWeight = FontWeight.Bold,
+                                    fontSize = 14.sp,
+                                    color = if (execMode == ExecutionMode.SAFE) Color(0xFF3B82F6) else MaterialTheme.colorScheme.onSurface
+                                )
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    s.modeSafeDesc,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
                     }
                 }
             }

@@ -13,6 +13,7 @@ import com.apkagent.project.ReverseProject
 import com.apkagent.service.KeepAliveManager
 import com.apkagent.service.KeepAliveService
 import com.apkagent.store.AgentConfig
+import com.apkagent.store.ExecutionMode
 import com.apkagent.util.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -94,6 +95,23 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     val pendingConfirmation: StateFlow<ToolConfirmationManager.ConfirmationRequest?> = confirmationManager.pendingRequest
 
+    val executionMode = MutableStateFlow(agentApp.settingsStore.getExecutionMode())
+
+    fun setExecutionMode(mode: ExecutionMode) {
+        agentApp.settingsStore.setExecutionMode(mode)
+        executionMode.value = mode
+    }
+
+    fun toggleExecutionMode() {
+        val next = if (executionMode.value == ExecutionMode.FAST) ExecutionMode.SAFE else ExecutionMode.FAST
+        setExecutionMode(next)
+    }
+
+    fun approveAndSwitchToFastMode() {
+        setExecutionMode(ExecutionMode.FAST)
+        confirmationManager.approve()
+    }
+
     private var currentExecutionJob: Job? = null
     private var agentLoop: AgentLoop? = null
     private var lastConfig: AgentConfig? = null
@@ -147,8 +165,13 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         reasoningBuffer.clear()
 
         Logger.i("VM", "开始执行: $text")
-        KeepAliveManager.acquire(agentApp)
+        val targetName = _openApkName.value.orEmpty().ifBlank {
+            _currentProject.value?.name.orEmpty().ifBlank { "APKAgent" }
+        }
+        KeepAliveService.currentApkName = targetName
+        KeepAliveService.capsuleStatus = if (executionMode.value == ExecutionMode.FAST) "⚡ 快速模式" else "🛡️ 安全模式"
         KeepAliveService.roundCount = 0
+        KeepAliveManager.acquire(agentApp)
 
         currentExecutionJob = viewModelScope.launch(Dispatchers.IO) {
             ensureLoop(cfg)
@@ -510,7 +533,12 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     override fun onToolCallStart(call: PendingToolCall) {
         Logger.i("VM", "[${call.name}] ${call.arguments.take(200)}")
         KeepAliveService.currentTask = call.name
-        KeepAliveManager.updateTask("轮次 ${KeepAliveService.roundCount} · ${call.name}")
+        val toolDesc = KeepAliveService.humanReadableTool(call.name)
+        KeepAliveManager.updateTask(
+            taskName = toolDesc,
+            apkName = KeepAliveService.currentApkName,
+            status = if (executionMode.value == ExecutionMode.FAST) "⚡ 快速执行" else "🛡️ 待确认"
+        )
         _messages.update {
             it + ChatItem(
                 role = Role.TOOL,
@@ -523,13 +551,28 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     override suspend fun onConfirmToolCall(call: PendingToolCall): Boolean {
+        if (executionMode.value == ExecutionMode.FAST) {
+            Logger.i("VM", "⚡ 快速模式：已自动放行敏感操作 [${call.name}]")
+            return true
+        }
         val risk = ToolRiskLevel.infer(call.name)
+        KeepAliveManager.updateTask(
+            taskName = "⚠️ 敏感操作待确认: ${call.name}",
+            apkName = KeepAliveService.currentApkName,
+            status = "🛡️ 待确认"
+        )
         return confirmationManager.awaitDecision(call, risk)
     }
 
     override fun onToolCallComplete(call: ExecutedToolCall) {
         val ok = if (call.success) "OK" else "FAIL"
         Logger.i("VM", "[${call.name}] $ok (${call.result.length}chars)")
+        val toolDesc = KeepAliveService.humanReadableTool(call.name)
+        KeepAliveManager.updateTask(
+            taskName = if (call.success) "✅ $toolDesc" else "❌ $toolDesc 失败",
+            apkName = KeepAliveService.currentApkName,
+            status = if (executionMode.value == ExecutionMode.FAST) "⚡ 快速执行" else "🛡️ 安全审计"
+        )
         _messages.update { list ->
             val idx = list.indexOfLast { it.role == Role.TOOL && it.streaming && it.toolCallId == call.id }
             if (idx >= 0) {
