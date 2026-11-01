@@ -1,5 +1,8 @@
 pluginManagement {
     repositories {
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
         google {
             content {
                 includeGroupByRegex("com\\.android.*")
@@ -14,13 +17,11 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // 优先使用全球仓库（GitHub CI 可访问）
-        google()
-        mavenCentral()
-        // 国内镜像加速（仅国内服务器生效，CI 自动回退到上面）
-        maven { url = uri("https://mirrors.tencent.com/nexus/repository/maven-public/") }
         maven { url = uri("https://maven.aliyun.com/repository/public") }
         maven { url = uri("https://maven.aliyun.com/repository/google") }
+        google()
+        mavenCentral()
+        maven { url = uri("https://mirrors.tencent.com/nexus/repository/maven-public/") }
     }
 }
 

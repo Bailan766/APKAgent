@@ -7,7 +7,7 @@ import kotlinx.serialization.json.JsonObject
 
 /**
  * OpenAI 兼容 Chat Completions API 的数据模型。
- * 支持流式输出与 function calling（tool_calls）。
+ * 支持流式输出与 function calling（tool_calls），以及 DeepSeek-R1 / 推理模型的 reasoning_content 思考链。
  */
 
 @Serializable
@@ -74,6 +74,7 @@ data class StreamChoice(
 data class Delta(
     val role: String? = null,
     val content: String? = null,
+    @SerialName("reasoning_content") val reasoningContent: String? = null,
     @SerialName("tool_calls") val toolCalls: List<DeltaToolCall>? = null
 )
 

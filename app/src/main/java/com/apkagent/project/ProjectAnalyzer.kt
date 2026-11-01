@@ -1,8 +1,8 @@
 package com.apkagent.project
 
 import com.apkagent.i18n.L
-
 import com.apkagent.apktools.AxmlParser
+import com.apkagent.apktools.DexParser
 import com.apkagent.apktools.SignatureReader
 import java.io.File
 import java.util.Locale
@@ -41,13 +41,27 @@ object ProjectAnalyzer {
             }
         }
 
+        val packerResult = runCatching { ProjectIntelligence.detectPacker(apk) }.getOrNull()
+        val dexClasses = runCatching {
+            ZipFile(apk).use { zip ->
+                val firstDex = zip.getEntry("classes.dex") ?: return@use emptyList<String>()
+                val bytes = zip.getInputStream(firstDex).use { it.readBytes() }
+                DexParser.parseCached(bytes).classes
+            }
+        }.getOrDefault(emptyList())
+
+        val techStack = runCatching { ProjectIntelligence.detectTechStack(apk, dexClasses) }
+            .getOrDefault(ProjectIntelligence.TechStackResult(emptyList(), emptyList()))
+
         val certSummary = runCatching { SignatureReader.read(apk) }.getOrDefault("")
         val riskSummary = buildRiskSummary(
             permissions = permissions,
             dexEntries = dexEntries,
             nativeLibs = nativeLibs,
             assetEntries = assetEntries,
-            manifestXml = manifestXml
+            manifestXml = manifestXml,
+            packerResult = packerResult,
+            techStack = techStack
         )
 
         return ProjectAnalysisSummary(
@@ -70,7 +84,10 @@ object ProjectAnalyzer {
             nativeLibs = nativeLibs,
             assetEntries = assetEntries.take(40),
             certificateSummary = certSummary.take(4000),
-            riskSummary = riskSummary
+            riskSummary = riskSummary,
+            packers = packerResult?.detectedPackers ?: emptyList(),
+            frameworks = techStack.frameworks,
+            detectedSdks = techStack.sdks
         )
     }
 
@@ -108,9 +125,25 @@ object ProjectAnalyzer {
         dexEntries: List<String>,
         nativeLibs: List<String>,
         assetEntries: List<String>,
-        manifestXml: String
+        manifestXml: String,
+        packerResult: ProjectIntelligence.PackerResult? = null,
+        techStack: ProjectIntelligence.TechStackResult? = null
     ): String {
         val risks = mutableListOf<String>()
+
+        if (packerResult != null && packerResult.isPacked) {
+            val names = if (packerResult.detectedPackers.isNotEmpty()) packerResult.detectedPackers.joinToString() else "未知厂商加壳"
+            risks += "⚠️ 加壳防护: 检测到 [$names] (保护分: ${packerResult.protectionScore})"
+        }
+
+        if (techStack != null && techStack.frameworks.isNotEmpty()) {
+            risks += "技术栈框架: ${techStack.frameworks.joinToString()}"
+        }
+
+        if (techStack != null && techStack.sdks.isNotEmpty()) {
+            risks += "常用 SDK: ${techStack.sdks.joinToString()}"
+        }
+
         val highRiskPermissions = permissions.filter {
             it.contains("SEND_SMS") ||
                 it.contains("RECEIVE_SMS") ||

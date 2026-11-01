@@ -81,7 +81,7 @@ object RiskScanner {
                 val entry = zip.getEntry("AndroidManifest.xml") ?: return ""
                 val bytes = zip.getInputStream(entry).readBytes()
                 // 尝试解析二进制 XML（简化处理，返回可读部分）
-                String(bytes, Charsets.UTF_8).replace("\u0000", "")
+                AxmlParser(bytes).parse()
             }
         } catch (e: Exception) {
             Logger.w("RiskScan", L("解析 Manifest 失败: ${e.message}", "Manifest parse failed: ${e.message}"))

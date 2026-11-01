@@ -52,7 +52,7 @@ class ToolRegistry {
      */
     fun getToolsForPhase(phase: ReversePhase): List<Tool> {
         val prepareTools = setOf(
-            "apk_apk_info", "apk_read_signer", "apk_read_manifest", "apk_list_files", "risk_scan"
+            "apk_apk_info", "apk_read_signer", "apk_read_manifest", "apk_list_files", "risk_scan", "rea_skill_guide"
         )
         val analysisTools = prepareTools + setOf(
             "dex_disasm", "apk_read_dex", "hex_view", "apk_extract_entry",

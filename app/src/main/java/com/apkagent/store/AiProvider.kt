@@ -20,6 +20,20 @@ data class AiProvider(
                 models = listOf("deepseek-chat", "deepseek-reasoner")
             ),
             AiProvider(
+                id = "openrouter",
+                label = "OpenRouter",
+                baseUrl = "https://openrouter.ai/api/v1",
+                defaultModel = "deepseek/deepseek-r1",
+                models = listOf(
+                    "deepseek/deepseek-r1",
+                    "deepseek/deepseek-chat",
+                    "anthropic/claude-3.7-sonnet",
+                    "anthropic/claude-3.5-sonnet",
+                    "google/gemini-2.5-flash",
+                    "meta-llama/llama-3.3-70b-instruct"
+                )
+            ),
+            AiProvider(
                 id = "openai",
                 label = "OpenAI GPT",
                 baseUrl = "https://api.openai.com/v1",
@@ -36,9 +50,23 @@ data class AiProvider(
             AiProvider(
                 id = "gemini",
                 label = "Gemini",
-                baseUrl = "https://generativelanguage.googleapis.com/v1beta",
+                baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai",
                 defaultModel = "gemini-2.5-flash",
                 models = listOf("gemini-2.5-flash", "gemini-2.5-pro", "gemini-2.0-flash")
+            ),
+            AiProvider(
+                id = "groq",
+                label = "Groq",
+                baseUrl = "https://api.groq.com/openai/v1",
+                defaultModel = "llama-3.3-70b-versatile",
+                models = listOf("llama-3.3-70b-versatile", "deepseek-r1-distill-llama-70b")
+            ),
+            AiProvider(
+                id = "ollama",
+                label = "Ollama (本地/局域网)",
+                baseUrl = "http://10.0.2.2:11434/v1",
+                defaultModel = "deepseek-r1:latest",
+                models = listOf("deepseek-r1:latest", "qwen2.5-coder:latest", "llama3.2:latest")
             ),
             AiProvider(
                 id = "qwen",

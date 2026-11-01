@@ -56,5 +56,8 @@ data class ProjectAnalysisSummary(
     val assetEntries: List<String> = emptyList(),
     val certificateSummary: String = "",
     val riskSummary: String = "",
+    val packers: List<String> = emptyList(),
+    val frameworks: List<String> = emptyList(),
+    val detectedSdks: List<String> = emptyList(),
     val generatedAt: Long = System.currentTimeMillis()
 )

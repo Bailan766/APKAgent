@@ -57,7 +57,8 @@ object PluginManager {
         // 分析工具
         PluginInfo("analyze-api", L("API 端点提取", "API peer extraction"), L("Python 脚本提取 APK 中所有 HTTP/API 端点", "Python script extracts all HTTP/API endpoints from APK"), "analysis", null, "extract_apis.py"),
         PluginInfo("analyze-hardcode", L("硬编码扫描", "Hard Encoding Scan"), L("Python 扫描 APK 中硬编码的密钥/Token/URL", "Python scans the key for the coder for the Python for the heart for the user for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one, and for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is for the one that is of for the for the for the one, and is for the for the for the for the for, for the for the for for the for for the for for for, for the for for, for for the for for for, for for for the for the for for for for for for for for for for the for for"), "analysis", null, "find_secrets.py"),
-        PluginInfo("analyze-permissions", L("权限分析", "Competence analysis"), L("分析 APK 权限 & 导出组件安全风险", "Analyse AAK Permissions & Export Component Security Risks"), "analysis", null, "perm_check.py"),
+        PluginInfo("analyze-permissions", L("权限分析", "Competence analysis"), L("分析 APK 权限 & 导出组件安全风险", "Analyse APK Permissions & Export Component Security Risks"), "analysis", null, "perm_check.py"),
+        PluginInfo("skill-rea", L("REA 逆向工程方法论", "REA Reverse Engineering Guide"), L("内置 Reverse Engineer Anything 证据链与全平台逆向方法论", "Built-in Reverse Engineer Anything methodology"), "skills", null, "SKILL.md", installed = true),
     )
 
     /** 获取内置插件的代码内容（内置的非下载插件用这个） */
@@ -82,7 +83,7 @@ object PluginManager {
             withTimeout(timeoutSeconds * 1000L) {
                 val conn = URL(url).openConnection() as HttpURLConnection
                 conn.connectTimeout = 10000; conn.readTimeout = timeoutSeconds * 1000
-                conn.setRequestProperty("User-Agent", "APKAgent/3.0")
+                conn.setRequestProperty("User-Agent", "APKAgent/4.1.0")
                 conn.connect()
                 if (conn.responseCode != 200) return@withTimeout "HTTP ${conn.responseCode}"
                 conn.inputStream.use { input -> dest.outputStream().use { output -> input.copyTo(output) } }

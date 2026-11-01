@@ -28,7 +28,7 @@ private data class AccToolCall(
 
 /**
  * OpenAI 兼容 Chat Completions 客户端。
- * 支持 SSE 流式输出与 function calling 增量拼接。
+ * 支持 SSE 流式输出、DeepSeek-R1 / 推理模型 reasoning_content 思考链展示与 function calling 增量拼接。
  */
 class OpenAIClient(
     var baseUrl: String,
@@ -50,9 +50,17 @@ class OpenAIClient(
 
     private fun endpoint(): String {
         var base = baseUrl.trim().trimEnd('/')
+        if (base.contains("generativelanguage.googleapis.com")) {
+            if (!base.endsWith("/chat/completions")) {
+                if (base.endsWith("/openai")) base = "$base/chat/completions"
+                else if (base.endsWith("/v1beta")) base = "$base/openai/chat/completions"
+                else base = "$base/v1beta/openai/chat/completions"
+            }
+            return base
+        }
+        if (base.endsWith("/chat/completions")) return base
         if (!base.endsWith("/v1")) {
-            // 兼容用户填到 /v1 或只填根域名
-            if (!base.endsWith("/chat/completions")) base = "$base/v1"
+            base = "$base/v1"
         }
         return "$base/chat/completions"
     }
@@ -65,10 +73,17 @@ class OpenAIClient(
         try {
             val models = circuitBreaker.execute<List<String>> {
                 var base = baseUrl.trim().trimEnd('/')
-                if (!base.endsWith("/v1")) {
-                    if (!base.endsWith("/models")) base = "$base/v1"
+                val modelsUrl = if (base.contains("generativelanguage.googleapis.com")) {
+                    if (base.endsWith("/openai")) "$base/models"
+                    else if (base.endsWith("/v1beta")) "$base/openai/models"
+                    else "$base/v1beta/openai/models"
+                } else if (base.endsWith("/models")) {
+                    base
+                } else if (!base.endsWith("/v1")) {
+                    "$base/v1/models"
+                } else {
+                    "$base/models"
                 }
-                val modelsUrl = "$base/models"
 
                 val req = Request.Builder()
                     .url(modelsUrl)
@@ -111,83 +126,106 @@ class OpenAIClient(
         onContentDelta: (String) -> Unit
     ): StreamResult = withContext(Dispatchers.IO) {
         circuitBreaker.retryWithBackoff(maxRetries = 3) {
-        val body = json.encodeToString(ChatRequest.serializer(), request)
-            .toRequestBody("application/json; charset=utf-8".toMediaType())
+            val body = json.encodeToString(ChatRequest.serializer(), request)
+                .toRequestBody("application/json; charset=utf-8".toMediaType())
 
-        val req = Request.Builder()
-            .url(endpoint())
-            .header("Authorization", "Bearer $apiKey")
-            .header("Accept", "text/event-stream")
-            .header("Cache-Control", "no-cache")
-            .post(body)
-            .build()
+            val req = Request.Builder()
+                .url(endpoint())
+                .header("Authorization", "Bearer $apiKey")
+                .header("Accept", "text/event-stream")
+                .header("Cache-Control", "no-cache")
+                .post(body)
+                .build()
 
-        val response = client.newCall(req).execute()
-        val respBody = response.body
-            ?: throw IllegalStateException("空响应体 (HTTP ${response.code})")
+            val response = client.newCall(req).execute()
+            val respBody = response.body
+                ?: throw IllegalStateException("空响应体 (HTTP ${response.code})")
 
-        if (!response.isSuccessful) {
-            val errText = respBody.string()
-            val msg = try {
-                json.decodeFromString(ApiErrorBody.serializer(), errText).error?.message
-            } catch (_: Throwable) { null } ?: "HTTP ${response.code}: ${errText.take(300)}"
-            throw IllegalStateException(msg)
-        }
-
-        val content = StringBuilder()
-        val acc = mutableMapOf<Int, AccToolCall>()
-        var finishReason: String? = null
-        val source = respBody.source()
-
-        while (!source.exhausted()) {
-            val line = source.readUtf8Line() ?: break
-            if (line.isBlank()) continue
-            val data = when {
-                line.startsWith("data:") -> line.removePrefix("data:").trim()
-                line.startsWith("data: ") -> line.removePrefix("data: ").trim()
-                else -> continue
+            if (!response.isSuccessful) {
+                val errText = respBody.string()
+                val msg = try {
+                    json.decodeFromString(ApiErrorBody.serializer(), errText).error?.message
+                } catch (_: Throwable) { null } ?: "HTTP ${response.code}: ${errText.take(300)}"
+                throw IllegalStateException(msg)
             }
-            if (data == "[DONE]") break
-            if (data.isEmpty()) continue
 
-            val chunk = try {
-                json.decodeFromString(StreamChunk.serializer(), data)
-            } catch (_: Throwable) { continue }
+            val content = StringBuilder()
+            val acc = mutableMapOf<Int, AccToolCall>()
+            var finishReason: String? = null
+            val source = respBody.source()
+            var inReasoning = false
+            var reasoningDone = false
 
-            val choice = chunk.choices.firstOrNull() ?: continue
-            choice.finishReason?.let { finishReason = it }
-            val delta = choice.delta ?: continue
+            while (!source.exhausted()) {
+                val line = source.readUtf8Line() ?: break
+                if (line.isBlank()) continue
+                val data = when {
+                    line.startsWith("data:") -> line.removePrefix("data:").trim()
+                    line.startsWith("data: ") -> line.removePrefix("data: ").trim()
+                    else -> continue
+                }
+                if (data == "[DONE]") break
+                if (data.isEmpty()) continue
 
-            delta.content?.let {
-                if (it.isNotEmpty()) {
-                    content.append(it)
-                    onContentDelta(it)
+                val chunk = try {
+                    json.decodeFromString(StreamChunk.serializer(), data)
+                } catch (_: Throwable) { continue }
+
+                val choice = chunk.choices.firstOrNull() ?: continue
+                choice.finishReason?.let { finishReason = it }
+                val delta = choice.delta ?: continue
+
+                delta.reasoningContent?.let {
+                    if (it.isNotEmpty()) {
+                        if (!inReasoning && !reasoningDone) {
+                            inReasoning = true
+                            val header = "> 🧠 **思考过程**\n> \n"
+                            content.append(header)
+                            onContentDelta(header)
+                        }
+                        val formatted = it.replace("\n", "\n> ")
+                        content.append(formatted)
+                        onContentDelta(formatted)
+                    }
+                }
+
+                delta.content?.let {
+                    if (it.isNotEmpty()) {
+                        if (inReasoning) {
+                            inReasoning = false
+                            reasoningDone = true
+                            val footer = "\n\n---\n\n"
+                            content.append(footer)
+                            onContentDelta(footer)
+                        }
+                        content.append(it)
+                        onContentDelta(it)
+                    }
+                }
+
+                delta.toolCalls?.forEach { tc ->
+                    val a = acc.getOrPut(tc.index) { AccToolCall() }
+                    tc.id?.let { a.id = it }
+                    tc.function?.name?.let { a.name = it }
+                    tc.function?.arguments?.let { a.args.append(it) }
                 }
             }
 
-            delta.toolCalls?.forEach { tc ->
-                val a = acc.getOrPut(tc.index) { AccToolCall() }
-                tc.id?.let { a.id = it }
-                tc.function?.name?.let { a.name = it }
-                tc.function?.arguments?.let { a.args.append(it) }
+            val pending = acc.toSortedMap().map { (_, a) ->
+                val argsStr = a.args.toString()
+                val parsed = try {
+                    if (argsStr.isBlank()) JsonObject(emptyMap())
+                    else json.parseToJsonElement(argsStr) as? JsonObject
+                } catch (_: Throwable) { null }
+                PendingToolCall(
+                    id = a.id ?: "call_${System.currentTimeMillis()}",
+                    name = a.name ?: "unknown",
+                    arguments = argsStr,
+                    parsedArgs = parsed
+                )
             }
-        }
 
-        val pending = acc.toSortedMap().map { (_, a) ->
-            val argsStr = a.args.toString()
-            val parsed = try {
-                if (argsStr.isBlank()) JsonObject(emptyMap())
-                else json.parseToJsonElement(argsStr) as? JsonObject
-            } catch (_: Throwable) { null }
-            PendingToolCall(
-                id = a.id ?: "call_${System.currentTimeMillis()}",
-                name = a.name ?: "unknown",
-                arguments = argsStr,
-                parsedArgs = parsed
-            )
-        }
-
-        StreamResult(content.toString(), pending, finishReason)
+            StreamResult(content.toString(), pending, finishReason)
         }
     }
 }

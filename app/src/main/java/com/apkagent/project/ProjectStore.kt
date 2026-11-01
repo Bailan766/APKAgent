@@ -212,6 +212,13 @@ private fun ProjectAnalysisSummary.toMarkdown(): String = buildString {
     appendLine("## DEX / Native")
     dexEntries.forEach { appendLine("- DEX: $it") }
     nativeLibs.take(20).forEach { appendLine("- SO: $it") }
+    if (packers.isNotEmpty() || frameworks.isNotEmpty() || detectedSdks.isNotEmpty()) {
+        appendLine()
+        appendLine(L("## 加壳与技术栈", "Packer and Tech Stack"))
+        if (packers.isNotEmpty()) appendLine("- 加壳检测: ${packers.joinToString()}")
+        if (frameworks.isNotEmpty()) appendLine("- 核心框架: ${frameworks.joinToString()}")
+        if (detectedSdks.isNotEmpty()) appendLine("- 常用 SDK: ${detectedSdks.joinToString()}")
+    }
     appendLine()
     appendLine(L("## 证书", "Certificate"))
     appendLine(certificateSummary.ifBlank { L("无", "None") })

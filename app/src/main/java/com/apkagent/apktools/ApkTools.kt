@@ -104,6 +104,7 @@ fun buildToolRegistry(): ToolRegistry {
     r.register(PermissionsViewer)
     r.register(EnhancedSigner)
     r.register(ApkInstaller)
+    r.register(ReaSkillGuide)
     return r
 }
 
@@ -1104,6 +1105,27 @@ object ApkPatchManifest : Tool {
             if (!text.contains("android:networkSecurityConfig")) {
                 text = text.replace("<application", "<application android:networkSecurityConfig=\"@xml/network_security_config\"")
                 changes.add("networkSecurityConfig")
+                try {
+                    val rootDir = f.parentFile
+                    val resXmlDir = File(rootDir, "res/xml")
+                    if (!resXmlDir.exists()) resXmlDir.mkdirs()
+                    val netSecFile = File(resXmlDir, "network_security_config.xml")
+                    if (!netSecFile.exists()) {
+                        val xmlContent = """<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>""".trimIndent()
+                        netSecFile.writeText(xmlContent)
+                        changes.add("created res/xml/network_security_config.xml")
+                    }
+                } catch (e: Exception) {
+                    Logger.w("ApkTools", "Failed to create network_security_config.xml: ${e.message}")
+                }
             }
             if (!text.contains("android:usesCleartextTraffic=\"true\"")) {
                 text = text.replace("<application", "<application android:usesCleartextTraffic=\"true\"")
@@ -1651,4 +1673,58 @@ Java.perform(function() {
 });
 """.trimIndent()
     )
+}
+
+
+/** REA 逆向工程指南工具 */
+object ReaSkillGuide : Tool {
+    override val name = "rea_skill_guide"
+    override val description get() = L(
+        "查询内置 REA (Reverse Engineer Anything) 逆向工程方法论与指南（android/native/evidence/workflow/overview）。",
+        "Query built-in REA (Reverse Engineer Anything) reverse engineering guides and workflow references."
+    )
+    override val parameters get() = schemaObject(mapOf(
+        "topic" to strProp("查询主题：overview / android / native / evidence / runtime", enum = listOf("overview", "android", "native", "evidence", "runtime"))
+    ))
+    override suspend fun execute(args: JsonObject, ctx: ToolContext): ToolResult {
+        val topic = args.str("topic") ?: "overview"
+        val guide = when (topic) {
+            "android" -> """
+# REA Android 应用逆向指南
+1. 目标路由：使用 inspect_android_package / apk_apk_info 分析包身份、Manifest 声明与覆盖范围。
+2. 证据链条：静态观测不是执行策略。显式选择候选类与重载索引，分析输入/输出边界。
+3. Native 边界：通过 JNI 导出符号（Java_*）与 JNI_OnLoad 动态注册定位底层 SO 行为。
+4. 证书与防篡改：区分客户端自校验与服务端校验，针对签名绕过/证书 Pinning 采用针对性 patch。
+""".trimIndent()
+            "native" -> """
+# REA Native / SO 逆向指南
+1. ABI 检查：检查 APK 是否携带 arm64-v8a、armeabi-v7a 等原生库。
+2. 符号定位：检查动态导出表中的 Java_ 静态 JNI 绑定与 JNI_OnLoad 动态绑定。
+3. 保护对抗：识别反调试（ptrace/tracerPid）、Root/模拟器检查、混淆（O-LLVM/字符串加密）。
+4. 动态 Hook：优先使用 Frida 拦截 Native 函数入口与返回值。
+""".trimIndent()
+            "evidence" -> """
+# REA 证据链与假说驱动工作流
+1. 区分声称行为与实测行为：切勿根据类名猜测未经验证的功能。
+2. 假说先行：每次 patch 前明确假设（如：绕过此 check 方法可激活 VIP）。
+3. 最小改动原则：优先单点精准 patch，验证后再扩大修改面。
+4. 闭环测试：repack + 签名后必须进行安装测试与 checklist 回归。
+""".trimIndent()
+            "runtime" -> """
+# REA 运行时观测与动态验证
+1. 动态优先于猜测：对于加壳或深混淆代码，通过运行时 Hook 捕获解密后的 DEX/数据。
+2. 抓包观测：配合 network_security_config 允许用户证书，结合抓包工具分析 API 端点。
+3. 提权执行：利用 Shizuku 或 root shell 获取高权限执行环境。
+""".trimIndent()
+            else -> """
+# REA (Reverse Engineer Anything) 核心方法论
+APKAgent 已内置 REA 逆向工程体系：
+- 证据导向：所有结论必须基于工具调用的确凿输出。
+- 目标路由：Manifest → DEX → Native SO → 资源 → 运行时。
+- 未知量追踪：系统性记录疑点并逐步消除。
+- 自动化 Patch：遵循最小副作用与自动重打包签名验证原则。
+""".trimIndent()
+        }
+        return ToolResult.ok(guide)
+    }
 }
