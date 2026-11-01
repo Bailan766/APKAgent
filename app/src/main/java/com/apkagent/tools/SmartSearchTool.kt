@@ -17,7 +17,8 @@ import java.util.zip.ZipFile
  * 2. 支持对二进制 AXML (.xml) 自动解码后搜索，并排除 .snapshots / audit 目录。
  * 3. 当工作区尚未反编译出 .smali 时，自动回退直接扫描 APK 内的 DEX 字符串池、类名与 Manifest。
  */
-object SmartSearchTool : Tool {
+class SmartSearchTool : Tool {
+    companion object : Tool by SmartSearchTool()
     override val name = "smart_search"
     override val description get() = L(
         "在 APK 工作区或 DEX 中智能搜索字符串、类名、方法名、URL、密钥等（比逐步 grep 快 10 倍）",

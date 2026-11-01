@@ -7,7 +7,7 @@ import java.nio.ByteOrder
 
 /**
  * Android 二进制 XML (AXML) 解析器与二进制 Patch 引擎：
- * 将 APK 内的 AndroidManifest.xml 或 res/xml/*.xml 还原为可读 XML 文本，
+ * 将 APK 内的 AndroidManifest.xml 或 res/xml/ 下的 XML 还原为可读 XML 文本，
  * 并支持在保持合法二进制 AXML 结构的前提下直接修改 <application> 安全属性。
  *
  * 修复说明：

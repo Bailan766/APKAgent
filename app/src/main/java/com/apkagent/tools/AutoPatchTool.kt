@@ -2,6 +2,7 @@ package com.apkagent.tools
 
 import com.apkagent.i18n.L
 import com.apkagent.agent.*
+import com.apkagent.apktools.AxmlParser
 import com.apkagent.apktools.Sandbox
 import com.apkagent.apktools.smali.SmaliEngine
 import kotlinx.serialization.json.*
@@ -15,7 +16,8 @@ import java.io.File
  * 2. 扩大条件跳转指令扫描窗口（支持在 move-result 之后的 1~8 行内定位跳转指令）。
  * 3. 支持 workspace 相对路径解析与自动反编译。
  */
-object AutoPatchTool : Tool {
+class AutoPatchTool : Tool {
+    companion object : Tool by AutoPatchTool()
     override val name = "auto_patch"
     override val description get() = L(
         "自动识别并修改常见检测逻辑（VIP检测、Root检测、模拟器检测、签名验证、SSL Pinning）",

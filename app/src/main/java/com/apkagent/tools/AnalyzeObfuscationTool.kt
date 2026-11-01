@@ -16,7 +16,8 @@ import java.util.zip.ZipFile
  * 2. 修复当工作区尚未反编译出 .smali 文件时统计出 0 个类并误报“⚪ 无明显混淆”的 Bug，
  *    自动回退直接解析当前打开 APK 内的所有 DEX 类名与特征。
  */
-object AnalyzeObfuscationTool : Tool {
+class AnalyzeObfuscationTool : Tool {
+    companion object : Tool by AnalyzeObfuscationTool()
     override val name = "analyze_obfuscation"
     override val description get() = L(
         "分析 APK 的混淆情况（ProGuard/R8/DexGuard/商业加固），输出混淆率、短类名比例、字符串加密检测",

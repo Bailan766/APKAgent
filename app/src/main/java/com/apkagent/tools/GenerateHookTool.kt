@@ -11,7 +11,8 @@ import kotlinx.serialization.json.*
  * 修复原实现在普通方法名前错误添加 `$` 前缀（如 `clazz.$isRooted`）导致 Frida 运行时报 TypeError 的 Bug。
  * 仅对构造函数 `<init>` 映射为 `$init`，其余方法统一使用 `clazz["methodName"]` 安全索引语法。
  */
-object GenerateHookTool : Tool {
+class GenerateHookTool : Tool {
+    companion object : Tool by GenerateHookTool()
     override val name = "generate_hook"
     override val description get() = L(
         "自动生成 Frida Hook 脚本（打印参数/返回值、修改返回值、绕过检测）",
