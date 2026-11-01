@@ -1589,8 +1589,9 @@ object EmbeddedPythonEngine {
             if (op == "%" && left is String) {
                 val args = if (right is List<*>) right else listOf(right)
                 var res = left
+                val fmtRegex = Regex("%[sdxX.0-9]*[sdxXf]")
                 for (a in args) {
-                    res = res.replaceFirst(Regex("%[sdxX.0-9]*[sdxXf]"), pyStr(a))
+                    res = fmtRegex.replaceFirst(res, pyStr(a))
                 }
                 return res
             }
@@ -2452,7 +2453,7 @@ object EmbeddedPythonEngine {
                 for (dexEntry in dexEntries) {
                     val dexBytes = zip.getInputStream(dexEntry).use { it.readBytes() }
                     val dexInfo = DexParser.parseCached(dexBytes)
-                    val classObjs = dexInfo.sampleClasses.map { clsName ->
+                    val classObjs = dexInfo.classes.map { clsName ->
                         val desc = "L${clsName.replace('.', '/')};"
                         PyObject("ClassDefItem").apply {
                             attrs["get_name"] = fn { _, _ -> desc }
