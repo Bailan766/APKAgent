@@ -1,6 +1,7 @@
 package com.apkagent.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -26,8 +27,12 @@ import androidx.compose.ui.unit.sp
  */
 @Composable
 fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
-    val codeBg = MaterialTheme.colorScheme.surfaceVariant
+    val codeBg = MaterialTheme.colorScheme.background
     val codeText = MaterialTheme.colorScheme.onSurface
+    val codeBorder = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
+    val inlineCodeColor = MaterialTheme.colorScheme.primary
+    val inlineCodeBg = MaterialTheme.colorScheme.surfaceVariant
+
     Column(modifier = modifier.fillMaxWidth()) {
         val blocks = splitBlocks(markdown)
         blocks.forEach { block ->
@@ -38,16 +43,18 @@ fun MarkdownText(markdown: String, modifier: Modifier = Modifier) {
                         modifier = Modifier
                             .fillMaxWidth()
                             .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, codeBorder, RoundedCornerShape(8.dp))
                             .background(codeBg)
                             .padding(10.dp),
                         fontFamily = FontFamily.Monospace,
                         fontSize = 12.sp,
+                        lineHeight = 16.sp,
                         color = codeText
                     )
                 }
                 is Block.Line -> {
                     Text(
-                        text = renderInline(block.text),
+                        text = renderInline(block.text, inlineCodeColor, inlineCodeBg),
                         modifier = Modifier.padding(vertical = 1.dp)
                     )
                 }
@@ -70,7 +77,6 @@ private fun splitBlocks(md: String): List<Block> {
     while (i < lines.size) {
         val line = lines[i]
         if (line.startsWith("```")) {
-            val fence = line.substring(3).trim()
             val sb = StringBuilder()
             i++
             while (i < lines.size && !lines[i].startsWith("```")) {
@@ -90,7 +96,7 @@ private fun splitBlocks(md: String): List<Block> {
     return out
 }
 
-private fun renderInline(text: String): AnnotatedString = buildAnnotatedString {
+private fun renderInline(text: String, codeColor: Color, codeBg: Color): AnnotatedString = buildAnnotatedString {
     val heading = when {
         text.startsWith("### ") -> 3
         text.startsWith("## ") -> 2
@@ -101,22 +107,22 @@ private fun renderInline(text: String): AnnotatedString = buildAnnotatedString {
     if (heading > 0) s = s.substring(heading + 1)
     val weight = if (heading > 0) FontWeight.Bold else null
     val size = when (heading) {
-        1 -> 20f; 2 -> 17f; 3 -> 15f; else -> 0f
+        1 -> 18f; 2 -> 16f; 3 -> 14f; else -> 0f
     }
 
     // 处理列表标记 / 引用 / 分隔线
     val bullet = s.startsWith("- ") || s.startsWith("* ") || s.startsWith("• ")
     val quote = s.startsWith("> ")
     val hr = s == "---" || s == "***"
-    if (hr) { append("────────────"); return@buildAnnotatedString }
+    if (hr) { append("────────────────────"); return@buildAnnotatedString }
     if (bullet) s = "•  " + s.substring(2)
-    if (quote) s = s.substring(2)
+    if (quote) s = "▎ " + s.substring(2)
 
-    // 行内：**bold** *italic* `code`
     var idx = 0
     val baseStyle = SpanStyle(
         fontWeight = weight,
-        fontSize = if (size > 0) size.sp else SpanStyle().fontSize
+        fontSize = if (size > 0) size.sp else SpanStyle().fontSize,
+        fontFamily = if (quote) FontFamily.Monospace else FontFamily.Default
     )
     withStyle(baseStyle) {
         while (idx < s.length) {
@@ -130,8 +136,8 @@ private fun renderInline(text: String): AnnotatedString = buildAnnotatedString {
                 s.startsWith("`", idx) -> {
                     val end = s.indexOf("`", idx + 1)
                     if (end < 0) { append(s[idx]); idx++; continue }
-                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, background = Color(0x33FFFFFF))) {
-                        append(s.substring(idx + 1, end))
+                    withStyle(SpanStyle(fontFamily = FontFamily.Monospace, color = codeColor, background = codeBg, fontSize = 12.sp)) {
+                        append(" ${s.substring(idx + 1, end)} ")
                     }
                     idx = end + 1
                 }

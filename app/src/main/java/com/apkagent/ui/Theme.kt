@@ -1,20 +1,16 @@
 package com.apkagent.ui
 
 import com.apkagent.i18n.LocaleManager
-
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.net.Uri
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
-import java.io.File
 
 /** 主题枚举 */
 enum class AppTheme(
@@ -23,14 +19,14 @@ enum class AppTheme(
     val hasWallpaper: Boolean = false
 ) {
     SYSTEM("跟随系统", false),
-    AMOLED_BLACK("AMOLED 纯黑", true),
-    PURE_WHITE("纯白", false),
+    AMOLED_BLACK("Obsidian 极夜黑", true),
+    PURE_WHITE("纯白极简", false),
     CREAM("乳白暖色", false),
-    MD3_BLUE("MD3 蓝色", true),
-    MD3_GREEN("MD3 绿色", false),
-    MD3_PURPLE("MD3 紫色", true),
-    MD3_ORANGE("MD3 橙色", false),
-    MD3_MONO("MD3 黑白灰", false),
+    MD3_BLUE("Cyber 赛博蓝", true),
+    MD3_GREEN("Terminal 终端绿", true),
+    MD3_PURPLE("Neon 霓虹紫", true),
+    MD3_ORANGE("Amber 琥珀橙", false),
+    MD3_MONO("Carbon 碳黑灰", true),
     CUSTOM_WALLPAPER("自定义壁纸", false, true),
     CUSTOM_WALLPAPER_DARK("自定义壁纸(暗)", true, true);
 }
@@ -52,31 +48,44 @@ object ThemeState {
     }
 }
 
-/** MD3 多色配色方案 */
-private fun dynamicColorScheme(
-    darkTheme: Boolean,
-    seed: Color
-): androidx.compose.material3.ColorScheme {
-    val scheme = if (darkTheme) darkColorScheme(seed) else lightColorScheme(seed)
-    return scheme
-}
-
 private fun darkColorScheme(seed: Color) = androidx.compose.material3.darkColorScheme(
     primary = seed,
-    secondary = seed.copy(alpha = 0.8f),
-    tertiary = seed.copy(red = seed.red * 0.7f, green = seed.green * 1.2f, blue = seed.blue * 1.3f),
-    surface = Color(0xFF111111),
-    background = Color(0xFF0A0A0A),
-    surfaceVariant = Color(0xFF1C1C1E),
+    onPrimary = Color(0xFF04101E),
+    primaryContainer = seed.copy(alpha = 0.2f),
+    onPrimaryContainer = seed,
+    secondary = Color(0xFF10B981),
+    onSecondary = Color(0xFF021B10),
+    secondaryContainer = Color(0xFF064E3B),
+    onSecondaryContainer = Color(0xFF6EE7B7),
+    tertiary = Color(0xFFA855F7),
+    onTertiary = Color(0xFF2E0854),
+    surface = Color(0xFF0E1522),
+    onSurface = Color(0xFFF1F5F9),
+    background = Color(0xFF080C14),
+    onBackground = Color(0xFFF1F5F9),
+    surfaceVariant = Color(0xFF172033),
+    onSurfaceVariant = Color(0xFF94A3B8),
+    outline = Color(0xFF2B3A55),
+    error = Color(0xFFEF4444),
+    onError = Color(0xFF450A0A)
 )
 
 private fun lightColorScheme(seed: Color) = androidx.compose.material3.lightColorScheme(
     primary = seed,
-    secondary = seed.copy(alpha = 0.85f),
-    tertiary = seed.copy(red = seed.red * 1.1f, green = seed.green * 0.9f, blue = seed.blue * 1.2f),
+    onPrimary = Color.White,
+    primaryContainer = seed.copy(alpha = 0.15f),
+    onPrimaryContainer = seed,
+    secondary = Color(0xFF059669),
+    onSecondary = Color.White,
     surface = Color(0xFFFFFFFF),
-    background = Color(0xFFF5F5F5),
-    surfaceVariant = Color(0xFFE8E8ED),
+    onSurface = Color(0xFF0F172A),
+    background = Color(0xFFF8FAFC),
+    onBackground = Color(0xFF0F172A),
+    surfaceVariant = Color(0xFFF1F5F9),
+    onSurfaceVariant = Color(0xFF64748B),
+    outline = Color(0xFFCBD5E1),
+    error = Color(0xFFDC2626),
+    onError = Color.White
 )
 
 @Composable
@@ -84,22 +93,39 @@ fun APKAgentTheme(
     theme: AppTheme = ThemeState.currentTheme,
     content: @Composable () -> Unit
 ) {
+    val cyanSeed = Color(0xFF38BDF8)
     val colorScheme = when (theme) {
-        AppTheme.SYSTEM -> if (isSystemInDarkTheme()) darkColorScheme(Color(0xFF4A90D9)) else lightColorScheme(Color(0xFF4A90D9))
-        AppTheme.AMOLED_BLACK -> darkColorScheme(Color(0xFF4A90D9)).copy(background = Color(0xFF000000), surface = Color(0xFF0A0A0A), surfaceVariant = Color(0xFF141414))
-        AppTheme.PURE_WHITE -> lightColorScheme(Color(0xFF333333)).copy(background = Color.White, surface = Color.White, surfaceVariant = Color(0xFFF0F0F0))
-        AppTheme.CREAM -> lightColorScheme(Color(0xFF8B7355)).copy(background = Color(0xFFFAF8F5), surface = Color(0xFFF5F0EB), surfaceVariant = Color(0xFFEDE4DA))
-        AppTheme.MD3_BLUE -> dynamicColorScheme(true, Color(0xFF4A90D9))
-        AppTheme.MD3_GREEN -> dynamicColorScheme(false, Color(0xFF34A853))
-        AppTheme.MD3_PURPLE -> dynamicColorScheme(true, Color(0xFF9B59B6))
-        AppTheme.MD3_ORANGE -> dynamicColorScheme(false, Color(0xFFE67E22))
-        AppTheme.MD3_MONO -> dynamicColorScheme(false, Color(0xFF666666))
-        AppTheme.CUSTOM_WALLPAPER -> lightColorScheme(Color(0xFF4A90D9))
-        AppTheme.CUSTOM_WALLPAPER_DARK -> darkColorScheme(Color(0xFF4A90D9))
+        AppTheme.SYSTEM -> if (isSystemInDarkTheme()) darkColorScheme(cyanSeed) else lightColorScheme(Color(0xFF0284C7))
+        AppTheme.AMOLED_BLACK -> darkColorScheme(cyanSeed).copy(
+            background = Color(0xFF000000),
+            surface = Color(0xFF090D14),
+            surfaceVariant = Color(0xFF131A26),
+            outline = Color(0xFF1E293B)
+        )
+        AppTheme.PURE_WHITE -> lightColorScheme(Color(0xFF0F172A)).copy(
+            background = Color.White,
+            surface = Color(0xFFFAFAFA),
+            surfaceVariant = Color(0xFFF1F5F9)
+        )
+        AppTheme.CREAM -> lightColorScheme(Color(0xFF8B7355)).copy(
+            background = Color(0xFFFAF8F5),
+            surface = Color(0xFFF5F0EB),
+            surfaceVariant = Color(0xFFEDE4DA)
+        )
+        AppTheme.MD3_BLUE -> darkColorScheme(Color(0xFF38BDF8))
+        AppTheme.MD3_GREEN -> darkColorScheme(Color(0xFF10B981))
+        AppTheme.MD3_PURPLE -> darkColorScheme(Color(0xFFA855F7))
+        AppTheme.MD3_ORANGE -> lightColorScheme(Color(0xFFF59E0B))
+        AppTheme.MD3_MONO -> darkColorScheme(Color(0xFF94A3B8)).copy(
+            surface = Color(0xFF121212),
+            background = Color(0xFF0A0A0A),
+            surfaceVariant = Color(0xFF1E1E1E)
+        )
+        AppTheme.CUSTOM_WALLPAPER -> lightColorScheme(cyanSeed)
+        AppTheme.CUSTOM_WALLPAPER_DARK -> darkColorScheme(cyanSeed)
     }
 
     MaterialTheme(colorScheme = colorScheme) {
-        // 设置系统状态栏颜色
         val view = LocalView.current
         if (!view.isInEditMode) {
             val window = (view.context as Activity).window
@@ -113,7 +139,6 @@ fun APKAgentTheme(
         content()
     }
 }
-
 
 /** Localized theme name for the current UI language. */
 fun AppTheme.localizedLabel(): String {
