@@ -6,8 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.apkagent.ApkAgentApp
 import com.apkagent.agent.*
 import com.apkagent.chat.ChatHistoryManager
-import com.apkagent.export.ExportFormat
-import com.apkagent.export.ProjectExporter
+import com.apkagent.export.ApkExportManager
 import com.apkagent.i18n.AgentPrompts
 import com.apkagent.i18n.LocaleManager
 import com.apkagent.project.ReverseProject
@@ -22,6 +21,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -68,10 +68,11 @@ data class ChatItem(
 
 class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
-    private val agentApp = app as ApkAgentApp
-    private val confirmationManager = agentApp.confirmationManager
-    private val json = Json { ignoreUnknownKeys = true; isLenient = true }
+    private val agentApp get() = getApplication<ApkAgentApp>()
+    private val json = Json { ignoreUnknownKeys = true; isLenient = true; prettyPrint = true }
+    private val confirmationManager = ToolConfirmationManager()
     private val historyManager by lazy { ChatHistoryManager(agentApp.workspace, agentApp.projectStore, json) }
+    private val exportManager by lazy { ApkExportManager() }
 
     private val _messages = MutableStateFlow<List<ChatItem>>(emptyList())
     val messages: StateFlow<List<ChatItem>> = _messages.asStateFlow()
@@ -231,22 +232,17 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     // ── Export ──
     fun exportPatchedApk(onResult: (Boolean, String) -> Unit) {
-        val project = agentApp.currentProject.value ?: run {
-            onResult(false, LocaleManager.strings.noProjectSelected)
-            return
-        }
+        if (_isExporting.value) return
         _isExporting.value = true
+        Logger.i("VM", "导出开始")
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val exporter = ProjectExporter(agentApp.projectStore)
-                val (success, file) = exporter.export(project, ExportFormat.APK)
-                if (success && file != null) {
-                    onResult(true, LocaleManager.strings.fmt(LocaleManager.strings.exportSuccess, "path" to file.absolutePath))
-                } else {
-                    onResult(false, LocaleManager.strings.exportFail)
-                }
-            } catch (e: Exception) {
-                onResult(false, LocaleManager.strings.fmt(LocaleManager.strings.exportException, "msg" to (e.message ?: "unknown")))
+                val ws = agentApp.currentWorkspace()
+                val result = exportManager.export(ws, agentApp.currentOpenApk())
+                withContext(Dispatchers.Main) { onResult(result.success, result.message) }
+            } catch (e: Throwable) {
+                Logger.e("VM", "导出失败", e)
+                withContext(Dispatchers.Main) { onResult(false, LocaleManager.strings.fmt(LocaleManager.strings.exportFailed, "msg" to e.message)) }
             } finally {
                 _isExporting.value = false
             }
