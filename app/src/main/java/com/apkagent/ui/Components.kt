@@ -21,7 +21,8 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.apkagent.agent.PendingToolCall
+import com.apkagent.agent.ToolConfirmationManager
+import com.apkagent.agent.ToolRiskLevel
 
 /** 科技风微徽章 */
 @Composable
@@ -204,11 +205,15 @@ fun ToolCard(item: ChatItem) {
 /** 敏感操作权限确认弹窗（Cyber Security 质询卡片） */
 @Composable
 fun PermissionDialog(
-    call: PendingToolCall,
-    onResult: (Boolean) -> Unit,
-    onAllowAndSwitchFast: (() -> Unit)? = null
+    req: ToolConfirmationManager.ConfirmationRequest,
+    onResult: (Boolean) -> Unit
 ) {
-    var handled by remember { mutableStateOf(false) }
+    val s = LocalAppStrings.current
+    val call = req.call
+    // 按 call.id 重置一次性处理标记，连续多个确认弹窗时按钮不会静默失效
+    var handled by remember(req.call.id) { mutableStateOf(false) }
+    var showFullArgs by remember(req.call.id) { mutableStateOf(false) }
+
     val onAction = { allow: Boolean ->
         if (!handled) {
             handled = true
@@ -216,85 +221,139 @@ fun PermissionDialog(
         }
     }
 
+    val (badgeText, badgeColor) = when (req.riskLevel) {
+        ToolRiskLevel.DANGER -> "高危 DANGER" to Color(0xFFEF4444)
+        ToolRiskLevel.CAUTION -> "谨慎 CAUTION" to Color(0xFFF59E0B)
+        ToolRiskLevel.SAFE -> "常规 SAFE" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
     AlertDialog(
-        onDismissRequest = { onAction(false) },
+        onDismissRequest = { onAction(false) }, // dismiss 等同拒绝
         icon = {
             Icon(
                 Icons.Default.Security,
                 contentDescription = null,
-                tint = Color(0xFFEF4444),
+                tint = badgeColor,
                 modifier = Modifier.size(32.dp)
             )
         },
         title = {
             Text(
-                LocalAppStrings.current.toolAuthTitle,
+                s.toolAuthTitle,
                 fontWeight = FontWeight.Bold,
                 fontSize = 18.sp
             )
         },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(
+                        color = badgeColor.copy(alpha = 0.16f),
+                        shape = RoundedCornerShape(4.dp),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.5f))
+                    ) {
+                        Text(
+                            badgeText,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = badgeColor
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(
+                        call.name,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
                 Text(
-                    LocalAppStrings.current.toolAuthBody,
+                    s.toolAuthBody,
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
+
+                // 人类可读的操作摘要，替代仅展示截断的原始 JSON
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(8.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFEF4444).copy(alpha = 0.3f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(Modifier.padding(10.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text("TARGET: ", fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold, color = Color(0xFFEF4444))
-                            Text(call.name, fontSize = 12.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.SemiBold)
-                        }
+                        Text(
+                            "操作摘要",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                         Spacer(Modifier.height(4.dp))
                         Text(
-                            call.arguments,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 11.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 6
+                            req.summary.ifBlank { "无附加参数" },
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 }
+
+                // 完整参数可展开查看
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, badgeColor.copy(alpha = 0.3f)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(Modifier.padding(10.dp)) {
+                        Text(
+                            "PARAMS · ${call.name}",
+                            fontSize = 10.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            color = badgeColor
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            if (showFullArgs) call.arguments else call.arguments.take(300),
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = if (showFullArgs) Int.MAX_VALUE else 6
+                        )
+                        if (call.arguments.length > 300 || call.arguments.count { it == '\n' } > 6) {
+                            TextButton(
+                                onClick = { showFullArgs = !showFullArgs },
+                                contentPadding = PaddingValues(0.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Text(if (showFullArgs) "收起参数" else "展开完整参数", fontSize = 11.sp)
+                            }
+                        }
+                    }
+                }
+
                 Text(
-                    LocalAppStrings.current.toolAuthWarn,
+                    s.toolAuthWarn,
                     fontSize = 11.sp,
                     color = Color(0xFFF59E0B)
                 )
             }
         },
         confirmButton = {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (onAllowAndSwitchFast != null) {
-                    OutlinedButton(
-                        onClick = {
-                            if (!handled) {
-                                handled = true
-                                onAllowAndSwitchFast()
-                            }
-                        },
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFF59E0B)),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFF59E0B))
-                    ) {
-                        Text(LocalAppStrings.current.allowAndSwitchFast, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
-                    }
-                }
-                Button(
-                    onClick = { onAction(true) },
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFEF4444))
-                ) {
-                    Text(LocalAppStrings.current.allowExecute, fontWeight = FontWeight.Bold)
-                }
+            // 视觉焦点给「拒绝」：filled 主按钮
+            Button(
+                onClick = { onAction(false) },
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
+            ) {
+                Text(s.reject, fontWeight = FontWeight.Bold)
             }
         },
         dismissButton = {
-            OutlinedButton(onClick = { onAction(false) }) {
-                Text(LocalAppStrings.current.reject)
+            // 「允许」改为中性描边按钮，弱化一键放行的视觉引导
+            OutlinedButton(onClick = { onAction(true) }) {
+                Text(s.allowExecute)
             }
         }
     )

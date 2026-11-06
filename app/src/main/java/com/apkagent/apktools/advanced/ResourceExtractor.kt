@@ -148,13 +148,16 @@ object ResourceExtractor : Tool {
                     if (entry.isDirectory) return@forEach
                     if (regex.matches(entry.name)) {
                         val outFile = File(outputDir, entry.name)
+                        // Zip Slip 防护：越界条目直接跳过
+                        if (!isSafeExtractPath(outputDir, outFile)) return@forEach
                         outFile.parentFile?.mkdirs()
                         val bytes = zip.getInputStream(entry).use { it.readBytes() }
                         outFile.writeBytes(bytes)
                         // 若是二进制 AXML，同步旁路生成一份可读 XML 方便查看
                         if (entry.name.endsWith(".xml", ignoreCase = true) && AxmlParser.isBinaryAxml(bytes)) {
-                            runCatching {
-                                File(outputDir, "${entry.name}.readable.xml").writeText(AxmlParser.parseCached(bytes))
+                            val readable = File(outputDir, "${entry.name}.readable.xml")
+                            if (isSafeExtractPath(outputDir, readable)) {
+                                runCatching { readable.writeText(AxmlParser.parseCached(bytes)) }
                             }
                         }
                         count++
@@ -181,6 +184,16 @@ object ResourceExtractor : Tool {
             }
         } catch (e: Exception) {
             ToolResult(false, "提取失败: ${e.message}")
+        }
+    }
+
+    /** 校验解压目标仍在 outDir 内，防止 Zip Slip 越界写入。 */
+    private fun isSafeExtractPath(outDir: File, outFile: File): Boolean {
+        return try {
+            val root = outDir.canonicalPath
+            outFile.canonicalPath.startsWith(root + File.separator)
+        } catch (_: Exception) {
+            false
         }
     }
 

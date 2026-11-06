@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  旧版全量备份（adb backup / API ≤ 30）排除规则。
+  保留 allowBackup=true 不关掉备份功能，仅排除敏感数据与工作区：
+  - sharedprefs：自定义 LLM API Key、模型配置及加密密钥
+  - database：项目 / 聊天记录等数据库
+  - file / external：workspace 及解包产物、运行时包
+-->
+<full-backup-content>
+    <!-- 含 API Key 的 SharedPreferences（含 EncryptedSharedPreferences 主文件与回退存储） -->
+    <exclude domain="sharedpref" path="apk_agent_secrets.xml" />
+    <exclude domain="sharedpref" path="apk_agent_prefs_fallback.xml" />
+    <exclude domain="sharedpref" path="__androidx_security_crypto_encrypted_shared_prefs__.xml" />
+    <!-- 兜底：排除全部 sharedprefs，避免新增配置遗漏 -->
+    <exclude domain="sharedpref" path="." />
+
+    <!-- 数据库 -->
+    <exclude domain="database" path="." />
+
+    <!-- 工作区相关路径：解包的 APK、脚本、分析产物、项目、聊天历史 -->
+    <exclude domain="file" path="workspace" />
+    <exclude domain="file" path="projects" />
+    <exclude domain="file" path="history" />
+    <exclude domain="file" path="cache" />
+    <!-- Python / Node 运行时体积大且可重新下载，不备份 -->
+    <exclude domain="file" path="python" />
+    <exclude domain="file" path="nodejs" />
+
+    <!-- 外部存储工作区（getExternalFilesDir 下的所有内容） -->
+    <exclude domain="external" path="." />
+</full-backup-content>

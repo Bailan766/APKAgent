@@ -50,32 +50,40 @@ class ApkAgentApp : Application() {
     private val _currentProject = MutableStateFlow<ReverseProject?>(null)
     val currentProject: StateFlow<ReverseProject?> = _currentProject.asStateFlow()
 
+    // 导入流程（创建项目→预分析→激活）整体串行化，避免并发导入与
+    // setCurrentProject→touchProject 交错，用旧快照互相覆盖当前项目
+    private val importLock = Any()
+
     fun setCurrentProject(project: ReverseProject?) {
-        _currentProject.value = project
-        project?.let { projectStore.touchProject(it.id) }
+        synchronized(importLock) {
+            _currentProject.value = project
+            project?.let { projectStore.touchProject(it.id) }
+        }
     }
 
     fun setOpenApk(file: File?) {
         if (file == null) {
-            _currentProject.value = null
+            synchronized(importLock) { _currentProject.value = null }
             return
         }
         importApk(file)
     }
 
-    fun importApk(file: File, displayName: String = file.nameWithoutExtension): ReverseProject {
-        val project = projectStore.createProjectFromApk(file, displayName)
-        analyzeAndActivate(project)
-        return project
-    }
+    fun importApk(file: File, displayName: String = file.nameWithoutExtension): ReverseProject =
+        synchronized(importLock) {
+            val project = projectStore.createProjectFromApk(file, displayName)
+            analyzeAndActivate(project)
+            project
+        }
 
-    fun importInstalledApp(item: InstalledAppItem): ReverseProject {
-        val project = projectStore.createProjectFromInstalledApp(item)
-        analyzeAndActivate(project)
-        return project
-    }
+    fun importInstalledApp(item: InstalledAppItem): ReverseProject =
+        synchronized(importLock) {
+            val project = projectStore.createProjectFromInstalledApp(item)
+            analyzeAndActivate(project)
+            project
+        }
 
-    fun analyzeAndActivate(project: ReverseProject): ReverseProject {
+    fun analyzeAndActivate(project: ReverseProject): ReverseProject = synchronized(importLock) {
         runCatching {
             val summary = ProjectAnalyzer.analyze(project)
             projectStore.saveAnalysisSummary(summary)
@@ -85,7 +93,7 @@ class ApkAgentApp : Application() {
         }
         projectStore.touchProject(project.id)
         _currentProject.value = project
-        return project
+        project
     }
 
     fun currentOpenApk(): File? = currentProject.value?.importedApkPath?.let(::File)?.takeIf { it.exists() }

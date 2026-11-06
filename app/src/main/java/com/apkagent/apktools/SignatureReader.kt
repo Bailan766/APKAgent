@@ -4,6 +4,7 @@ import com.apkagent.i18n.L
 import com.android.apksig.ApkVerifier
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.RandomAccessFile
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.security.cert.CertificateFactory
@@ -20,6 +21,8 @@ import java.util.jar.JarFile
  * 2. 修复 APK Signing Block 起始偏移量计算偏差 8 字节（sizeOfBlock 已含尾部 size 8B + magic 16B，
  *    pairs 起点应为 cdOffset - sizeOfBlock）以及误加 8 字节对齐循环导致首轮即中断的 Bug。
  * 3. 增加 Google 官方 apksig ApkVerifier 兜底提取，支持 v1/v2/v3/v3.1 全方案证书读取。
+ * 4. readV2V3 改为 RandomAccessFile 流式只读取 EOCD 尾部与 APK Signing Block 区段，
+ *    避免 apk.readBytes() 把大 APK 全量读入内存导致 OOM。
  */
 object SignatureReader {
 
@@ -27,6 +30,7 @@ object SignatureReader {
     private const val V2_ID = 0x7109871aL
     private const val V3_ID = 0xf05368c0L
     private const val V31_ID = 0x1b93ad61L
+    private const val MAX_SIGNING_BLOCK_BYTES = 64L * 1024 * 1024
 
     data class SignerInfo(
         val scheme: String,
@@ -124,39 +128,65 @@ object SignatureReader {
     }
 
     internal fun readV2V3(apk: File): List<SignerInfo> {
-        val data = apk.readBytes()
-        val cdOffset = findCentralDirectoryOffset(data) ?: return emptyList()
         val magicBytes = SIG_BLOCK_MAGIC.toByteArray(Charsets.US_ASCII)
-        val magicPos = cdOffset - 16
-        if (magicPos < 16) return emptyList()
-        if (!matchesAt(data, magicPos, magicBytes)) return emptyList()
+        return try {
+            RandomAccessFile(apk, "r").use { raf ->
+                val fileLen = raf.length()
+                if (fileLen < 22) return@use emptyList<SignerInfo>()
 
-        // APK Signing Block 结构：
-        // [size_of_block: uint64] + [pairs...] + [size_of_block: uint64] + [magic: 16B]
-        // 其中 size_of_block 不包含头部自身的 8 字节，因此 pairs 起点为 cdOffset - sizeOfBlock
-        val sizeOfBlock = readLongLE(data, magicPos - 8)
-        if (sizeOfBlock < 24 || sizeOfBlock > cdOffset) return emptyList()
-        val pairsStart = (cdOffset - sizeOfBlock).toInt()
-        val pairsEnd = magicPos - 8
-        if (pairsStart < 8 || pairsStart >= pairsEnd) return emptyList()
+                // 只读取 ZIP 尾部 EOCD 搜索窗口，避免把整个 APK 读进内存（大 APK OOM）
+                val tailLen = minOf(fileLen, 65557L).toInt()
+                val tail = ByteArray(tailLen)
+                raf.seek(fileLen - tailLen)
+                raf.readFully(tail)
+                val cdOffset = (findCentralDirectoryOffset(tail) ?: return@use emptyList<SignerInfo>()).toLong() and 0xFFFFFFFFL
+                if (cdOffset <= 16 || cdOffset > fileLen) return@use emptyList<SignerInfo>()
 
-        var p = pairsStart
-        val out = mutableListOf<SignerInfo>()
-        while (p + 12 <= pairsEnd) {
-            val pairLen = readLongLE(data, p)
-            if (pairLen < 4 || p + 8 + pairLen > pairsEnd) break
-            val id = readIntLE(data, p + 8).toLong() and 0xFFFFFFFFL
-            val valueStart = p + 12
-            val valueEnd = (p + 8 + pairLen).toInt()
-            val value = data.copyOfRange(valueStart, valueEnd)
-            when (id) {
-                V2_ID -> extractSigners(value, "v2 (APK Signature Scheme v2)")?.let { out.add(it) }
-                V3_ID -> extractSigners(value, "v3 (APK Signature Scheme v3)")?.let { out.add(it) }
-                V31_ID -> extractSigners(value, "v3.1 (APK Signature Scheme v3.1)")?.let { out.add(it) }
+                val magicPos = cdOffset - 16
+                val magicBuf = ByteArray(16)
+                raf.seek(magicPos)
+                raf.readFully(magicBuf)
+                if (!matchesAt(magicBuf, 0, magicBytes)) return@use emptyList<SignerInfo>()
+
+                val sizeBuf = ByteArray(8)
+                raf.seek(magicPos - 8)
+                raf.readFully(sizeBuf)
+                val sizeOfBlock = readLongLE(sizeBuf, 0)
+                if (sizeOfBlock < 24 || sizeOfBlock > cdOffset) return@use emptyList<SignerInfo>()
+
+                val pairsStart = cdOffset - sizeOfBlock
+                val pairsEnd = magicPos - 8
+                val pairsLen = pairsEnd - pairsStart
+                // 仅读取 APK Signing Block 的 pairs 区段；设上限防止畸形包把内存吃满
+                if (pairsStart < 8 || pairsLen <= 0 || pairsLen > MAX_SIGNING_BLOCK_BYTES || pairsEnd > fileLen) {
+                    return@use emptyList<SignerInfo>()
+                }
+                val pairs = ByteArray(pairsLen.toInt())
+                raf.seek(pairsStart)
+                raf.readFully(pairs)
+
+                val out = mutableListOf<SignerInfo>()
+                var p = 0
+                while (p + 12 <= pairs.size) {
+                    val pairLen = readLongLE(pairs, p)
+                    if (pairLen < 4 || p + 8 + pairLen > pairs.size) break
+                    val id = readIntLE(pairs, p + 8).toLong() and 0xFFFFFFFFL
+                    val valueStart = p + 12
+                    val valueEnd = (p + 8 + pairLen).toInt()
+                    val value = pairs.copyOfRange(valueStart, valueEnd)
+                    when (id) {
+                        V2_ID -> extractSigners(value, "v2 (APK Signature Scheme v2)")?.let { out.add(it) }
+                        V3_ID -> extractSigners(value, "v3 (APK Signature Scheme v3)")?.let { out.add(it) }
+                        V31_ID -> extractSigners(value, "v3.1 (APK Signature Scheme v3.1)")?.let { out.add(it) }
+                    }
+                    p = valueEnd
+                }
+                return@use out
             }
-            p = valueEnd
+        } catch (_: Throwable) {
+            // 读取/解析异常按「未检测到 v2/v3」处理，交由上层 ApkVerifier 兜底
+            emptyList()
         }
-        return out
     }
 
     private fun extractSigners(value: ByteArray, scheme: String): SignerInfo? {

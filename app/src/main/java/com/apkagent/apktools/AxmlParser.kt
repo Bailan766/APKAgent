@@ -93,9 +93,14 @@ class AxmlParser(private val data: ByteArray) {
 
         fun parseCached(data: ByteArray): String {
             if (!isBinaryAxml(data)) return String(data, Charsets.UTF_8)
-            val key = ParseCache.contentHash(data)
-            return ParseCache.getOrParse(java.io.File("/virtual/$key"), "AxmlParser") {
-                AxmlParser(data).parse()
+            // 直接按字节内容做缓存 key，避免虚拟文件不存在导致所有 ByteArray 共用 "missing"
+            return ParseCache.getOrParse(data, "AxmlParser") {
+                // 非法/畸形 AXML 解析异常时返回明确注释，避免工具崩溃
+                try {
+                    AxmlParser(data).parse()
+                } catch (e: Throwable) {
+                    "<!-- AXML 解析失败: ${e.message} -->"
+                }
             }
         }
 
@@ -262,6 +267,10 @@ class AxmlParser(private val data: ByteArray) {
 
     private fun parseStringPool(headerSize: Int, chunkSize: Int) {
         val chunkStart = buf.position() - 8
+        if (chunkStart < 0 || chunkStart + 8 > data.size) {
+            strings = emptyList()
+            return
+        }
         val stringCount = buf.int
         val styleCount = buf.int
         val flags = buf.int
@@ -274,22 +283,36 @@ class AxmlParser(private val data: ByteArray) {
         }
 
         val isUtf8 = (flags and (1 shl 8)) != 0
-        buf.position(chunkStart + headerSize)
+        // 边界检查：offsets 表起点与长度必须落在缓冲区内，防止非法 headerSize/stringCount 让 position 越界
+        val offsetsStart = chunkStart.toLong() + headerSize.toLong()
+        val offsetsBytes = stringCount.toLong() * 4
+        if (offsetsStart < 0 || offsetsStart + offsetsBytes > buf.limit().toLong()) {
+            strings = emptyList()
+            return
+        }
+        buf.position(offsetsStart.toInt())
         val offsets = IntArray(stringCount) {
             if (buf.remaining() >= 4) buf.int else 0
         }
 
+        // 全程用 Long 计算，避免 chunkStart + stringsStart / count*4 溢出后 position 越界
         val poolStart = if (stringsStart > 0) {
-            chunkStart + stringsStart
+            chunkStart.toLong() + stringsStart.toLong()
         } else {
-            chunkStart + headerSize + stringCount * 4 + styleCount * 4
+            chunkStart.toLong() + headerSize.toLong() +
+                stringCount.toLong() * 4 + styleCount.toLong() * 4
         }
 
         val list = ArrayList<String>(stringCount)
         for (i in 0 until stringCount) {
-            val strOffset = poolStart + offsets[i]
+            val strOffset = poolStart + offsets[i].toLong()
+            if (strOffset < 0 || strOffset >= data.size.toLong()) {
+                list.add("")
+                continue
+            }
+            val at = strOffset.toInt()
             val s = try {
-                if (isUtf8) readUtf8(strOffset) else readUtf16(strOffset)
+                if (isUtf8) readUtf8(at) else readUtf16(at)
             } catch (_: Throwable) {
                 ""
             }

@@ -58,10 +58,13 @@ object ApkInstaller : Tool {
         return try {
             val flags = buildFlags(allowDowngrade, grantPermissions)
             val tmpApk = "/data/local/tmp/apkagent_install_${System.currentTimeMillis()}.apk"
-            ShizukuManager.copyFile(apkFile.absolutePath, tmpApk)
+            // copyFile 失败必须中止，否则会对不存在的 tmpApk 执行 pm install
+            if (!ShizukuManager.copyFile(apkFile.absolutePath, tmpApk)) {
+                return ToolResult(false, "❌ 复制 APK 到临时目录失败，已中止安装: ${apkFile.name}")
+            }
             ShizukuManager.chmod(tmpApk, "644")
 
-            val cmd = "pm install $flags '$tmpApk' 2>&1"
+            val cmd = "pm install $flags ${shellQuote(tmpApk)} 2>&1"
             val (output, code) = ShizukuManager.execAndGetCode(cmd)
             ShizukuManager.deleteFile(tmpApk)
 
@@ -95,15 +98,17 @@ object ApkInstaller : Tool {
                 ?: return ToolResult(false, "无法解析 Session ID:\n$createOutput")
 
             apkFiles.forEachIndexed { index, apk ->
-                val writeCmd = "pm install-write -S ${apk.length()} $sessionId ${index}_${apk.name} '${apk.absolutePath}' 2>&1"
+                // 分片名与路径都转义：文件名含空格 / 分号 / 引号时会直接破坏命令
+                val splitName = shellQuote("${index}_${apk.name}")
+                val writeCmd = "pm install-write -S ${apk.length()} ${shellQuote(sessionId)} $splitName ${shellQuote(apk.absolutePath)} 2>&1"
                 val (writeOutput, writeCode) = ShizukuManager.execAndGetCode(writeCmd)
                 if (writeCode != 0) {
-                    ShizukuManager.execAndGet("pm install-abandon $sessionId")
+                    ShizukuManager.execAndGet("pm install-abandon ${shellQuote(sessionId)}")
                     return ToolResult(false, "写入分片失败 (${apk.name}):\n$writeOutput")
                 }
             }
 
-            val commitCmd = "pm install-commit $sessionId 2>&1"
+            val commitCmd = "pm install-commit ${shellQuote(sessionId)} 2>&1"
             val (commitOutput, commitCode) = ShizukuManager.execAndGetCode(commitCmd)
 
             if (commitCode == 0 && commitOutput?.contains("Success") == true) {
@@ -122,4 +127,7 @@ object ApkInstaller : Tool {
         if (grantPermissions) flags.add("-g")
         return flags.joinToString(" ")
     }
+
+    /** shell 单引号转义：' → '\'' ，避免路径 / 分片名闭合引号后注入任意命令 */
+    private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
 }

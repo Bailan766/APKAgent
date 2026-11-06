@@ -94,6 +94,8 @@ object SplitApkHandler : Tool {
                     if (entry.name.endsWith(".apk")) {
                         if (targetApk != null && !entry.name.contains(targetApk)) return@forEach
                         val outFile = File(outputDir, entry.name)
+                        // Zip Slip 防护：越界条目直接跳过
+                        if (!isSafeExtractPath(outputDir, outFile)) return@forEach
                         outFile.parentFile?.mkdirs()
                         zip.getInputStream(entry).use { input ->
                             outFile.outputStream().use { output ->
@@ -112,6 +114,16 @@ object SplitApkHandler : Tool {
             }
         } catch (e: Exception) {
             ToolResult(false, "提取失败: ${e.message}")
+        }
+    }
+
+    /** 校验解压目标仍在 outDir 内，防止 Zip Slip 越界写入。 */
+    private fun isSafeExtractPath(outDir: File, outFile: File): Boolean {
+        return try {
+            val root = outDir.canonicalPath
+            outFile.canonicalPath.startsWith(root + File.separator)
+        } catch (_: Exception) {
+            false
         }
     }
 

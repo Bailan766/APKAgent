@@ -22,6 +22,8 @@ import java.util.zip.ZipOutputStream
  * 1. 重打包时对 resources.arsc 强制使用 ZipEntry.STORED（不压缩）并按 4 字节对齐，
  *    解决 Android 11+ (targetSdk >= 30) 因 resources.arsc 被压缩或未对齐导致的安装失败。
  * 2. 支持 v1 + v2 + v3 签名方案。
+ * 3. 解包时校验 Zip Slip，越界 entry 直接跳过。
+ * 4. 重打包/签名一律先写临时文件，成功后原子替换，异常时清理临时文件，不残留半成品 APK。
  */
 object ApkRepackSigner {
 
@@ -36,9 +38,11 @@ object ApkRepackSigner {
         if (!srcDir.exists() || !srcDir.isDirectory)
             return RepackResult(false, L("源目录不存在或不是目录", "Source directory does not exist or is not a directory"), 0)
         outputApk.parentFile?.mkdirs()
+        // 先写同目录临时文件，成功后再原子替换；失败只清理临时文件，不残留半成品 APK
+        val tmp = File(outputApk.absoluteFile.parentFile, "${outputApk.name}.${System.nanoTime()}.tmp")
         var count = 0
         try {
-            val countingOut = CountingOutputStream(FileOutputStream(outputApk).buffered())
+            val countingOut = CountingOutputStream(FileOutputStream(tmp).buffered())
             ZipOutputStream(countingOut).use { zos ->
                 srcDir.walkTopDown()
                     .filter { it.isFile }
@@ -84,8 +88,14 @@ object ApkRepackSigner {
                         count++
                     }
             }
+            if (!tmp.exists() || tmp.length() == 0L) {
+                tmp.delete()
+                return RepackResult(false, "重打包失败：未生成有效输出", 0)
+            }
+            replaceAtomically(tmp, outputApk)
             return RepackResult(true, "重打包完成（已自动 ZipAlign 对齐 resources.arsc），包含 $count 个文件", count)
         } catch (e: Throwable) {
+            tmp.delete()
             return RepackResult(false, "重打包失败：${e.message}", 0)
         }
     }
@@ -102,6 +112,8 @@ object ApkRepackSigner {
                 zip.entries().toList().forEach { entry ->
                     if (entry.isDirectory) return@forEach
                     val outFile = File(outDir, entry.name)
+                    // Zip Slip 防护：越界条目直接跳过，避免 entry.name 含 ../ 写出到目录之外
+                    if (!isSafeExtractPath(outDir, outFile)) return@forEach
                     outFile.parentFile?.mkdirs()
                     zip.getInputStream(entry).use { input ->
                         outFile.outputStream().use { input.copyTo(it) }
@@ -148,6 +160,8 @@ object ApkRepackSigner {
             ksPass = dbg.storePass
         }
 
+        // 先签到临时文件，成功并校验后再原子替换，异常时清理临时文件
+        val tmp = File(outputApk.absoluteFile.parentFile, "${outputApk.name}.${System.nanoTime()}.tmp")
         return try {
             outputApk.parentFile?.mkdirs()
             val keyStore = KeyStore.getInstance("PKCS12").also {
@@ -167,7 +181,7 @@ object ApkRepackSigner {
 
             val signer = ApkSigner.Builder(listOf(signerConfig))
                 .setInputApk(inputApk)
-                .setOutputApk(outputApk)
+                .setOutputApk(tmp)
                 .setV1SigningEnabled(v1Enabled)
                 .setV2SigningEnabled(v2Enabled)
                 .setV3SigningEnabled(v2Enabled)
@@ -175,12 +189,18 @@ object ApkRepackSigner {
 
             signer.sign()
 
-            val verifier = ApkVerifier.Builder(outputApk).build()
+            val verifier = ApkVerifier.Builder(tmp).build()
             val result = verifier.verify()
             val schemes = mutableListOf<String>()
             if (result.isVerifiedUsingV1Scheme) schemes.add("v1")
             if (result.isVerifiedUsingV2Scheme) schemes.add("v2")
             if (result.isVerifiedUsingV3Scheme) schemes.add("v3")
+
+            if (!tmp.exists() || tmp.length() == 0L) {
+                tmp.delete()
+                return SignResult(false, "签名失败：未生成有效输出", null, null)
+            }
+            replaceAtomically(tmp, outputApk)
 
             SignResult(
                 success = true,
@@ -191,8 +211,28 @@ object ApkRepackSigner {
                 }
             )
         } catch (e: Throwable) {
+            tmp.delete()
             SignResult(false, "签名失败：${e.message}", null, null)
         }
+    }
+
+    /** 校验解压目标仍在 outDir 内，防止 Zip Slip 越界写入。 */
+    private fun isSafeExtractPath(outDir: File, outFile: File): Boolean {
+        return try {
+            val root = outDir.canonicalPath
+            outFile.canonicalPath.startsWith(root + File.separator)
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /** 临时文件原子替换到目标；优先 rename，失败时退化为覆盖复制，异常由调用方清理。 */
+    private fun replaceAtomically(tmp: File, target: File) {
+        if (tmp.renameTo(target)) return
+        if (target.exists()) target.delete()
+        if (tmp.renameTo(target)) return
+        tmp.copyTo(target, overwrite = true)
+        tmp.delete()
     }
 
     private class CountingOutputStream(out: OutputStream) : FilterOutputStream(out) {

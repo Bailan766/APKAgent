@@ -62,7 +62,8 @@ object EnhancedSigner : Tool {
         val keyPass = args.strNonBlank("key_pass") ?: keystorePass
         val schemesStr = args.strNonBlank("sign_schemes") ?: "v1,v2,v3"
         val minSdk = args.int("min_sdk") ?: 21
-        val autoAlign = args.bool("auto_align") ?: true
+        // 与参数说明一致：默认不在每次签名时做一次全量对齐重写，需要时显式传 auto_align=true
+        val autoAlign = args.bool("auto_align") ?: false
 
         if (!input.exists() || !input.isFile) {
             return ToolResult(false, "文件不存在: ${input.absolutePath}")

@@ -100,7 +100,12 @@ class KeepAliveService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
+        // 无活跃任务（例如 START_STICKY 历史残留 / 系统重建）时立即停止，避免幽灵常驻通知
+        if (!KeepAliveManager.isActive()) {
+            stopSelf()
+        }
+        // 改 NOT_STICKY：任务期间由 acquire/release 管理，系统杀掉后不再自动重建
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {

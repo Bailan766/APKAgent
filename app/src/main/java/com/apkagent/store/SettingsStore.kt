@@ -23,7 +23,7 @@ enum class ExecutionMode(
 
     companion object {
         fun fromId(id: String?): ExecutionMode =
-            values().firstOrNull { it.id.equals(id, ignoreCase = true) } ?: FAST
+            values().firstOrNull { it.id.equals(id, ignoreCase = true) } ?: SAFE
     }
 }
 
@@ -35,7 +35,7 @@ data class AgentConfig(
     val temperature: Double = 0.6,
     val systemExtra: String = "",
     val maxRounds: Int = 100,
-    val executionMode: String = ExecutionMode.FAST.id
+    val executionMode: String = ExecutionMode.SAFE.id
 ) {
     fun isValid(): Boolean = (providerId == "ollama" || apiKey.trim().isNotBlank()) && model.trim().isNotBlank()
     fun provider(): AiProvider = AiProvider.byId(providerId)
@@ -93,17 +93,19 @@ class SettingsStore(private val context: Context) {
     }
 
     private fun readStringSafe(key: String): String? {
-        try {
-            if (fallbackPrefs.contains(key)) {
-                val v = fallbackPrefs.getString(key, null)
-                if (v != null) return v
-            }
-        } catch (_: Throwable) {}
+        // 优先读取加密主存储；仅当加密不可用或读取抛异常时才回退到未加密的稳健存储。
+        // 兼容升级用户：老版本只写入了 fallbackPrefs，若加密存储中尚无该 key，仍回退读取旧值。
         return try {
-            getPrefs().getString(key, null) ?: fallbackPrefs.getString(key, null)
+            val sp = getPrefs()
+            if (sp !== fallbackPrefs) {
+                sp.getString(key, null) ?: fallbackPrefs.getString(key, null)
+            } else {
+                fallbackPrefs.getString(key, null)
+            }
         } catch (_: Throwable) {
+            // 加密存储读取异常（如 Keystore 失效），降级到稳健存储
             prefs = fallbackPrefs
-            fallbackPrefs.getString(key, null)
+            runCatching { fallbackPrefs.getString(key, null) }.getOrNull()
         }
     }
 
@@ -129,7 +131,7 @@ class SettingsStore(private val context: Context) {
                 provider.models.firstOrNull() ?: "deepseek-chat"
             }
         }
-        val savedMode = readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.FAST.id
+        val savedMode = readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.SAFE.id
         AgentConfig(
             providerId = pid,
             baseUrl = resolvedUrl,
@@ -151,12 +153,17 @@ class SettingsStore(private val context: Context) {
         val cleanUrl = cfg.baseUrl.trim().ifBlank {
             provider.baseUrl.ifBlank { "https://api.deepseek.com/v1" }
         }
+        // 保留用户自定义 http 端点（本地/内网 LLM 服务），但明文传输凭据需给出可感知的警告
+        if (cleanUrl.startsWith("http://", ignoreCase = true)) {
+            Log.w("SettingsStore", "自定义 baseUrl 使用非 HTTPS 明文协议，API Key 等凭据可能在网络中被窃听：$cleanUrl")
+        }
         val cleanModel = cfg.model.trim().ifBlank {
             provider.defaultModel.ifBlank {
                 provider.models.firstOrNull() ?: "deepseek-chat"
             }
         }
-        val cleanMode = if (cfg.executionMode.equals("safe", ignoreCase = true)) "safe" else "fast"
+        // 默认安全模式：仅当用户显式选择 fast 时才存 fast，其余（含非法/缺失值）一律 safe
+        val cleanMode = if (cfg.executionMode.equals("fast", ignoreCase = true)) "fast" else "safe"
         val normalized = cfg.copy(
             baseUrl = cleanUrl,
             apiKey = cleanKey,
@@ -177,14 +184,35 @@ class SettingsStore(private val context: Context) {
                 .commit()
         }
 
-        try {
-            writeTo(fallbackPrefs)
-        } catch (_: Throwable) {}
-        try {
-            writeTo(getPrefs())
-        } catch (e: Throwable) {
-            Log.e("SettingsStore", "主存储写入失败，使用回退存储", e)
-            prefs = fallbackPrefs
+        // 主存储为加密 EncryptedSharedPreferences（不可用时 getPrefs() 已降级为 fallbackPrefs）
+        val primary = getPrefs()
+        val primaryOk = if (primary !== fallbackPrefs) {
+            try {
+                writeTo(primary)
+                true
+            } catch (e: Throwable) {
+                Log.e("SettingsStore", "主存储写入失败，使用回退存储", e)
+                prefs = fallbackPrefs
+                false
+            }
+        } else {
+            false
+        }
+
+        if (primaryOk) {
+            // 加密写入成功：不再写明文副本，并清除历史遗留的明文副本（含 API Key），
+            // 避免敏感信息继续以明文落盘
+            try {
+                val editor = fallbackPrefs.edit()
+                arrayOf(
+                    KEY_PROVIDER, KEY_BASE, KEY_AK, KEY_MODEL,
+                    KEY_TEMP, KEY_SYS, KEY_MAX_ROUNDS, KEY_EXECUTION_MODE
+                ).forEach { editor.remove(it) }
+                editor.commit()
+            } catch (_: Throwable) {}
+        } else {
+            // 加密不可用：整套配置写入稳健存储（此时无加密可用，属降级路径）
+            try { writeTo(fallbackPrefs) } catch (_: Throwable) {}
         }
 
         _config.value = normalized
@@ -235,7 +263,7 @@ class SettingsStore(private val context: Context) {
         LocaleManager.setLanguage(lang)
     }
 
-    fun getExecutionMode(): ExecutionMode = ExecutionMode.fromId(readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.FAST.id)
+    fun getExecutionMode(): ExecutionMode = ExecutionMode.fromId(readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.SAFE.id)
 
     fun setExecutionMode(mode: ExecutionMode) {
         val cur = _config.value

@@ -231,6 +231,8 @@ class AutoPatchTool : Tool {
                 val lines = content.lines().toMutableList()
                 var modified = false
 
+                // 先收集所有插入位置，再倒序插入：避免在固定范围循环内 add 导致后续索引错位、生成损坏 smali
+                val insertPositions = mutableListOf<Int>()
                 for (i in lines.indices) {
                     if (lines[i].contains(".method") &&
                         (lines[i].contains("checkServerTrusted") || lines[i].contains("check(")) &&
@@ -238,15 +240,16 @@ class AutoPatchTool : Tool {
                     ) {
                         for (j in i + 1 until minOf(lines.size, i + 15)) {
                             if (lines[j].trim().startsWith(".locals") || lines[j].trim().startsWith(".registers")) {
-                                if (!dryRun) {
-                                    lines.add(j + 1, "    return-void")
-                                    modified = true
-                                }
+                                insertPositions.add(j + 1)
                                 patches.add("${file.relativeToOrSelf(wsDir).path}:${j + 1} — 置空 SSL Pinning 校验方法")
                                 break
                             }
                         }
                     }
+                }
+                if (!dryRun && insertPositions.isNotEmpty()) {
+                    insertPositions.sortedDescending().forEach { pos -> lines.add(pos, "    return-void") }
+                    modified = true
                 }
 
                 if (modified) {

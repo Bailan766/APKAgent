@@ -11,6 +11,9 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.*
 import java.io.File
 
+/** POSIX shell 单引号转义（'\'' 惯用法），用于拼接 Shizuku shell 命令参数。 */
+private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
 /**
  * 动态脚本创建与执行工具 — 让 AI 能够自己写脚本解决未知问题
  *
@@ -18,6 +21,7 @@ import java.io.File
  * 1. 修复 CreateScriptTool 保存到 workspace/scripts/ 而 RunScriptTool 只查找 workspace/ 根目录导致文件找不到的路径不一致 Bug。
  * 2. 修复 RunScriptTool 先 waitFor() 后读取 inputStream 导致输出超过 64KB 管道缓冲区时死锁的 Bug。
  * 3. 在 Shizuku 模式下追加 2>&1 重定向，确保 Python/Node 异常堆栈（stderr）能完整返回给 AI。
+ * 4. Shizuku 分支的参数/解释器/脚本路径/workDir 逐个 shellQuote 后再拼，杜绝命令注入。
  */
 class CreateScriptTool : Tool {
     companion object : Tool by CreateScriptTool()
@@ -163,19 +167,19 @@ class RunScriptTool : Tool {
             else -> "sh"
         }
 
-        val argsStr = if (actualArgs.isNotBlank()) " $actualArgs" else ""
-        val cmd = "'$interpreter' '${scriptFile.absolutePath}'$argsStr 2>&1"
+        val argList = if (actualArgs.isBlank()) emptyList() else actualArgs.split(Regex("""\s+""")).filter { it.isNotBlank() }
+        // 命令仅用于 Shizuku shell 分支：参数逐个 shellQuote 后再拼接，避免命令注入
+        val argsStr = if (argList.isEmpty()) "" else " " + argList.joinToString(" ") { shellQuote(it) }
+        val cmd = "${shellQuote(interpreter)} ${shellQuote(scriptFile.absolutePath)}$argsStr 2>&1"
 
         try {
             withTimeout(timeoutSec * 1000L) {
                 val process = if (ShizukuManager.isAuthorized()) {
                     val workDir = ctx.workspace.absolutePath
-                    ShizukuManager.execShizuku("cd '$workDir' && $cmd")
+                    ShizukuManager.execShizuku("cd ${shellQuote(workDir)} && $cmd")
                 } else {
                     val cmdList = mutableListOf(interpreter, scriptFile.absolutePath)
-                    if (actualArgs.isNotBlank()) {
-                        cmdList.addAll(actualArgs.split(Regex("""\s+""")).filter { it.isNotBlank() })
-                    }
+                    cmdList.addAll(argList)
                     ProcessBuilder(cmdList)
                         .directory(ctx.workspace)
                         .apply {

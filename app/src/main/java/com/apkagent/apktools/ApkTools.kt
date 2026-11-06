@@ -475,7 +475,9 @@ object ApkRemoveSignatureCheck : Tool {
                 java.util.zip.ZipFile(apk).use { zip ->
                     zip.entries().toList().filter { it.name.endsWith(".dex") }.forEach { entry ->
                         val tmp = File(ctx.workspace, "_tmp_${entry.name.replace("/", "_")}")
-                        zip.getInputStream(entry).use { it.copyTo(tmp.outputStream()) }
+                        zip.getInputStream(entry).use { input ->
+                            tmp.outputStream().use { output -> input.copyTo(output) }
+                        }
                         dexFiles.add(entry.name to tmp)
                     }
                 }
@@ -827,12 +829,13 @@ object PythonExec : Tool {
     /**
      * 将简单 Python 文件操作转换为等效 shell 命令。
      * 覆盖 AI 最常用的操作：shutil.copy2, os.remove, os.makedirs, os.path.exists 等。
-     * 返回 null 表示无法转换（需要真正 Python）。
+     * 所有参数/路径均按 POSIX 单引号惯用法严格转义；无法安全转换时返回 null（走真正的 Python）。
      */
     private fun pythonToShell(code: String, workspace: String): String? {
         val lines = code.trim().lines().map { it.trim() }
+        if (!isShellSafe(workspace)) return null
         val cmds = mutableListOf<String>()
-        cmds.add("cd '$workspace'")
+        cmds.add("cd ${shellQuote(workspace)}")
 
         for (line in lines) {
             when {
@@ -843,40 +846,58 @@ object PythonExec : Tool {
                 // shutil.copy2(src, dst)
                 line.matches(Regex(".*shutil\\.copy2?\\(.+\\).*")) -> {
                     val args = extractArgs(line) ?: return null
-                    if (args.size >= 2) cmds.add("cp -f '${args[0]}' '${args[1]}'")
-                    else return null
+                    if (args.size < 2 || !args.all { isShellSafe(it) }) return null
+                    cmds.add("cp -f ${shellQuote(args[0])} ${shellQuote(args[1])}")
                 }
                 // os.remove(path)
                 line.matches(Regex(".*os\\.remove\\(.+\\).*")) -> {
                     val args = extractArgs(line) ?: return null
-                    cmds.add("rm -f '${args[0]}'")
+                    if (args.isEmpty() || !isShellSafe(args[0])) return null
+                    cmds.add("rm -f ${shellQuote(args[0])}")
                 }
                 // os.makedirs(path, exist_ok=True)
                 line.matches(Regex(".*os\\.makedirs\\(.+\\).*")) -> {
                     val args = extractArgs(line) ?: return null
-                    cmds.add("mkdir -p '${args[0]}'")
+                    if (args.isEmpty() || !isShellSafe(args[0])) return null
+                    cmds.add("mkdir -p ${shellQuote(args[0])}")
                 }
                 // shutil.rmtree(path)
                 line.matches(Regex(".*shutil\\.rmtree\\(.+\\).*")) -> {
                     val args = extractArgs(line) ?: return null
-                    cmds.add("rm -rf '${args[0]}'")
+                    if (args.isEmpty() || !isShellSafe(args[0])) return null
+                    cmds.add("rm -rf ${shellQuote(args[0])}")
                 }
                 // os.path.getsize → stat
                 line.matches(Regex(".*os\\.path\\.getsize\\(.+\\).*")) -> {
                     val args = extractArgs(line) ?: return null
-                    cmds.add("stat -c %s '${args[0]}' 2>/dev/null || wc -c < '${args[0]}'")
+                    if (args.isEmpty() || !isShellSafe(args[0])) return null
+                    val p = shellQuote(args[0])
+                    cmds.add("stat -c %s $p 2>/dev/null || wc -c < $p")
                 }
-                // print() → echo
+                // print("字面量") → echo '<转义后的字面量>'
                 line.matches(Regex("print\\(.*\\).*")) -> {
-                    val inner = line.removePrefix("print(").removeSuffix(")")
-                        .removeSurrounding("\"").removeSurrounding("'")
-                    cmds.add("echo \"$inner\"")
+                    val literal = extractPrintLiteral(line) ?: return null
+                    if (!isShellSafe(literal)) return null
+                    cmds.add("echo ${shellQuote(literal)}")
                 }
-                else -> return null // 无法转换，需要真正 Python
+                else -> return null // 无法安全转换，需要真正 Python
             }
         }
         return cmds.joinToString(" && ")
     }
+
+    /** 仅接受 print("字面量") / print('字面量')；变量、表达式、多参数一律视为无法安全转换。 */
+    private fun extractPrintLiteral(line: String): String? {
+        val m = Regex("""^print\(\s*(['"])([^'"]*)\1\s*\)$""").find(line) ?: return null
+        return m.groupValues[2]
+    }
+
+    /** POSIX shell 单引号转义：用 '\'' 惯用法处理内部单引号，杜绝 $()/反引号等命令替换。 */
+    private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
+    /** 拒绝含 NUL/换行的字符串，这类内容无法安全地拼进单行 shell 命令。 */
+    private fun isShellSafe(s: String): Boolean =
+        s.none { it == '\u0000' || it == '\n' || it == '\r' }
 
     /** 提取函数调用参数（简单版） */
     private fun extractArgs(call: String): List<String>? {
@@ -1271,6 +1292,7 @@ object AdbExec : Tool {
         val adb = adbPaths.firstOrNull { File(it).exists() && File(it).canExecute() }
             ?: return ToolResult.err(L("未找到 ADB。请在 Termux 中: pkg install android-tools\n或连接电脑使用 adb。", "No ADB found. In Termux: pkg install and roid-tools\\n or connect to computer adb."))
 
+        var proc: java.lang.Process? = null
         return try {
             kotlinx.coroutines.withTimeout(timeout * 1000L) {
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
@@ -1278,9 +1300,10 @@ object AdbExec : Tool {
                     fullCmd.addAll(cmd.split(" ").filter { it.isNotBlank() })
                     val pb = ProcessBuilder(fullCmd)
                     pb.redirectErrorStream(true)
-                    val proc = pb.start()
-                    val out = proc.inputStream.bufferedReader().use { it.readText() }
-                    val exit = proc.waitFor()
+                    val process = pb.start()
+                    proc = process
+                    val out = process.inputStream.bufferedReader().use { it.readText() }
+                    val exit = process.waitFor()
                     ToolResult.ok(if (exit == 0) out.take(6000) else "exit=$exit\n${out.take(6000)}")
                 }
             }
@@ -1288,6 +1311,9 @@ object AdbExec : Tool {
             ToolResult.err("ADB 命令超时(${timeout}s)")
         } catch (e: Throwable) {
             ToolResult.err("ADB 执行失败: ${e.message}")
+        } finally {
+            // 超时/异常时强制销毁子进程，避免进程泄漏
+            runCatching { proc?.destroyForcibly() }
         }
     }
 }

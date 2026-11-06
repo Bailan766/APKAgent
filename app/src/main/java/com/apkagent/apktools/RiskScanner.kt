@@ -79,7 +79,7 @@ object RiskScanner {
         return try {
             ZipFile(apkFile).use { zip ->
                 val entry = zip.getEntry("AndroidManifest.xml") ?: return ""
-                val bytes = zip.getInputStream(entry).readBytes()
+                val bytes = zip.getInputStream(entry).use { it.readBytes() }
                 // 尝试解析二进制 XML（简化处理，返回可读部分）
                 AxmlParser(bytes).parse()
             }
@@ -96,7 +96,7 @@ object RiskScanner {
                 zip.entries().toList()
                     .filter { it.name.endsWith(".dex") }
                     .forEach { entry ->
-                        val bytes = zip.getInputStream(entry).readBytes()
+                        val bytes = zip.getInputStream(entry).use { it.readBytes() }
                         // 提取可打印字符串
                         val text = String(bytes, Charsets.US_ASCII)
                         sb.append(text.take(500_000))
@@ -276,7 +276,7 @@ object RiskScanner {
             ZipFile(apkFile).use { zip ->
                 val dexEntries = zip.entries().toList().filter { it.name.endsWith(".dex") }
                 val sample = dexEntries.firstOrNull()?.let { entry ->
-                    String(zip.getInputStream(entry).readBytes(), Charsets.US_ASCII).take(100_000)
+                    String(zip.getInputStream(entry).use { it.readBytes() }, Charsets.US_ASCII).take(100_000)
                 } ?: ""
                 val risks = mutableListOf<RiskItem>()
                 // 检查是否有大量短类名（混淆特征）

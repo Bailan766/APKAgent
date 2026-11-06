@@ -19,12 +19,18 @@ object KeepAliveManager {
     private const val TAG = "KeepAlive"
     private const val WAKELOCK_TAG = "APKAgent::AgentTask"
 
-    private var wakeLock: PowerManager.WakeLock? = null
-    private var service: KeepAliveService? = null
-    private var refCount = 0  // 支持嵌套调用
+    @Volatile private var wakeLock: PowerManager.WakeLock? = null
+    @Volatile private var service: KeepAliveService? = null
+    // 保存 applicationContext：startForegroundService 是异步的，service 可能为 null，
+    // 释放时必须能无条件 stopService 兜底
+    @Volatile private var appContext: Context? = null
+    // 由 @Synchronized 保护，避免 refCount++ 非原子导致重复启动 / 覆盖 wakeLock
+    private var refCount = 0
 
     /** Agent 任务开始时调用（可嵌套，内部引用计数） */
+    @Synchronized
     fun acquire(context: Context) {
+        appContext = context.applicationContext
         refCount++
         if (refCount == 1) {
             // 启动前台服务
@@ -43,21 +49,34 @@ object KeepAliveManager {
     }
 
     /** Agent 任务结束时调用（与 acquire 配对） */
+    @Synchronized
     fun release() {
-        refCount = (refCount - 1).coerceAtLeast(0)
+        // 多余的 release 直接忽略：只在 1→0 时清理，避免归零后重复 release 误停刚启动的新任务
+        if (refCount <= 0) {
+            Logger.w(TAG, "release 多于 acquire，忽略: refCount=$refCount")
+            return
+        }
+        refCount--
         Logger.i(TAG, "release: refCount=$refCount")
         if (refCount == 0) {
             // 释放 WakeLock
-            wakeLock?.let {
-                if (it.isHeld) it.release()
-            }
+            wakeLock?.let { if (it.isHeld) it.release() }
             wakeLock = null
             // 停止前台服务
             service?.let {
                 try { it.stopSelf() } catch (_: Throwable) {}
             }
+            service = null
+            // 无条件 stopService 兜底：service 可能仍为 null（startForegroundService 异步）
+            stopServiceFallback()
             Logger.i(TAG, L("WakeLock + 前台服务已释放", "WakeLock + Front desk service released"))
         }
+    }
+
+    private fun stopServiceFallback() {
+        try {
+            appContext?.let { KeepAliveService.stop(it) }
+        } catch (_: Throwable) {}
     }
 
     /**
@@ -78,6 +97,7 @@ object KeepAliveManager {
     }
 
     /** 是否正在保活 */
+    @Synchronized
     fun isActive(): Boolean = refCount > 0
 
     /** 检查电池优化是否已豁免 */
@@ -88,10 +108,17 @@ object KeepAliveManager {
 
     // ── Service 回调 ──
 
+    @Synchronized
     internal fun onServiceCreated(svc: KeepAliveService) {
         service = svc
+        // 系统重建 START_STICKY 服务时 refCount 已清零，立即停止，避免幽灵常驻通知
+        if (refCount == 0) {
+            Logger.w(TAG, L("无活跃任务，停止重建的前台服务", "No active task, stop the recreated service"))
+            try { svc.stopSelf() } catch (_: Throwable) {}
+        }
     }
 
+    @Synchronized
     internal fun onServiceDestroyed(svc: KeepAliveService) {
         if (service === svc) {
             service = null

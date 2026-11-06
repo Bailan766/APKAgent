@@ -30,15 +30,17 @@ class RuntimeManager(private val context: Context) {
             "/data/local/tmp/apkagent_node/bin/node",
             "/data/data/com.termux/files/usr/bin/node"
         )
-        val nodePath = nodeCandidates.firstOrNull { File(it).exists() }
+        // 必须可执行且能读到版本号才算已安装，避免只存在文件 / detectVersion 失败时误报可用
+        val nodePath = nodeCandidates.firstOrNull { File(it).canExecute() }
         val nodeVersion = nodePath?.let { detectVersion(it) }
+        val nodeInstalled = nodePath != null && !nodeVersion.isNullOrBlank()
 
         RuntimeStatus(
             pythonInstalled = pythonPath != null,
             pythonPath = pythonPath,
             pythonVersion = pythonVersion,
-            nodeInstalled = nodePath != null,
-            nodePath = nodePath,
+            nodeInstalled = nodeInstalled,
+            nodePath = if (nodeInstalled) nodePath else null,
             nodeVersion = nodeVersion,
             shizukuAuthorized = ShizukuManager.isAuthorized()
         )

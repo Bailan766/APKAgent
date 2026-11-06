@@ -50,7 +50,9 @@ object SmaliEngine {
                     .sortedBy { it.name }
                 for (entry in dexEntries) {
                     val tmp = File.createTempFile(entry.name.replace("/", "_"), ".dex")
-                    zip.getInputStream(entry).use { it.copyTo(tmp.outputStream()) }
+                    zip.getInputStream(entry).use { input ->
+                        tmp.outputStream().use { output -> input.copyTo(output) }
+                    }
                     dexFiles.add(entry.name to tmp)
                 }
             }

@@ -61,22 +61,73 @@ object PluginManager {
         PluginInfo("skill-rea", L("REA 逆向工程方法论", "REA Reverse Engineering Guide"), L("内置 Reverse Engineer Anything 证据链与全平台逆向方法论", "Built-in Reverse Engineer Anything methodology"), "skills", null, "SKILL.md", installed = true),
     )
 
-    /** 获取内置插件的代码内容（内置的非下载插件用这个） */
-    fun getBuiltinCode(pluginId: String): String? {
-        return when (pluginId) {
-            "antiroots" -> FRIDA_ANTI_ROOT
-            "ssl_unpin" -> FRIDA_SSL_UNPIN
-            "anti_tamper" -> SMALI_ANTI_TAMPER
-            "vip_bypass" -> SMALI_VIP_BYPASS
-            "debug_true" -> SMALI_DEBUG_TRUE
-            else -> null
+    /**
+     * 获取内置插件的代码内容。
+     * 修复：CATALOG 的 id（frida-antiroot / smali-debug-true ...）与旧代码常量名不一致，
+     * 导致 installBuiltin 恒失败。这里建立完整映射：每个非下载型 CATALOG 条目都能取到代码
+     * （有专用实现的用专用代码，其余给可安装的模板占位），并保留旧 id 别名兼容外部调用。
+     */
+    fun getBuiltinCode(pluginId: String): String? = BUILTIN_CODE[pluginId]
+
+    private val BUILTIN_CODE: Map<String, String> by lazy {
+        val specialized = mapOf(
+            "frida-antiroot" to FRIDA_ANTI_ROOT,
+            "frida-sslpin" to FRIDA_SSL_UNPIN,
+            "smali-anti-tamper" to SMALI_ANTI_TAMPER,
+            "smali-vip-bypass" to SMALI_VIP_BYPASS,
+            "smali-debug-true" to SMALI_DEBUG_TRUE,
+            // 旧 id 别名：历史调用方可能仍使用这些名字
+            "antiroots" to FRIDA_ANTI_ROOT,
+            "ssl_unpin" to FRIDA_SSL_UNPIN,
+            "anti_tamper" to SMALI_ANTI_TAMPER,
+            "vip_bypass" to SMALI_VIP_BYPASS,
+            "debug_true" to SMALI_DEBUG_TRUE
+        )
+        val allIds = BUILTIN_CATALOG.filter { it.url == null }.map { it.id }
+        allIds.associateWith { id -> specialized[id] ?: genericTemplateFor(id) } + specialized
+    }
+
+    /** 为没有专用实现的条目生成可安装模板，保证每个非下载型条目 installBuiltin 都能成功。 */
+    private fun genericTemplateFor(id: String): String {
+        val info = BUILTIN_CATALOG.find { it.id == id }
+        val ext = info?.filename?.substringAfterLast('.', "txt") ?: "txt"
+        return buildString {
+            appendLine("# APKAgent 内置插件模板: $id")
+            appendLine("# 名称: ${info?.name ?: id}")
+            appendLine("# 目标文件: ${info?.filename ?: "plugin.$ext"}")
+            appendLine("# 这是可安装的占位模板，请按插件说明补充实际逻辑后再使用。")
+            appendLine()
+            when (ext) {
+                "js" -> appendLine("// TODO: 在此编写 Frida hook 脚本")
+                "py" -> appendLine("# TODO: 在此编写 Python 分析脚本")
+                "md" -> appendLine("# TODO: 在此补充方法论文档")
+                else -> appendLine("# TODO: 在此补充 smali patch 内容")
+            }
+        }
+    }
+
+    /** 校验目标文件仍在 dir 内（canonical 前缀 + 分隔符），防止 ../ 或绝对路径越界写入。 */
+    private fun isInsideDir(dir: File, target: File): Boolean {
+        return try {
+            val root = dir.canonicalPath
+            target.canonicalPath.startsWith(root + File.separator)
+        } catch (_: Exception) {
+            false
         }
     }
 
     /** 下载插件到 workspace/plugins/ 目录 */
     suspend fun download(url: String, destDir: File, timeoutSeconds: Int = 60): String = withContext(Dispatchers.IO) {
-        val name = url.substringAfterLast('/').substringBefore('?')
+        val name = url.substringAfterLast('/').substringBefore('?').trim()
+        // 校验下载文件名：拒绝空名与含路径分隔符/.. 的名字，防止 dest 越出 destDir
+        if (name.isEmpty() || name == "." || name == ".." || name.contains('/') || name.contains('\\')) {
+            return@withContext "下载文件名非法: $name"
+        }
         val dest = File(destDir, name)
+        if (!isInsideDir(destDir, dest)) {
+            return@withContext "下载路径越界（Zip Slip 防护）: ${dest.absolutePath}"
+        }
+        destDir.mkdirs()
         dest.parentFile?.mkdirs()
         Logger.i("Plugin", "下载: $url → $dest")
         try {
@@ -93,6 +144,11 @@ object PluginManager {
                         var entry = zis.nextEntry
                         while (entry != null) {
                             val entryFile = File(destDir, entry.name)
+                            // Zip Slip 防护：越界条目直接跳过
+                            if (!isInsideDir(destDir, entryFile)) {
+                                zis.closeEntry(); entry = zis.nextEntry
+                                continue
+                            }
                             if (entry.isDirectory) entryFile.mkdirs()
                             else {
                                 entryFile.parentFile?.mkdirs()

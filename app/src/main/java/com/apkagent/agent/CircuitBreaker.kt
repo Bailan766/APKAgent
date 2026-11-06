@@ -2,7 +2,11 @@ package com.apkagent.agent
 
 import com.apkagent.i18n.L
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * 不可重试的客户端异常（例如 HTTP 400/401/403/404），不触发断路器熔断也不重试。
@@ -23,12 +27,16 @@ class CircuitBreaker(
 
     enum class State { CLOSED, OPEN, HALF_OPEN }
 
-    var state: State = State.CLOSED
-        private set
+    private val _state = AtomicReference(State.CLOSED)
+    var state: State
+        get() = _state.get()
+        private set(value) { _state.set(value) }
 
-    private var consecutiveFailures = 0
-    private var lastFailureTime = 0L
-    private var backoffMs = 1000L
+    private val consecutiveFailures = AtomicInteger(0)
+    private val lastFailureTime = AtomicLong(0L)
+    @Volatile private var backoffMs = 1000L
+    /** HALF_OPEN 状态下是否已允许试探请求通过（CAS 保证只放行一次） */
+    private val halfOpenProbeIssued = AtomicReference(false)
 
     /**
      * 在断路器保护下执行操作。
@@ -39,18 +47,24 @@ class CircuitBreaker(
     suspend fun <T> execute(operation: suspend () -> T): T {
         when (state) {
             State.OPEN -> {
-                val elapsed = System.currentTimeMillis() - lastFailureTime
+                val elapsed = System.currentTimeMillis() - lastFailureTime.get()
                 if (elapsed >= cooldownMs) {
                     Log.i(TAG, L("冷却结束，进入半开状态", "Cooldown finished; entering half-open state"))
-                    state = State.HALF_OPEN
+                    _state.set(State.HALF_OPEN)
+                    halfOpenProbeIssued.set(false)
                 } else {
                     val remaining = cooldownMs - elapsed
                     throw CircuitOpenException(
-                        "断路器已熔断，${remaining / 1000}s 后重试 (连续失败 $consecutiveFailures 次)"
+                        "断路器已熔断，${remaining / 1000}s 后重试 (连续失败 ${consecutiveFailures.get()} 次)"
                     )
                 }
             }
-            State.HALF_OPEN -> { /* 允许一次试探 */ }
+            State.HALF_OPEN -> {
+                // 只允许一次试探请求通过，后续请求快速失败直到试探完成
+                if (!halfOpenProbeIssued.compareAndSet(false, true)) {
+                    throw CircuitOpenException("断路器半开状态，正在等待试探请求结果")
+                }
+            }
             State.CLOSED -> { /* 正常 */ }
         }
 
@@ -60,6 +74,9 @@ class CircuitBreaker(
             result
         } catch (e: NonRetryableApiException) {
             // 4xx 客户端配置错误（如 Key 错误/模型不存在）不应计入服务端熔断
+            throw e
+        } catch (e: CancellationException) {
+            // 协程取消不是业务失败，不应触发熔断
             throw e
         } catch (e: Exception) {
             onFailure()
@@ -97,22 +114,24 @@ class CircuitBreaker(
     }
 
     private fun onSuccess() {
-        consecutiveFailures = 0
+        consecutiveFailures.set(0)
         backoffMs = 1000L
-        if (state == State.HALF_OPEN) {
+        if (_state.get() == State.HALF_OPEN) {
             Log.i(TAG, L("试探成功，恢复正常", "Test successful. Get back to normal."))
-            state = State.CLOSED
+            _state.set(State.CLOSED)
+            halfOpenProbeIssued.set(false)
         }
     }
 
     private fun onFailure() {
-        consecutiveFailures++
-        lastFailureTime = System.currentTimeMillis()
+        consecutiveFailures.incrementAndGet()
+        lastFailureTime.set(System.currentTimeMillis())
         backoffMs = (backoffMs * 2).coerceAtMost(maxBackoffMs)
 
-        if (consecutiveFailures >= failureThreshold) {
-            Log.w(TAG, "连续失败 $consecutiveFailures 次，熔断！")
-            state = State.OPEN
+        if (consecutiveFailures.get() >= failureThreshold) {
+            Log.w(TAG, "连续失败 ${consecutiveFailures.get()} 次，熔断！")
+            _state.set(State.OPEN)
+            halfOpenProbeIssued.set(false)
         }
     }
 
@@ -123,12 +142,13 @@ class CircuitBreaker(
     }
 
     fun reset() {
-        state = State.CLOSED
-        consecutiveFailures = 0
+        _state.set(State.CLOSED)
+        consecutiveFailures.set(0)
         backoffMs = 1000L
+        halfOpenProbeIssued.set(false)
     }
 
-    fun getStatus(): String = "状态=$state, 连续失败=$consecutiveFailures, 退避=${backoffMs}ms"
+    fun getStatus(): String = "状态=${state}, 连续失败=${consecutiveFailures.get()}, 退避=${backoffMs}ms"
 }
 
 class CircuitOpenException(message: String) : Exception(message)

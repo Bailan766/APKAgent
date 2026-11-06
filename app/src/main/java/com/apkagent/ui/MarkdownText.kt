@@ -228,6 +228,7 @@ private fun parseMarkdownBlocks(md: String): List<MdBlock> {
             if (i < lines.size && lines[i].startsWith("```")) {
                 i++ // 跳过闭合代码块
             }
+            // 未闭合代码块容错：流式输出时 ``` 未出现，也按 CodeBlock 渲染已收集内容
             blocks.add(MdBlock.CodeBlock(language, codeSb.toString().trimEnd('\n')))
             continue
         }

@@ -39,7 +39,25 @@ object ThemeState {
 
     fun loadWallpaper(path: String) {
         try {
-            wallpaperBitmap = BitmapFactory.decodeFile(path)
+            // 下采样防止大图 OOM
+            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            BitmapFactory.decodeFile(path, bounds)
+            // 目标分辨率约 1080p，计算采样率
+            val targetSize = 1080
+            var sampleSize = 1
+            while (bounds.outWidth / sampleSize > targetSize * 2 ||
+                   bounds.outHeight / sampleSize > targetSize * 2) {
+                sampleSize *= 2
+            }
+            val opts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+            val newBitmap = BitmapFactory.decodeFile(path, opts)
+            // 替换前回收旧 Bitmap 防止内存泄漏
+            wallpaperBitmap?.let { old ->
+                if (old !== newBitmap && !old.isRecycled) {
+                    try { old.recycle() } catch (_: Throwable) {}
+                }
+            }
+            wallpaperBitmap = newBitmap
             wallpaperPath = path
         } catch (_: Throwable) {
             wallpaperBitmap = null

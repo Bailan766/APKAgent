@@ -27,11 +27,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.apkagent.ApkAgentApp
 import com.apkagent.installer.InternalInstaller
 import com.apkagent.runtime.RuntimeManager
@@ -80,10 +83,30 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
         storageGranted = granted || hasStoragePermission(context)
     }
 
-    // 从设置页返回时重新检查
-    LaunchedEffect(Unit) {
-        delay(500)
-        storageGranted = hasStoragePermission(context)
+    // Android 13+ 通知权限请求回调
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { _ -> /* 结果不影响流程，用户可后续在设置中开启 */ }
+
+    // 从设置页返回时重新检查权限状态（ON_RESUME 触发，非仅首次组合）
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                storageGranted = hasStoragePermission(context)
+                // Android 13+ 申请通知权限（前台服务通知需要）
+                if (Build.VERSION.SDK_INT >= 33) {
+                    val notifGranted = ContextCompat.checkSelfPermission(
+                        context, Manifest.permission.POST_NOTIFICATIONS
+                    ) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    if (!notifGranted) {
+                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     // 启动时自动检测

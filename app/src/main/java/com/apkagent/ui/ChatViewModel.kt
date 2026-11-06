@@ -8,6 +8,7 @@ import com.apkagent.agent.*
 import com.apkagent.chat.ChatHistoryManager
 import com.apkagent.export.ApkExportManager
 import com.apkagent.i18n.AgentPrompts
+import com.apkagent.i18n.L
 import com.apkagent.i18n.LocaleManager
 import com.apkagent.project.ReverseProject
 import com.apkagent.service.KeepAliveManager
@@ -107,15 +108,19 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         setExecutionMode(next)
     }
 
+    // 保留旧方法但不再由确认卡调用（避免一键永久关闭安全保护）
     fun approveAndSwitchToFastMode() {
         setExecutionMode(ExecutionMode.FAST)
         confirmationManager.approve()
     }
 
     private var currentExecutionJob: Job? = null
+    private var historyLoadJob: Job? = null
     private var agentLoop: AgentLoop? = null
     private var lastConfig: AgentConfig? = null
     private var currentAssistantId: String? = null
+    private var lastSelectedProjectId: String? = null
+    private var hasSelected = false
 
     private val contentBuffer = StringBuilder()
     private val reasoningBuffer = StringBuilder()
@@ -129,6 +134,16 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     fun selectProject(project: ReverseProject?) {
+        // 从设置/编辑器返回或旋转时 LaunchedEffect 会用同一个 project 重跑，
+        // 仅在 id 真正变化时才清空会话/重新加载，避免误清用户消息。
+        if (hasSelected && lastSelectedProjectId == project?.id) return
+        hasSelected = true
+        lastSelectedProjectId = project?.id
+
+        // 切换项目：先硬停止在途执行并取消在途的历史加载，避免 A→B 串台。
+        stop()
+        historyLoadJob?.cancel()
+
         agentApp.setCurrentProject(project)
         _currentProject.value = project
         _openApkName.value = project?.name ?: project?.importedApkPath?.let { File(it).name }
@@ -140,7 +155,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         agentLoop = null
         _messages.value = emptyList()
         loadHistoryList()
-        restoreLastConversation()
+        restoreLastConversation(project)
     }
 
     fun setOpenApk(file: File?) {
@@ -173,14 +188,20 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         KeepAliveService.roundCount = 0
         KeepAliveManager.acquire(agentApp)
 
+        // 项目/工作区/APK 以参数快照传入，避免异步执行期间切到新项目后串台、写错历史
+        val projectSnapshot = agentApp.currentProject.value
+        val workspaceSnapshot = agentApp.currentWorkspace()
+        val openApkSnapshot = agentApp.currentOpenApk()
+
         currentExecutionJob = viewModelScope.launch(Dispatchers.IO) {
-            ensureLoop(cfg)
-            agentLoop?.ctx?.updateWorkspace(agentApp.currentWorkspace())
-            agentLoop?.ctx?.updateOpenApk(agentApp.currentOpenApk())
+            val thisJob = coroutineContext[Job]
+            ensureLoop(cfg, workspaceSnapshot, openApkSnapshot)
+            agentLoop?.ctx?.updateWorkspace(workspaceSnapshot)
+            agentLoop?.ctx?.updateOpenApk(openApkSnapshot)
 
             try {
                 withTimeout(5 * 60 * 1000L) {
-                    val sysContext = getProjectInitialSystemContext(priorContext)
+                    val sysContext = getProjectInitialSystemContext(projectSnapshot, priorContext)
                     agentLoop?.run(
                         userText = text,
                         initialSystemContext = sysContext
@@ -210,7 +231,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                                 )
                             }
                             agentLoop = null
-                            ensureLoop(fixedCfg)
+                            ensureLoop(fixedCfg, workspaceSnapshot, openApkSnapshot)
                             agentLoop?.run(
                                 userText = text,
                                 initialSystemContext = sysContext
@@ -219,28 +240,35 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                     }
                 }
                 Logger.i("VM", "执行完成")
-                saveHistory(text)
-            } catch (_: kotlinx.coroutines.CancellationException) {
-                Logger.i("VM", "执行被手动取消")
+                saveHistory(projectSnapshot, text)
             } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
                 Logger.e("VM", "超时")
                 _messages.update { it + ChatItem(role = Role.ERROR, content = LocaleManager.strings.timeout5min) }
+                cancelAndResetLoop()
+            } catch (_: kotlinx.coroutines.CancellationException) {
+                Logger.i("VM", "执行被手动取消")
+                cancelAndResetLoop()
             } catch (e: Throwable) {
                 Logger.e("VM", "异常", e)
                 _messages.update { it + ChatItem(role = Role.ERROR, content = LocaleManager.strings.fmt(LocaleManager.strings.exceptionPrefix, "msg" to e.message)) }
+                cancelAndResetLoop()
             } finally {
-                _isRunning.value = false
-                currentExecutionJob = null
-                KeepAliveManager.release()
+                // 状态与 job 引用只在这里维护：置空前确认仍属于本次执行，
+                // 避免旧 job 的 finally 清掉新 job 引用、误放输入或提前释放保活。
+                if (currentExecutionJob === thisJob) {
+                    currentExecutionJob = null
+                    _isRunning.value = false
+                    KeepAliveManager.release()
+                }
             }
         }
     }
 
-    private fun ensureLoop(cfg: AgentConfig) {
+    private fun ensureLoop(cfg: AgentConfig, workspace: File, openApk: File?) {
         val ctx = ToolContext(
             appContext = agentApp,
-            workspace = agentApp.currentWorkspace(),
-            openApk = agentApp.currentOpenApk()
+            workspace = workspace,
+            openApk = openApk
         )
         if (agentLoop == null || lastConfig != cfg) {
             Logger.i("VM", "创建 AgentLoop: ${cfg.providerId}/${cfg.model}")
@@ -256,6 +284,14 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
             )
             lastConfig = cfg
         }
+    }
+
+    /** 超时/异常/取消时取消网络请求并丢弃半截对话，防止带入下一轮 */
+    private fun cancelAndResetLoop() {
+        try { agentLoop?.cancel() } catch (_: Throwable) {}
+        try { agentLoop?.reset() } catch (_: Throwable) {}
+        agentLoop = null
+        lastConfig = null
     }
 
     /** 真正的硬中断停止：取消协程 Job、关闭网络 Socket 流、重置状态 */
@@ -283,6 +319,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         agentLoop?.reset()
         agentLoop = null
         _messages.value = emptyList()
+        // 同步移除「最近会话」标记，否则返回/旋转后 restoreLastConversation 会把已清空会话恢复回来
+        runCatching {
+            File(historyManager.historyDir(agentApp.currentProject.value), "last_id.txt").delete()
+        }
         Logger.i("VM", "清空会话")
     }
 
@@ -306,8 +346,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     // ── Context Prompt ──
-    private fun getProjectInitialSystemContext(restoredHistorySummary: String? = null): String? {
-        val project = agentApp.currentProject.value
+    private fun getProjectInitialSystemContext(
+        project: ReverseProject?,
+        restoredHistorySummary: String? = null
+    ): String? {
         val baseContext = if (project != null) {
             val summaryFile = agentApp.projectStore.getAnalysisMarkdownFile(project.id)
             val summary = runCatching { if (summaryFile.exists()) summaryFile.readText().take(10000) else "" }.getOrDefault("")
@@ -334,10 +376,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         val turns = existingMessages.filter { it.role == Role.USER || it.role == Role.ASSISTANT }
             .takeLast(6)
         if (turns.isEmpty()) return null
+        // 用 L() 每次取当前语言，切语言后重新发送即按新语言生成，不缓存旧语言快照
         return buildString {
-            appendLine("## 历史会话上下文摘要")
+            appendLine(L("## 历史会话上下文摘要", "## Restored conversation context"))
             turns.forEach { item ->
-                val speaker = if (item.role == Role.USER) "用户" else "助手"
+                val speaker = if (item.role == Role.USER) L("用户", "User") else L("助手", "Assistant")
                 appendLine("- $speaker: ${item.content.take(400)}")
             }
         }
@@ -345,9 +388,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     // ── History ──
     fun loadHistoryList() {
+        val project = agentApp.currentProject.value
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                _historyList.value = historyManager.loadHistoryList(agentApp.currentProject.value)
+                val list = historyManager.loadHistoryList(project)
+                if (_currentProject.value?.id == project?.id) _historyList.value = list
             } catch (e: Exception) {
                 Logger.e("VM", "加载历史失败: ${e.message}")
             }
@@ -355,9 +400,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     fun loadHistory(id: String) {
+        val project = agentApp.currentProject.value
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                val items = historyManager.loadHistory(agentApp.currentProject.value, id) ?: return@launch
+                val items = historyManager.loadHistory(project, id) ?: return@launch
+                if (_currentProject.value?.id != project?.id) return@launch
                 agentLoop?.reset()
                 agentLoop = null
                 _messages.value = items.map { s ->
@@ -379,12 +426,37 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         }
     }
 
-    private fun saveHistory(userInput: String) {
+    private fun restoreLastConversation(project: ReverseProject?) {
+        historyLoadJob?.cancel()
+        historyLoadJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val items = historyManager.restoreLastConversation(project) ?: return@launch
+                if (_currentProject.value?.id != project?.id) return@launch
+                _messages.value = items.map { s ->
+                    ChatItem(
+                        id = s.id,
+                        role = runCatching { Role.valueOf(s.role) }.getOrDefault(Role.ASSISTANT),
+                        content = s.content,
+                        toolCallId = s.toolCallId,
+                        toolName = s.toolName,
+                        toolArgs = s.toolArgs,
+                        toolResult = s.toolResult,
+                        toolSuccess = s.toolSuccess,
+                        reasoningContent = s.reasoningContent
+                    )
+                }
+            } catch (e: Exception) {
+                Logger.e("VM", "恢复会话失败: ${e.message}")
+            }
+        }
+    }
+
+    private fun saveHistory(project: ReverseProject?, userInput: String) {
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 val msgs = _messages.value
                 if (msgs.isEmpty()) return@launch
-                val apkName = agentApp.currentProject.value?.name ?: "Unknown"
+                val apkName = project?.name ?: "Unknown"
                 val item = HistoryItem(
                     apkName = apkName,
                     userInput = userInput.take(50),
@@ -403,33 +475,10 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                         reasoningContent = it.reasoningContent
                     )
                 }
-                historyManager.saveConversation(agentApp.currentProject.value, item, serializable)
-                _historyList.update { listOf(item) + it }
+                historyManager.saveConversation(project, item, serializable)
+                if (_currentProject.value?.id == project?.id) _historyList.update { listOf(item) + it }
             } catch (e: Exception) {
                 Logger.e("VM", "保存历史失败: ${e.message}")
-            }
-        }
-    }
-
-    private fun restoreLastConversation() {
-        viewModelScope.launch(Dispatchers.IO) {
-            try {
-                val items = historyManager.restoreLastConversation(agentApp.currentProject.value) ?: return@launch
-                _messages.value = items.map { s ->
-                    ChatItem(
-                        id = s.id,
-                        role = runCatching { Role.valueOf(s.role) }.getOrDefault(Role.ASSISTANT),
-                        content = s.content,
-                        toolCallId = s.toolCallId,
-                        toolName = s.toolName,
-                        toolArgs = s.toolArgs,
-                        toolResult = s.toolResult,
-                        toolSuccess = s.toolSuccess,
-                        reasoningContent = s.reasoningContent
-                    )
-                }
-            } catch (e: Exception) {
-                Logger.e("VM", "恢复会话失败: ${e.message}")
             }
         }
     }
@@ -505,7 +554,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
         val fullReasoning = reasoningBuffer.toString().ifBlank { reasoning }
         _messages.update { list ->
             val id = currentAssistantId
-            if (id != null) {
+            // 找不到对应 id 时不能只做 map（会吞掉整轮回复），必须补一条气泡
+            if (id != null && list.any { it.id == id && it.role == Role.ASSISTANT }) {
                 list.map {
                     if (it.id == id) it.copy(
                         content = fullContent,
@@ -515,7 +565,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
                     ) else it
                 }
             } else if (fullContent.isNotBlank() || !fullReasoning.isNullOrBlank()) {
-                // 当响应极短（小于 40ms 节流窗口且不含换行）时补齐助手消息气泡，防止消息丢失
+                // 响应极短（小于 40ms 节流窗口且不含换行）或气泡已丢失时补齐助手消息
                 list + ChatItem(
                     role = Role.ASSISTANT,
                     content = fullContent,
@@ -593,7 +643,8 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     }
 
     override fun onFinished() {
-        _isRunning.value = false
+        // 运行状态与 job 引用统一由 send() 的 finally 维护：
+        // 若此处提前置 _isRunning=false，旧 job 的 finally 会清掉新 job 引用并提前释放保活。
     }
 
     override fun onPhaseChange(phase: ReversePhase) {

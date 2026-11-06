@@ -23,6 +23,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,8 +66,9 @@ fun ChatScreen(
     val executionMode by vm.executionMode.collectAsStateWithLifecycle()
 
     val listState = rememberLazyListState()
-    var input by remember { mutableStateOf("") }
-    var showHistory by remember { mutableStateOf(false) }
+    var input by rememberSaveable { mutableStateOf("") }
+    var showHistory by rememberSaveable { mutableStateOf(false) }
+    var showExportConfirm by rememberSaveable { mutableStateOf(false) }
     val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -74,7 +76,12 @@ fun ChatScreen(
         vm.selectProject(activeProject)
     }
 
-    LaunchedEffect(messages.size) {
+    // 以最后一条消息的内容长度（含思考链）为 key：流式 delta 只 copy 同一气泡、
+    // size 不变时仍能跟随底部，而不是仅在新增消息时滚动。
+    val lastContentLen = messages.lastOrNull()?.let {
+        it.content.length + (it.reasoningContent?.length ?: 0)
+    } ?: 0
+    LaunchedEffect(messages.size, lastContentLen) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.size - 1)
         }
@@ -158,11 +165,7 @@ fun ChatScreen(
                         Icon(Icons.Default.Code, s.projectFiles, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                     IconButton(
-                        onClick = {
-                            vm.exportPatchedApk { ok, msg ->
-                                coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
-                            }
-                        },
+                        onClick = { showExportConfirm = true },
                         enabled = !isExporting
                     ) {
                         if (isExporting) {
@@ -252,13 +255,43 @@ fun ChatScreen(
     }
 
     pendingConfirmation?.let { req ->
-        PermissionDialog(
-            call = req.call,
-            onResult = { allow ->
-                if (allow) vm.approvePendingToolCall() else vm.denyPendingToolCall()
+        // key 绑定 call.id：连续确认弹窗时强制重建，handled 标记不会串用
+        key(req.call.id) {
+            PermissionDialog(
+                req = req,
+                onResult = { allow ->
+                    if (allow) vm.approvePendingToolCall() else vm.denyPendingToolCall()
+                }
+            )
+        }
+    }
+
+    // 导出属于 DANGER 写入操作，先弹明确确认再执行
+    if (showExportConfirm) {
+        AlertDialog(
+            onDismissRequest = { showExportConfirm = false },
+            icon = { Icon(Icons.Default.Warning, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("确认导出重打包 APK", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "导出属于高风险写入操作：会把当前工作区的补丁打包、重签名并生成新的 APK 文件。请确认已了解改动内容后再继续。",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             },
-            onAllowAndSwitchFast = {
-                vm.approveAndSwitchToFastMode()
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showExportConfirm = false
+                        vm.exportPatchedApk { _, msg ->
+                            coroutineScope.launch { snackbarHostState.showSnackbar(msg) }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) { Text("确认导出", fontWeight = FontWeight.Bold) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExportConfirm = false }) { Text("取消") }
             }
         )
     }
@@ -639,7 +672,7 @@ private fun StudioDashboard(padding: PaddingValues, onQuickPrompt: (String) -> U
                 Triple("🛡️ 静态安全扫描", "提取危险权限、组件导出风险与敏感字符串", "扫描该 APK 的完整静态安全风险"),
                 Triple("⚡ DEX / Smali 逆向", "反编译核心业务类，分析逻辑与数据流", "反编译 DEX 并列出主要业务包结构"),
                 Triple("🪝 自动化 Hook 方案", "快速生成针对证书、Root 与调用的 Frida 脚本", "为该应用生成 Frida Hook 脚本与抓包方案"),
-                Triple("🛠️ 智能 Patch 与重打包", "自动绕过自校验并重签名导出 APK", "分析该 APK 的签名保护并生成免校验补丁")
+                Triple("🛠️ 签名保护分析", "分析签名自校验逻辑并给出补丁方案（写入前逐步确认）", "请分析该 APK 的签名自校验逻辑，列出可行的补丁方案与影响范围，先给出结论，等我确认后再决定是否修改与重打包")
             )
 
             missionCards.forEach { (title, desc, prompt) ->

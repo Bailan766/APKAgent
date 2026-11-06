@@ -24,8 +24,8 @@ class DexParser(private val data: ByteArray) {
         }
 
         fun parseCached(data: ByteArray): DexInfo {
-            val key = ParseCache.contentHash(data)
-            return ParseCache.getOrParse(java.io.File("/virtual/$key"), "DexParser") {
+            // 直接按字节内容做缓存 key，避免虚拟文件不存在导致所有 ByteArray 共用 "missing"
+            return ParseCache.getOrParse(data, "DexParser") {
                 DexParser(data).parse()
             }
         }

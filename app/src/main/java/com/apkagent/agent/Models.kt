@@ -1,5 +1,7 @@
 package com.apkagent.agent
 
+import kotlinx.serialization.EncodeDefault
+import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonElement
@@ -10,13 +12,15 @@ import kotlinx.serialization.json.JsonObject
  * 支持流式输出与 function calling（tool_calls），以及 DeepSeek-R1 / 推理模型的 reasoning_content 思考链。
  */
 
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ChatMessage(
     val role: String,
-    val content: String? = null,
-    val name: String? = null,
-    @SerialName("tool_call_id") val toolCallId: String? = null,
-    @SerialName("tool_calls") val toolCalls: List<ToolCallRef>? = null
+    // 空字段不参与编码，避免请求体带出一堆 null（与实际 Json 的 explicitNulls=false 双保险）
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val content: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val name: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("tool_call_id") val toolCallId: String? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("tool_calls") val toolCalls: List<ToolCallRef>? = null
 )
 
 @Serializable
@@ -33,14 +37,15 @@ data class ToolCallFunction(
 )
 
 /** 请求体 */
+@OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class ChatRequest(
     val model: String,
     val messages: List<ChatMessage>,
     val stream: Boolean = true,
     val temperature: Double = 0.6,
-    val tools: List<ToolDef>? = null,
-    @SerialName("tool_choice") val toolChoice: String? = null
+    @EncodeDefault(EncodeDefault.Mode.NEVER) val tools: List<ToolDef>? = null,
+    @EncodeDefault(EncodeDefault.Mode.NEVER) @SerialName("tool_choice") val toolChoice: String? = null
 )
 
 @Serializable

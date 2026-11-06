@@ -18,6 +18,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Save
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -44,16 +45,51 @@ fun EditorScreen(
 ) {
     val s = LocalAppStrings.current
     val scope = rememberCoroutineScope()
-    var currentDir by remember { mutableStateOf(rootDir) }
-    var selectedFile by remember { mutableStateOf<File?>(null) }
-    var fileContent by remember { mutableStateOf("") }
-    var editedContent by remember { mutableStateOf("") }
-    var isEditing by remember { mutableStateOf(false) }
-    var isLoadingFile by remember { mutableStateOf(false) }
+    var currentDir by rememberSaveable(rootDir) { mutableStateOf(rootDir) }
+    var selectedFile by rememberSaveable { mutableStateOf<File?>(null) }
+    var fileContent by rememberSaveable { mutableStateOf("") }
+    var editedContent by rememberSaveable { mutableStateOf("") }
+    var isEditing by rememberSaveable { mutableStateOf(false) }
+    var isTruncated by rememberSaveable { mutableStateOf(false) }
+    var isLoadingFile by rememberSaveable { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
     val textExtensions = remember {
         setOf("smali", "xml", "txt", "json", "properties", "mf", "sf", "kotlin_module", "pro", "md", "py", "js", "sh", "yml", "yaml")
+    }
+
+    // 选中文件后统一在此加载：旋转/组合重建会随 selectedFile 自动重跑，
+    // 避免 rememberSaveable 残留 isLoadingFile 造成永久 loading。
+    LaunchedEffect(selectedFile) {
+        val f = selectedFile
+        if (f == null) {
+            isLoadingFile = false
+            return@LaunchedEffect
+        }
+        isLoadingFile = true
+        isTruncated = false
+        val loaded = withContext(Dispatchers.IO) {
+            try {
+                val ext = f.extension.lowercase()
+                when {
+                    ext !in textExtensions ->
+                        LoadedFile(s.fmt(s.binaryFileHint, "n" to f.length()), true)
+                    f.length() <= 512 * 1024 ->
+                        LoadedFile(f.readText(), false)
+                    else ->
+                        LoadedFile(
+                            readLimitedText(f, 200_000) +
+                                "\n\n…… [文件较大，已截断显示前 200KB，禁止编辑与保存]",
+                            true
+                        )
+                }
+            } catch (e: Throwable) {
+                LoadedFile(s.fmt(s.readFailed, "msg" to e.message), true)
+            }
+        }
+        fileContent = loaded.content
+        isTruncated = loaded.truncated
+        isLoadingFile = false
     }
 
     Scaffold(
@@ -102,9 +138,11 @@ fun EditorScreen(
                     }
                 },
                 actions = {
-                    if (selectedFile != null && isEditing) {
+                    // 截断/二进制文件一律不显示保存按钮，禁止把截断串写回原文件造成永久损坏
+                    if (selectedFile != null && isEditing && !isTruncated) {
                         IconButton(onClick = {
                             val target = selectedFile ?: return@IconButton
+                            if (isTruncated) return@IconButton
                             scope.launch(Dispatchers.IO) {
                                 try {
                                     target.writeText(editedContent)
@@ -145,7 +183,8 @@ fun EditorScreen(
                 FileViewer(
                     file = f,
                     content = if (isEditing) editedContent else fileContent,
-                    isEditable = f.extension.lowercase() in textExtensions,
+                    isEditable = f.extension.lowercase() in textExtensions && !isTruncated,
+                    isTruncated = isTruncated,
                     isEditing = isEditing,
                     onEdit = {
                         editedContent = fileContent
@@ -162,29 +201,29 @@ fun EditorScreen(
                 onFileClick = { file ->
                     selectedFile = file
                     isEditing = false
-                    isLoadingFile = true
-                    scope.launch(Dispatchers.IO) {
-                        val loaded = try {
-                            if (file.extension.lowercase() in textExtensions && file.length() <= 512 * 1024) {
-                                file.readText()
-                            } else if (file.extension.lowercase() in textExtensions) {
-                                file.inputStream().bufferedReader().use { it.readText().take(200_000) } + "\n\n... [文件较大，已截断显示前 200KB]"
-                            } else {
-                                s.fmt(s.binaryFileHint, "n" to file.length())
-                            }
-                        } catch (e: Throwable) {
-                            s.fmt(s.readFailed, "msg" to e.message)
-                        }
-                        withContext(Dispatchers.Main) {
-                            fileContent = loaded
-                            isLoadingFile = false
-                        }
-                    }
                 },
                 modifier = Modifier.padding(padding)
             )
         }
     }
+}
+
+private data class LoadedFile(val content: String, val truncated: Boolean)
+
+/** 按字符块限量读取，避免对大文件整体 readText() 造成 OOM，也不会把单行超大文件读爆内存。 */
+private fun readLimitedText(file: File, limitChars: Int): String {
+    val sb = StringBuilder()
+    val buf = CharArray(4096)
+    var total = 0
+    file.inputStream().bufferedReader(Charsets.UTF_8).use { reader ->
+        while (total < limitChars) {
+            val n = reader.read(buf, 0, minOf(buf.size, limitChars - total))
+            if (n < 0) break
+            sb.append(String(buf, 0, n))
+            total += n
+        }
+    }
+    return sb.toString()
 }
 
 @Composable
@@ -274,6 +313,7 @@ private fun FileViewer(
     file: File,
     content: String,
     isEditable: Boolean,
+    isTruncated: Boolean,
     isEditing: Boolean,
     onEdit: () -> Unit,
     onContentChange: (String) -> Unit,
@@ -296,10 +336,10 @@ private fun FileViewer(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    "${lines.size} lines · ${file.length()} B",
+                    "${lines.size} lines · ${file.length()} B" + if (isTruncated) " · ⚠ 截断只读" else "",
                     fontFamily = FontFamily.Monospace,
                     fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (isTruncated) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f)
                 )
                 if (!isEditing && isEditable) {

@@ -24,17 +24,20 @@ import com.apkagent.i18n.LocaleManager
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 
+private const val START_DESTINATION = "projects"
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         try { enableEdgeToEdge() } catch (_: Throwable) {}
 
         setContent {
-            val theme by remember { mutableStateOf(ThemeState.currentTheme) }
             val lang by LocaleManager.language.collectAsState()
             val strings = remember(lang) { LocaleManager.strings }
             CompositionLocalProvider(LocalAppStrings provides strings) {
-                APKAgentTheme(theme = theme) {
+                // 直接在组合作用域读取 currentTheme（mutableStateOf）：设置页改动后会触发重组刷新配色，
+                // 不再用 remember 保存一次性快照。
+                APKAgentTheme(theme = ThemeState.currentTheme) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         ThemeState.wallpaperBitmap?.let { bmp ->
                             Image(
@@ -98,9 +101,23 @@ private fun AppEntry() {
 private fun AppNav(onOpenTerminal: () -> Unit = {}) {
     val nav = rememberNavController()
 
+    // 顶层目的地：singleTop + popUpTo(startDestination){saveState} + restoreState，
+    // 避免 projects <-> chat 反复 navigate 堆积重复实例，并保留各自返回栈状态。
+    val navigateTop: (String) -> Unit = { route ->
+        nav.navigate(route) {
+            launchSingleTop = true
+            popUpTo(START_DESTINATION) { saveState = true }
+            restoreState = true
+        }
+    }
+    // 子页面仅做 singleTop 防抖，返回统一 popBackStack()。
+    val navigateDetail: (String) -> Unit = { route ->
+        nav.navigate(route) { launchSingleTop = true }
+    }
+
     NavHost(
         navController = nav,
-        startDestination = "projects",
+        startDestination = START_DESTINATION,
         enterTransition = {
             slideInHorizontally(
                 initialOffsetX = { fullWidth -> fullWidth },
@@ -128,22 +145,22 @@ private fun AppNav(onOpenTerminal: () -> Unit = {}) {
     ) {
         composable("projects") {
             com.apkagent.ui.ProjectScreen(
-                onOpenProjectChat = { nav.navigate("chat") },
-                onOpenProjectEditor = { nav.navigate("editor") },
-                onOpenSettings = { nav.navigate("settings") }
+                onOpenProjectChat = { navigateTop("chat") },
+                onOpenProjectEditor = { navigateDetail("editor") },
+                onOpenSettings = { navigateDetail("settings") }
             )
         }
         composable("chat") {
             com.apkagent.ui.ChatScreen(
-                onOpenSettings = { nav.navigate("settings") },
-                onOpenEditor = { nav.navigate("editor") },
-                onOpenProjects = { nav.navigate("projects") }
+                onOpenSettings = { navigateDetail("settings") },
+                onOpenEditor = { navigateDetail("editor") },
+                onOpenProjects = { navigateTop("projects") }
             )
         }
         composable("settings") {
             com.apkagent.ui.SettingsScreen(
                 onBack = { nav.popBackStack() },
-                onOpenAbout = { nav.navigate("about") },
+                onOpenAbout = { navigateDetail("about") },
                 onOpenTerminal = onOpenTerminal
             )
         }
@@ -153,6 +170,6 @@ private fun AppNav(onOpenTerminal: () -> Unit = {}) {
             if (app != null) com.apkagent.ui.EditorScreen(rootDir = app.currentWorkspace(), onBack = { nav.popBackStack() })
         }
         composable("about") { com.apkagent.ui.AboutScreen(onBack = { nav.popBackStack() }) }
-        composable("terminal") { com.apkagent.ui.TerminalScreen(onBack = { nav.popBackStack() }) }
+        // terminal 由 AppEntry 的 showTerminal 分支承载，NavHost 内不再保留不可达的死路由。
     }
 }

@@ -1,10 +1,14 @@
 package com.apkagent.agent
 
 import com.apkagent.store.AiProvider
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -50,6 +54,7 @@ class OpenAIClient(
         ignoreUnknownKeys = true
         isLenient = true
         encodeDefaults = true
+        explicitNulls = false // 序列化时省略 null，避免请求体带出一堆空字段
         coerceInputValues = true
     }
 
@@ -240,6 +245,8 @@ class OpenAIClient(
         }
 
         circuitBreaker.retryWithBackoff(maxRetries = 3) {
+            currentCoroutineContext().ensureActive()
+
             val body = json.encodeToString(ChatRequest.serializer(), request)
                 .toRequestBody("application/json; charset=utf-8".toMediaType())
 
@@ -253,101 +260,154 @@ class OpenAIClient(
 
             val call = client.newCall(req)
             activeCall = call
-            val response = try {
-                call.execute()
-            } catch (e: Throwable) {
-                if (activeCall == call) activeCall = null
-                throw e
+
+            // 协程被取消时立刻切断底层 OkHttp 调用，解除阻塞中的同步 IO 读
+            val cancelHandle = currentCoroutineContext()[Job]?.invokeOnCompletion { cause ->
+                if (cause != null) runCatching { call.cancel() }
             }
-
-            val respBody = response.body
-                ?: throw IllegalStateException("空响应体 (HTTP ${response.code})")
-
-            if (!response.isSuccessful) {
-                val errText = try { respBody.string() } finally { runCatching { respBody.close() } }
-                if (activeCall == call) activeCall = null
-                val msg = extractErrorMessage(response.code, errText, chatUrl)
-                if (response.code in 400..499 && response.code != 429) {
-                    throw NonRetryableApiException(response.code, msg)
-                }
-                throw IllegalStateException(msg)
-            }
-
-            val content = StringBuilder()
-            val reasoning = StringBuilder()
-            val acc = mutableMapOf<Int, AccToolCall>()
-            var finishReason: String? = null
-            val source = respBody.source()
 
             try {
-                while (!source.exhausted()) {
-                    val line = source.readUtf8Line() ?: break
-                    if (line.isBlank()) continue
-                    val data = when {
-                        line.startsWith("data:") -> line.removePrefix("data:").trim()
-                        else -> continue
-                    }
-                    if (data == "[DONE]") break
-                    if (data.isEmpty()) continue
-
-                    val chunk = try {
-                        json.decodeFromString(StreamChunk.serializer(), data)
-                    } catch (_: Throwable) { continue }
-
-                    val choice = chunk.choices.firstOrNull() ?: continue
-                    choice.finishReason?.let { finishReason = it }
-                    val delta = choice.delta ?: continue
-
-                    // 1. 原生隔离 reasoning_content
-                    delta.reasoningContent?.let {
-                        if (it.isNotEmpty()) {
-                            reasoning.append(it)
-                            onReasoningDelta?.invoke(it)
-                        }
-                    }
-
-                    // 2. 正常回答 content
-                    delta.content?.let {
-                        if (it.isNotEmpty()) {
-                            content.append(it)
-                            onContentDelta(it)
-                        }
-                    }
-
-                    // 3. 聚合工具调用参数
-                    delta.toolCalls?.forEach { tc ->
-                        val a = acc.getOrPut(tc.index) { AccToolCall() }
-                        tc.id?.let { a.id = it }
-                        tc.function?.name?.let { a.name = it }
-                        tc.function?.arguments?.let { a.args.append(it) }
-                    }
+                val response = try {
+                    call.execute()
+                } catch (e: java.io.IOException) {
+                    // 主动 cancel 引发的 IOException 按取消处理，避免被断路器误计为失败并触发重试
+                    if (call.isCanceled()) throw CancellationException("网络调用已取消")
+                    throw e
                 }
+
+                val respBody = response.body
+                    ?: throw IllegalStateException("空响应体 (HTTP ${response.code})")
+
+                if (!response.isSuccessful) {
+                    val errText = try { respBody.string() } finally { runCatching { respBody.close() } }
+                    val msg = extractErrorMessage(response.code, errText, chatUrl)
+                    if (response.code in 400..499 && response.code != 429) {
+                        throw NonRetryableApiException(response.code, msg)
+                    }
+                    throw IllegalStateException(msg)
+                }
+
+                // 每个 attempt 本地缓冲，成功后一次性回调：
+                // 断线重连时上一次失败 attempt 的增量不会外泄，避免重复推送同一轮 delta
+                val content = StringBuilder()
+                val reasoning = StringBuilder()
+                val acc = mutableMapOf<Int, AccToolCall>()
+                var finishReason: String? = null
+                var validChunks = 0
+                var sawDone = false
+                val source = respBody.source()
+
+                try {
+                    while (!source.exhausted()) {
+                        currentCoroutineContext().ensureActive()
+                        val line = source.readUtf8Line() ?: break
+                        if (line.isBlank()) continue
+                        val data = when {
+                            line.startsWith("data:") -> line.removePrefix("data:").trim()
+                            else -> continue
+                        }
+                        if (data == "[DONE]") {
+                            sawDone = true
+                            break
+                        }
+                        if (data.isEmpty()) continue
+
+                        // 服务端 error 帧（限流/context_length/鉴权等）必须抛错，不能当正常完成
+                        throwIfSseErrorFrame(data)
+
+                        val chunk = try {
+                            json.decodeFromString(StreamChunk.serializer(), data)
+                        } catch (_: Throwable) { continue }
+                        validChunks++
+
+                        val choice = chunk.choices.firstOrNull() ?: continue
+                        choice.finishReason?.let { finishReason = it }
+                        val delta = choice.delta ?: continue
+
+                        // 1. 原生隔离 reasoning_content
+                        delta.reasoningContent?.let {
+                            if (it.isNotEmpty()) reasoning.append(it)
+                        }
+
+                        // 2. 正常回答 content
+                        delta.content?.let {
+                            if (it.isNotEmpty()) content.append(it)
+                        }
+
+                        // 3. 聚合工具调用参数
+                        delta.toolCalls?.forEach { tc ->
+                            val a = acc.getOrPut(tc.index) { AccToolCall() }
+                            tc.id?.let { a.id = it }
+                            tc.function?.name?.let { a.name = it }
+                            tc.function?.arguments?.let { a.args.append(it) }
+                        }
+                    }
+                } catch (e: java.io.IOException) {
+                    if (call.isCanceled()) throw CancellationException("网络流读取已取消")
+                    throw e
+                } finally {
+                    try { respBody.close() } catch (_: Throwable) {}
+                }
+
+                // 流结束校验：无有效内容或异常截断都不能当成一次正常完成
+                if (validChunks == 0) {
+                    throw IllegalStateException("未收到任何有效数据帧 (HTTP ${response.code})，疑似服务端错误或空响应")
+                }
+                if (!sawDone && finishReason == null) {
+                    throw IllegalStateException("流式响应异常中断（未收到 [DONE] 或 finish_reason）")
+                }
+
+                // 成功后整段一次性回调，保证 UI 收到的内容不重不漏
+                if (reasoning.isNotEmpty()) onReasoningDelta?.invoke(reasoning.toString())
+                if (content.isNotEmpty()) onContentDelta(content.toString())
+
+                val pending = acc.toSortedMap().map { (_, a) ->
+                    val argsStr = a.args.toString()
+                    val parsed = try {
+                        if (argsStr.isBlank()) JsonObject(emptyMap())
+                        else json.parseToJsonElement(argsStr) as? JsonObject
+                    } catch (_: Throwable) { null }
+                    PendingToolCall(
+                        id = a.id ?: "call_${System.currentTimeMillis()}",
+                        name = a.name ?: "unknown",
+                        arguments = argsStr,
+                        parsedArgs = parsed
+                    )
+                }
+
+                StreamResult(
+                    content = content.toString(),
+                    toolCalls = pending,
+                    finishReason = finishReason,
+                    reasoningContent = reasoning.toString().ifBlank { null }
+                )
             } finally {
-                try { respBody.close() } catch (_: Throwable) {}
+                cancelHandle?.dispose()
                 if (activeCall == call) activeCall = null
             }
-
-            val pending = acc.toSortedMap().map { (_, a) ->
-                val argsStr = a.args.toString()
-                val parsed = try {
-                    if (argsStr.isBlank()) JsonObject(emptyMap())
-                    else json.parseToJsonElement(argsStr) as? JsonObject
-                } catch (_: Throwable) { null }
-                PendingToolCall(
-                    id = a.id ?: "call_${System.currentTimeMillis()}",
-                    name = a.name ?: "unknown",
-                    arguments = argsStr,
-                    parsedArgs = parsed
-                )
-            }
-
-            StreamResult(
-                content = content.toString(),
-                toolCalls = pending,
-                finishReason = finishReason,
-                reasoningContent = reasoning.toString().ifBlank { null }
-            )
         }
+    }
+
+    /**
+     * 识别 SSE 中的 {"error":...} 帧并抛出带信息的异常。
+     * 服务端限流、上下文超长、鉴权失败等常以流内 error 帧返回，
+     * 若静默 continue 会退化成「空回复成功」，这里必须显式暴露。
+     */
+    private fun throwIfSseErrorFrame(data: String) {
+        if (!data.contains("\"error\"")) return
+        val obj = runCatching { json.parseToJsonElement(data) as? JsonObject }.getOrNull() ?: return
+        val err = obj["error"] ?: return
+        val errObj = err as? JsonObject
+        val message = errObj?.get("message")?.toString()?.trim('"')
+            ?: err.toString().trim('"').take(200)
+        val code = errObj?.get("code")?.toString()?.trim('"')
+            ?: errObj?.get("type")?.toString()?.trim('"')
+        val detail = buildString {
+            append("服务端返回错误帧")
+            if (!code.isNullOrBlank()) append(" [$code]")
+            append(": $message")
+        }
+        throw IllegalStateException(detail)
     }
 
     companion object {

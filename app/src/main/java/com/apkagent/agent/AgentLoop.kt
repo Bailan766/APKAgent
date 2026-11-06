@@ -4,6 +4,7 @@ import com.apkagent.apktools.Sandbox
 import com.apkagent.apktools.strNonBlank
 import com.apkagent.i18n.L
 import com.apkagent.i18n.AgentPrompts
+import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -52,6 +53,9 @@ class AgentLoop(
 
     companion object {
         private const val MAX_TOOL_OUTPUT_CHARS = 24_000
+        // 会话历史滑动窗口与总字符预算，避免长会话全量重发撑爆上下文
+        private const val MAX_HISTORY_MESSAGES = 40
+        private const val MAX_HISTORY_CHARS = 120_000
     }
 
     private fun systemPrompt(): String {
@@ -70,8 +74,9 @@ class AgentLoop(
         callbacks.onPhaseChange(ReversePhase.PREPARE)
 
         try {
-            AuditLogger.init(ctx.workspace)
+            // 先切会话再初始化，保证日志文件名与条目 sessionId 使用同一个 sessionId
             AuditLogger.newSession()
+            AuditLogger.init(ctx.workspace)
         } catch (_: Exception) {}
 
         val needContinue = runInternal(userText, initialSystemContext)
@@ -110,6 +115,7 @@ class AgentLoop(
             for (round in 0 until maxRounds) {
                 currentCoroutineContext().ensureActive()
                 AuditLogger.nextRound()
+                trimMessages()
 
                 val toolDefs = registry.toToolDefs().ifEmpty { null }
 
@@ -179,6 +185,63 @@ class AgentLoop(
             callbacks.onError(e.message ?: e.javaClass.simpleName)
             callbacks.onFinished()
             return false
+        }
+    }
+
+    /** 估算一条消息占用的字符数（含工具调用参数），用于历史字符预算 */
+    private fun messageChars(m: ChatMessage): Int =
+        (m.content?.length ?: 0) +
+            (m.toolCalls?.sumOf { it.function.name.length + it.function.arguments.length } ?: 0) +
+            (m.name?.length ?: 0) + 16
+
+    /**
+     * 裁剪会话历史，避免长会话把全部消息重发给模型导致上下文溢出。
+     * 始终保留置顶 system 消息；对其余消息按「总字符预算 + 条数滑动窗口」裁剪。
+     * 若裁剪边界落在 tool 响应上，则回退到其所属 assistant(tool_calls)，
+     * 保证不会出现孤立 tool 消息（否则 API 会拒绝不配对的消息序列）。
+     */
+    private fun trimMessages() {
+        if (messages.size <= 1) return
+        val history = messages.subList(1, messages.size)
+
+        // 从最新往回累计，找出预算内可保留的最旧下标
+        var used = 0
+        var i = history.size - 1
+        while (i >= 0) {
+            val cost = messageChars(history[i])
+            if (used + cost > MAX_HISTORY_CHARS) break
+            used += cost
+            i--
+        }
+        var start = i + 1
+
+        // 叠加消息条数窗口
+        val minStart = history.size - MAX_HISTORY_MESSAGES
+        if (start < minStart) start = minStart
+        // 至少保留最后一条，避免把当前轮指令也裁掉
+        if (start > history.size - 1) start = history.size - 1
+        if (start < 0) start = 0
+
+        // 边界若以 tool 响应开头，回退到其所属 assistant(tool_calls)，保持消息配对完整
+        while (start > 0 && history[start].role == "tool") start--
+
+        if (start > 0) messages.subList(1, 1 + start).clear()
+    }
+
+    /** 审计日志写入统一入口：写失败可感知（Log.w），不再静默吞掉 */
+    private fun auditLog(
+        toolName: String,
+        arguments: String,
+        result: String,
+        success: Boolean,
+        durationMs: Long,
+        riskLevel: ToolRiskLevel
+    ) {
+        val ok = runCatching {
+            AuditLogger.log(toolName, arguments, result, success, durationMs, riskLevel)
+        }.getOrElse { false }
+        if (!ok) {
+            try { Log.w("AgentLoop", "审计日志写入失败: $toolName") } catch (_: Throwable) {}
         }
     }
 

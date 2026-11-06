@@ -17,6 +17,12 @@ import java.io.File
  */
 object PythonRunner {
 
+    /** pip 包名白名单：仅允许安全字符，避免拼进 shell 命令时注入。 */
+    private val SAFE_PACKAGE_NAME = Regex("^[A-Za-z0-9._-]+$")
+
+    /** POSIX shell 单引号转义（'\'' 惯用法）。 */
+    private fun shellQuote(s: String): String = "'" + s.replace("'", "'\\''") + "'"
+
     const val BUILTIN_PYTHON_ID = "builtin://embedded-python-3.12"
     private var internalDir: File? = null
     private const val TMP_PYTHON_DIR = "/data/local/tmp/apkagent_py"
@@ -254,26 +260,28 @@ object PythonRunner {
         val pyHome = if (python == TMP_PYTHON_BIN) TMP_PYTHON_DIR else internalDir?.absolutePath
         val env = buildString {
             pyHome?.let {
-                append("PYTHONHOME='$it' ")
+                append("PYTHONHOME=${shellQuote(it)} ")
                 val pyLib = File(it, "lib/python3")
-                if (pyLib.exists()) append("PYTHONPATH='${pyLib.absolutePath}' ")
+                if (pyLib.exists()) append("PYTHONPATH=${shellQuote(pyLib.absolutePath)} ")
             }
         }
-        val argsJoined = if (args.isEmpty()) "" else " " + args.joinToString(" ") { "'$it'" }
-        val cmd = "cd '$workDirPath' && ${env}'${python}' '${script.absolutePath}'$argsJoined"
-
+        val argsJoined = if (args.isEmpty()) "" else " " + args.joinToString(" ") { shellQuote(it) }
+        val cmd = "cd ${shellQuote(workDirPath)} && ${env}${shellQuote(python)} ${shellQuote(script.absolutePath)}$argsJoined"
+        var shizukuProc: java.lang.Process? = null
+        var nativeProc: java.lang.Process? = null
         return try {
             withTimeout(timeoutSeconds * 1000L) {
                 if (ShizukuManager.isAuthorized()) {
-                    val process = ShizukuManager.execShizuku(cmd)
+                    // Shizuku 走 sh -c，追加 2>&1 合并 stderr，避免先读 stdout 至 EOF 时 stderr 写满管道死锁
+                    val process = ShizukuManager.execShizuku("$cmd 2>&1")
                     if (process != null) {
-                        val stdout = process.inputStream.bufferedReader().use { it.readText() }
-                        val stderr = process.errorStream.bufferedReader().use { it.readText() }
+                        shizukuProc = process
+                        val output = process.inputStream.bufferedReader().use { it.readText() }
                         val exit = process.waitFor()
                         return@withTimeout if (exit == 0) {
-                            ExecResult(true, stdout.take(8000), stderr.take(2000).ifBlank { null })
+                            ExecResult(true, output.take(8000), null)
                         } else {
-                            ExecResult(false, stdout.take(2000).ifBlank { null }, stderr.ifBlank { "exit=$exit" }.take(2000))
+                            ExecResult(false, output.take(2000).ifBlank { null }, "exit=$exit")
                         }
                     }
                 }
@@ -282,19 +290,24 @@ object PythonRunner {
                 val pb = ProcessBuilder(cmdList)
                 if (workDir.isDirectory) pb.directory(workDir)
                 pyHome?.let { pb.environment()["PYTHONHOME"] = it }
-                pb.redirectErrorStream(false)
+                // 合并 stdout/stderr，单流读取，杜绝 redirectErrorStream(false) 下的双流死锁
+                pb.redirectErrorStream(true)
                 val proc = pb.start()
-                val stdout = proc.inputStream.bufferedReader().use { it.readText() }
-                val stderr = proc.errorStream.bufferedReader().use { it.readText() }
+                nativeProc = proc
+                val output = proc.inputStream.bufferedReader().use { it.readText() }
                 val exit = proc.waitFor()
                 if (exit == 0) {
-                    ExecResult(true, stdout.take(8000), stderr.take(2000).ifBlank { null })
+                    ExecResult(true, output.take(8000), null)
                 } else {
-                    ExecResult(false, stdout.take(2000).ifBlank { null }, stderr.ifBlank { "exit=$exit" }.take(2000))
+                    ExecResult(false, output.take(2000).ifBlank { null }, "exit=$exit")
                 }
             }
         } catch (_: Throwable) {
             null
+        } finally {
+            // 超时/异常时销毁子进程，避免进程泄漏
+            runCatching { shizukuProc?.destroyForcibly() }
+            runCatching { nativeProc?.destroyForcibly() }
         }
     }
 
@@ -351,6 +364,11 @@ object PythonRunner {
 
     suspend fun pipInstall(vararg packages: String, timeoutSeconds: Int = 300): ExecResult =
         withContext(Dispatchers.IO) {
+            // 白名单校验：Shizuku 分支会把包名拼进 shell 命令，含元字符一律拒绝
+            val invalid = packages.filterNot { SAFE_PACKAGE_NAME.matches(it) }
+            if (invalid.isNotEmpty()) {
+                return@withContext ExecResult(false, null, "非法包名（仅允许 A-Za-z0-9._-）: ${invalid.joinToString(", ")}")
+            }
             packages.forEach { installedPackages.add(it.lowercase()) }
             val python = getExecutablePython()
                 ?: return@withContext ExecResult(
@@ -362,9 +380,10 @@ object PythonRunner {
             Logger.i("Py", "pip install ${packages.joinToString(" ")}")
             try {
                 withTimeout(timeoutSeconds * 1000L) {
+                    val quotedPackages = packages.joinToString(" ") { shellQuote(it) }
                     val cmd = pyHome?.let {
-                        "PYTHONHOME='$it' $python -m pip install ${packages.joinToString(" ")} 2>&1"
-                    } ?: "$python -m pip install ${packages.joinToString(" ")} 2>&1"
+                        "PYTHONHOME='$it' $python -m pip install $quotedPackages 2>&1"
+                    } ?: "$python -m pip install $quotedPackages 2>&1"
 
                     val out = if (ShizukuManager.isAuthorized()) {
                         ShizukuManager.execAndGet(cmd) ?: ""

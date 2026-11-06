@@ -97,7 +97,7 @@ object ResourceTableDecoder : Tool {
     private fun extractArsc(apkFile: File): ByteArray? {
         ZipFile(apkFile).use { zip ->
             val entry = zip.getEntry("resources.arsc") ?: return null
-            return zip.getInputStream(entry).readBytes()
+            return zip.getInputStream(entry).use { it.readBytes() }
         }
     }
 

@@ -110,7 +110,7 @@ fun SettingsScreen(
                 dynamicModels.firstOrNull() ?: provider.models.firstOrNull() ?: "deepseek-chat"
             }
         }
-        val newCfg = AgentConfig(
+        val newCfg = cfg.copy(
             providerId = pid,
             baseUrl = cleanUrl,
             apiKey = cleanKey,
@@ -639,7 +639,7 @@ fun SettingsScreen(
                         )
                     }
                     Text(
-                        "控制 Agent 自动化执行时的敏感操作拦截策略。默认采用快速模式，实现无阻碍自动化逆向。",
+                        "控制 Agent 自动化执行时的敏感操作拦截策略。默认采用安全模式，敏感操作需逐次确认。",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -673,7 +673,7 @@ fun SettingsScreen(
                             Spacer(Modifier.width(8.dp))
                             Column {
                                 Text(
-                                    s.modeFast + " (推荐)",
+                                    s.modeFast,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
                                     color = if (execMode == ExecutionMode.FAST) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurface
@@ -961,7 +961,19 @@ private fun ShizukuStatusCard() {
 private fun BatteryOptimizationCard() {
     val s = LocalAppStrings.current
     val context = LocalContext.current
-    val isIgnoring by remember { mutableStateOf(KeepAliveManager.isIgnoringBatteryOptimizations(context)) }
+    var isIgnoring by remember { mutableStateOf(KeepAliveManager.isIgnoringBatteryOptimizations(context)) }
+
+    // 从系统设置返回时重新检查电池优化状态
+    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                isIgnoring = KeepAliveManager.isIgnoringBatteryOptimizations(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     Card(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),

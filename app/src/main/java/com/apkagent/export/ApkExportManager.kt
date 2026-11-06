@@ -35,6 +35,12 @@ class ApkExportManager {
         // 0. 检查工作区内是否已有 AI 直接打包并签名好的成品 APK
         val prebuiltSigned = workspace.walkTopDown()
             .maxDepth(2)
+            // 跳过导出输出目录与临时解包目录，避免把上一次导出的 *_patched.apk
+            // 当成 AI 生成的成品再次复制（回退输出目录正是 workspace/exports）
+            .onEnter { dir ->
+                !dir.name.equals("exports", ignoreCase = true) &&
+                    !dir.name.startsWith("_export")
+            }
             .filter {
                 it.isFile && it.extension.equals("apk", ignoreCase = true) &&
                     it.canonicalPath != original.canonicalPath &&
@@ -63,6 +69,8 @@ class ApkExportManager {
                     outputFile = out
                 )
             }.getOrElse { e ->
+                // 复制失败时同样清理本次输出文件，避免残留半成品
+                out.delete()
                 ExportResult(false, "导出复制失败: ${e.message}")
             }
         }
@@ -129,12 +137,15 @@ class ApkExportManager {
                 outputFile = out
             )
         } else {
+            // 签名失败时清理本次可能已写出的输出文件，避免残留半成品被后续扫描误认为成品
+            out.delete()
             ExportResult(false, sign.message)
         }
     }
 
     private fun resolveWritableExportFile(workspace: File, baseName: String): File {
-        val fileName = "${baseName}_patched.apk"
+        // 每次导出生成唯一文件名，避免固定文件名导致覆盖上一次的产物
+        val base = "${baseName}_patched_${System.currentTimeMillis()}"
         val candidates = listOfNotNull(
             runCatching { File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "APKAgent") }.getOrNull(),
             runCatching { File(Environment.getExternalStorageDirectory(), "APKAgent/build") }.getOrNull(),
@@ -145,12 +156,23 @@ class ApkExportManager {
                 if (dir.exists() || dir.mkdirs()) {
                     val testFile = File(dir, ".write_test_${System.nanoTime()}")
                     if (runCatching { testFile.writeText("ok"); testFile.delete(); true }.getOrDefault(false)) {
-                        return File(dir, fileName)
+                        return uniqueExportFile(dir, base)
                     }
                 }
             } catch (_: Throwable) {}
         }
         val fallbackDir = File(workspace, "exports").apply { mkdirs() }
-        return File(fallbackDir, fileName)
+        return uniqueExportFile(fallbackDir, base)
+    }
+
+    /** 同一目录内若已存在同名文件则追加序号，进一步避免覆盖。 */
+    private fun uniqueExportFile(dir: File, base: String): File {
+        var candidate = File(dir, "$base.apk")
+        var n = 1
+        while (candidate.exists()) {
+            n++
+            candidate = File(dir, "${base}_$n.apk")
+        }
+        return candidate
     }
 }

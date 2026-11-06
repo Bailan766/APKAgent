@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+（API ≥ 31）云备份 / 设备迁移排除规则。
+  与 backup_rules.xml 保持一致：保留 allowBackup=true，排除 API Key、数据库、工作区。
+-->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude domain="sharedpref" path="apk_agent_secrets.xml" />
+        <exclude domain="sharedpref" path="apk_agent_prefs_fallback.xml" />
+        <exclude domain="sharedpref" path="__androidx_security_crypto_encrypted_shared_prefs__.xml" />
+        <exclude domain="sharedpref" path="." />
+
+        <exclude domain="database" path="." />
+
+        <exclude domain="file" path="workspace" />
+        <exclude domain="file" path="projects" />
+        <exclude domain="file" path="history" />
+        <exclude domain="file" path="cache" />
+        <exclude domain="file" path="python" />
+        <exclude domain="file" path="nodejs" />
+
+        <exclude domain="external" path="." />
+    </cloud-backup>
+
+    <device-transfer>
+        <exclude domain="sharedpref" path="apk_agent_secrets.xml" />
+        <exclude domain="sharedpref" path="apk_agent_prefs_fallback.xml" />
+        <exclude domain="sharedpref" path="__androidx_security_crypto_encrypted_shared_prefs__.xml" />
+        <exclude domain="sharedpref" path="." />
+
+        <exclude domain="database" path="." />
+
+        <exclude domain="file" path="workspace" />
+        <exclude domain="file" path="projects" />
+        <exclude domain="file" path="history" />
+        <exclude domain="file" path="cache" />
+        <exclude domain="file" path="python" />
+        <exclude domain="file" path="nodejs" />
+
+        <exclude domain="external" path="." />
+    </device-transfer>
+</data-extraction-rules>
