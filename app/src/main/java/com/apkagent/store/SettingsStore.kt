@@ -23,7 +23,7 @@ enum class ExecutionMode(
 
     companion object {
         fun fromId(id: String?): ExecutionMode =
-            values().firstOrNull { it.id.equals(id, ignoreCase = true) } ?: SAFE
+            values().firstOrNull { it.id.equals(id, ignoreCase = true) } ?: FAST
     }
 }
 
@@ -35,7 +35,7 @@ data class AgentConfig(
     val temperature: Double = 0.6,
     val systemExtra: String = "",
     val maxRounds: Int = 100,
-    val executionMode: String = ExecutionMode.SAFE.id
+    val executionMode: String = ExecutionMode.FAST.id
 ) {
     fun isValid(): Boolean = (providerId == "ollama" || apiKey.trim().isNotBlank()) && model.trim().isNotBlank()
     fun provider(): AiProvider = AiProvider.byId(providerId)
@@ -131,7 +131,7 @@ class SettingsStore(private val context: Context) {
                 provider.models.firstOrNull() ?: "deepseek-chat"
             }
         }
-        val savedMode = readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.SAFE.id
+        val savedMode = readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.FAST.id
         AgentConfig(
             providerId = pid,
             baseUrl = resolvedUrl,
@@ -162,8 +162,8 @@ class SettingsStore(private val context: Context) {
                 provider.models.firstOrNull() ?: "deepseek-chat"
             }
         }
-        // 默认安全模式：仅当用户显式选择 fast 时才存 fast，其余（含非法/缺失值）一律 safe
-        val cleanMode = if (cfg.executionMode.equals("fast", ignoreCase = true)) "fast" else "safe"
+        // 默认快速模式：仅当用户显式选择 safe 时才存 safe，其余（含非法/缺失值）一律 fast
+        val cleanMode = if (cfg.executionMode.equals("safe", ignoreCase = true)) "safe" else "fast"
         val normalized = cfg.copy(
             baseUrl = cleanUrl,
             apiKey = cleanKey,
@@ -263,7 +263,7 @@ class SettingsStore(private val context: Context) {
         LocaleManager.setLanguage(lang)
     }
 
-    fun getExecutionMode(): ExecutionMode = ExecutionMode.fromId(readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.SAFE.id)
+    fun getExecutionMode(): ExecutionMode = ExecutionMode.fromId(readStringSafe(KEY_EXECUTION_MODE) ?: ExecutionMode.FAST.id)
 
     fun setExecutionMode(mode: ExecutionMode) {
         val cur = _config.value

@@ -18,6 +18,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -65,6 +66,8 @@ fun ProjectScreen(
     var showApps by remember { mutableStateOf(false) }
     var installedApps by remember { mutableStateOf<List<InstalledAppItem>>(emptyList()) }
     var appQuery by remember { mutableStateOf("") }
+    var projectQuery by rememberSaveable { mutableStateOf("") }
+    var projectToDelete by remember { mutableStateOf<ReverseProject?>(null) }
 
     fun reloadProjects() {
         scope.launch(Dispatchers.IO) {
@@ -109,11 +112,19 @@ fun ProjectScreen(
                         return@launch
                     }
                     ins.use { src -> tmp.outputStream().use { dst -> src.copyTo(dst) } }
-                    app.importApk(tmp, name)
+                    val imported = app.importApk(tmp, name)
                     tmp.delete()
                     withContext(Dispatchers.Main) {
+                        app.setCurrentProject(imported)
                         reloadProjects()
-                        snackbar.showSnackbar(s.fmt(s.importedAnalyzed, "name" to name))
+                        val res = snackbar.showSnackbar(
+                            message = s.fmt(s.importedAnalyzed, "name" to name),
+                            actionLabel = s.aiChat,
+                            duration = SnackbarDuration.Short
+                        )
+                        if (res == SnackbarResult.ActionPerformed) {
+                            onOpenProjectChat()
+                        }
                     }
                 } catch (e: Throwable) {
                     withContext(Dispatchers.Main) { snackbar.showSnackbar(s.fmt(s.importFailedShort, "msg" to e.message?.take(80))) }
@@ -231,17 +242,47 @@ fun ProjectScreen(
                 }
             }
 
+            if (projects.size > 1) {
+                OutlinedTextField(
+                    value = projectQuery,
+                    onValueChange = { projectQuery = it },
+                    placeholder = { Text("按名称或包名筛选历史项目...", fontSize = 13.sp) },
+                    singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, null, tint = MaterialTheme.colorScheme.primary) },
+                    trailingIcon = {
+                        if (projectQuery.isNotBlank()) {
+                            IconButton(onClick = { projectQuery = "" }) {
+                                Icon(Icons.Default.Clear, null, modifier = Modifier.size(18.dp))
+                            }
+                        }
+                    },
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp)
+                        .padding(bottom = 6.dp)
+                )
+            }
+
             if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.primary)
 
-            if (projects.isEmpty()) {
+            val filteredProjects = remember(projects, projectQuery) {
+                if (projectQuery.isBlank()) projects
+                else projects.filter {
+                    it.project.name.contains(projectQuery, ignoreCase = true) ||
+                        (it.project.packageName?.contains(projectQuery, ignoreCase = true) == true)
+                }
+            }
+
+            if (filteredProjects.isEmpty()) {
                 EmptyProjectHint(Modifier.weight(1f))
             } else {
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(14.dp),
+                    contentPadding = PaddingValues(start = 14.dp, end = 14.dp, top = 10.dp, bottom = 88.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    items(projects, key = { it.project.id }) { item ->
+                    items(filteredProjects, key = { it.project.id }) { item ->
                         ProjectDossierCard(
                             item = item,
                             onOpen = {
@@ -251,6 +292,9 @@ fun ProjectScreen(
                             onEditor = {
                                 app.setCurrentProject(item.project)
                                 onOpenProjectEditor()
+                            },
+                            onDelete = {
+                                projectToDelete = item.project
                             }
                         )
                     }
@@ -297,10 +341,18 @@ fun ProjectScreen(
                                         scope.launch(Dispatchers.IO) {
                                             loading = true
                                             try {
-                                                app.importInstalledApp(item)
+                                                val imported = app.importInstalledApp(item)
                                                 withContext(Dispatchers.Main) {
+                                                    app.setCurrentProject(imported)
                                                     reloadProjects()
-                                                    snackbar.showSnackbar(s.fmt(s.importedAnalyzed, "name" to item.label))
+                                                    val res = snackbar.showSnackbar(
+                                                        message = s.fmt(s.importedAnalyzed, "name" to item.label),
+                                                        actionLabel = s.aiChat,
+                                                        duration = SnackbarDuration.Short
+                                                    )
+                                                    if (res == SnackbarResult.ActionPerformed) {
+                                                        onOpenProjectChat()
+                                                    }
                                                 }
                                             } catch (e: Throwable) {
                                                 withContext(Dispatchers.Main) { snackbar.showSnackbar(s.fmt(s.importFailedShort, "msg" to e.message?.take(80))) }
@@ -342,6 +394,44 @@ fun ProjectScreen(
                 }
             },
             confirmButton = { TextButton(onClick = { showApps = false }) { Text(s.close) } }
+        )
+    }
+
+    projectToDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { projectToDelete = null },
+            icon = { Icon(Icons.Default.DeleteOutline, null, tint = MaterialTheme.colorScheme.error) },
+            title = { Text("确认删除项目", fontWeight = FontWeight.Bold) },
+            text = {
+                Text(
+                    "确定要删除「${target.name}」及其所有沙盒分析文件与聊天记录吗？此操作不可恢复。",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        projectToDelete = null
+                        scope.launch(Dispatchers.IO) {
+                            app.projectStore.deleteProject(target.id)
+                            withContext(Dispatchers.Main) {
+                                if (app.currentProject.value?.id == target.id) {
+                                    app.setCurrentProject(null)
+                                }
+                                reloadProjects()
+                                snackbar.showSnackbar("已删除项目：${target.name}")
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("确认删除", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { projectToDelete = null }) { Text(s.cancel) }
+            }
         )
     }
 }
@@ -390,7 +480,8 @@ private fun EmptyProjectHint(modifier: Modifier = Modifier) {
 private fun ProjectDossierCard(
     item: ProjectDossierItem,
     onOpen: () -> Unit,
-    onEditor: () -> Unit
+    onEditor: () -> Unit,
+    onDelete: () -> Unit
 ) {
     val project = item.project
     val summaryText = item.summaryText
@@ -444,6 +535,20 @@ private fun ProjectDossierCard(
                         maxLines = 1
                     )
                 }
+
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier.size(36.dp)
+                ) {
+                    Icon(
+                        Icons.Default.DeleteOutline,
+                        contentDescription = "删除项目",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                Spacer(Modifier.width(4.dp))
 
                 IconButton(
                     onClick = onOpen,

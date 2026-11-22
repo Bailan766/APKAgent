@@ -45,6 +45,15 @@ fun NeuralTrace(
 
     var expanded by remember { mutableStateOf(initialExpanded) }
 
+    // 思考结束后自动收起，避免大段推理文本占据屏幕挤压正式回答
+    LaunchedEffect(isThinking) {
+        if (!isThinking && reasoningText.isNotBlank()) {
+            expanded = false
+        } else if (isThinking) {
+            expanded = true
+        }
+    }
+
     // 思考中时的脉冲呼吸动效
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val alphaAnim by infiniteTransition.animateFloat(
@@ -58,12 +67,12 @@ fun NeuralTrace(
     )
 
     Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
         border = androidx.compose.foundation.BorderStroke(
             1.dp,
-            if (isThinking) MaterialTheme.colorScheme.primary.copy(alpha = alphaAnim * 0.5f)
-            else MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+            if (isThinking) MaterialTheme.colorScheme.primary.copy(alpha = alphaAnim * 0.55f)
+            else MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
         ),
         modifier = modifier.fillMaxWidth()
     ) {
@@ -73,7 +82,7 @@ fun NeuralTrace(
                 modifier = Modifier
                     .fillMaxWidth()
                     .clickable { expanded = !expanded }
-                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // 思考状态呼吸灯
@@ -82,7 +91,7 @@ fun NeuralTrace(
                         .size(8.dp)
                         .clip(CircleShape)
                         .background(
-                            if (isThinking) Color(0xFF38BDF8).copy(alpha = alphaAnim)
+                            if (isThinking) MaterialTheme.colorScheme.primary.copy(alpha = alphaAnim)
                             else Color(0xFF10B981)
                         )
                 )
@@ -93,26 +102,25 @@ fun NeuralTrace(
                     Icons.Default.Psychology,
                     contentDescription = null,
                     tint = if (isThinking) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(15.dp)
+                    modifier = Modifier.size(16.dp)
                 )
 
                 Spacer(Modifier.width(6.dp))
 
                 Text(
-                    text = if (isThinking) "NEURAL TRACE // THINKING..." else "NEURAL TRACE // THOUGHT PROCESS",
-                    fontFamily = FontFamily.Monospace,
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
+                    text = if (isThinking) "深度思考推理中..." else "思考过程（点击展开）",
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
                     color = if (isThinking) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Spacer(Modifier.weight(1f))
 
                 Text(
-                    text = "${reasoningText.length} chars",
+                    text = "${reasoningText.length} 字",
                     fontFamily = FontFamily.Monospace,
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
                 )
 
                 Spacer(Modifier.width(6.dp))

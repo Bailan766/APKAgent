@@ -28,6 +28,15 @@ enum class ToolRiskLevel {
         )
 
         /**
+         * 精确的 SAFE 工具名集合。
+         * 只读静态风险扫描与基础探测操作，无需确认。
+         */
+        private val SAFE_TOOLS = setOf(
+            "risk_scan", "scan_risk", "check_root",
+            "list_permissions", "view_config", "obfuscation_detect"
+        )
+
+        /**
          * 精确的 CAUTION 工具名集合。
          * 读取敏感内容、反汇编、解码等可能有副作用的只读操作。
          */
@@ -37,10 +46,7 @@ enum class ToolRiskLevel {
             "apk_info", "dex_disasm", "smali_disasm",
             "axml_decode", "arsc_decode", "manifest_decode",
             "apk_dump", "dump_dex", "dump_strings",
-            "read_signer", "apk_read_signer",
-            "scan_risk", "risk_scan", "check_root",
-            "list_permissions", "view_config",
-            "obfuscation_detect"
+            "read_signer", "apk_read_signer"
         )
 
         /** 根据工具名自动推断风险等级 */
@@ -49,6 +55,7 @@ enum class ToolRiskLevel {
 
             // 先精确匹配
             if (lower in DANGER_TOOLS) return DANGER
+            if (lower in SAFE_TOOLS) return SAFE
             if (lower in CAUTION_TOOLS) return CAUTION
 
             // 关键字兜底（仅用于未在精确集合中注册的工具）
@@ -67,11 +74,10 @@ enum class ToolRiskLevel {
                 lower.contains("read") || lower.contains("search") ||
                 lower.contains("list") || lower.contains("info") ||
                 lower.contains("disasm") || lower.contains("decode") ||
-                lower.contains("view") || lower.contains("dump") ||
-                lower.contains("scan") || lower.contains("detect") -> CAUTION
+                lower.contains("view") || lower.contains("dump") -> CAUTION
 
-                // 未知工具保守按 CAUTION，不再默认 SAFE
-                else -> CAUTION
+                // 其余未知或只读工具归为 SAFE
+                else -> SAFE
             }
         }
     }

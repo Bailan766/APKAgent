@@ -130,6 +130,17 @@ class ProjectStore(private val context: Context, private val workspace: File) {
         }
     }
 
+    /** 删除指定项目及其沙盒工作目录 */
+    fun deleteProject(projectId: String) {
+        synchronized(indexLock) {
+            val all = runCatching { readIndex().filterNot { it.id == projectId } }.getOrNull()
+            if (all != null) {
+                writeIndex(all)
+            }
+        }
+        runCatching { File(projectsRoot, projectId).deleteRecursively() }
+    }
+
     fun saveAnalysisSummary(summary: ProjectAnalysisSummary) {
         val jsonFile = getAnalysisSummaryFile(summary.projectId)
         jsonFile.writeText(json.encodeToString(summary))

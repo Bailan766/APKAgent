@@ -12,10 +12,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -47,11 +49,11 @@ fun EditorScreen(
     val scope = rememberCoroutineScope()
     var currentDir by rememberSaveable(rootDir) { mutableStateOf(rootDir) }
     var selectedFile by rememberSaveable { mutableStateOf<File?>(null) }
-    var fileContent by rememberSaveable { mutableStateOf("") }
-    var editedContent by rememberSaveable { mutableStateOf("") }
-    var isEditing by rememberSaveable { mutableStateOf(false) }
-    var isTruncated by rememberSaveable { mutableStateOf(false) }
-    var isLoadingFile by rememberSaveable { mutableStateOf(false) }
+    var fileContent by remember { mutableStateOf("") }
+    var editedContent by remember { mutableStateOf("") }
+    var isEditing by remember { mutableStateOf(false) }
+    var isTruncated by remember { mutableStateOf(false) }
+    var isLoadingFile by remember { mutableStateOf(false) }
     val snackbar = remember { SnackbarHostState() }
 
     val textExtensions = remember {
@@ -235,6 +237,7 @@ private fun FileBrowser(
 ) {
     val s = LocalAppStrings.current
     var entries by remember { mutableStateOf<List<File>>(emptyList()) }
+    var filterQuery by remember(dir) { mutableStateOf("") }
 
     LaunchedEffect(dir) {
         withContext(Dispatchers.IO) {
@@ -247,61 +250,91 @@ private fun FileBrowser(
         }
     }
 
-    LazyColumn(
+    val filteredEntries = remember(entries, filterQuery) {
+        if (filterQuery.isBlank()) entries
+        else entries.filter { it.name.contains(filterQuery, ignoreCase = true) }
+    }
+
+    Column(
         modifier = modifier
             .fillMaxSize()
-            .background(MaterialTheme.colorScheme.background),
-        contentPadding = PaddingValues(10.dp),
-        verticalArrangement = Arrangement.spacedBy(4.dp)
+            .background(MaterialTheme.colorScheme.background)
     ) {
-        items(entries, key = { it.absolutePath }) { entry ->
-            val isDir = entry.isDirectory
-            Surface(
-                shape = RoundedCornerShape(8.dp),
-                color = MaterialTheme.colorScheme.surface,
-                border = androidx.compose.foundation.BorderStroke(
-                    1.dp,
-                    MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-                ),
+        if (entries.size > 5) {
+            OutlinedTextField(
+                value = filterQuery,
+                onValueChange = { filterQuery = it },
+                placeholder = { Text("过滤当前目录文件 (${entries.size})...", fontSize = 12.sp) },
+                singleLine = true,
+                leadingIcon = { Icon(Icons.Default.Search, null, modifier = Modifier.size(18.dp)) },
+                trailingIcon = {
+                    if (filterQuery.isNotBlank()) {
+                        IconButton(onClick = { filterQuery = "" }) {
+                            Icon(Icons.Default.Clear, null, modifier = Modifier.size(16.dp))
+                        }
+                    }
+                },
+                shape = RoundedCornerShape(10.dp),
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clickable { if (isDir) onDirClick(entry) else onFileClick(entry) }
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                    .padding(horizontal = 10.dp, vertical = 6.dp)
+            )
+        }
+
+        LazyColumn(
+            modifier = Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            items(filteredEntries, key = { it.absolutePath }) { entry ->
+                val isDir = entry.isDirectory
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    border = androidx.compose.foundation.BorderStroke(
+                        1.dp,
+                        MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { if (isDir) onDirClick(entry) else onFileClick(entry) }
                 ) {
-                    Icon(
-                        if (isDir) Icons.Default.Folder else Icons.Default.Description,
-                        contentDescription = null,
-                        tint = if (isDir) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(20.dp)
-                    )
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            entry.name,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = if (isDir) FontWeight.SemiBold else FontWeight.Normal,
-                            fontSize = 13.sp,
-                            color = MaterialTheme.colorScheme.onSurface
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (isDir) Icons.Default.Folder else Icons.Default.Description,
+                            contentDescription = null,
+                            tint = if (isDir) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
                         )
-                        if (!isDir) {
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                "${entry.length()} B",
+                                entry.name,
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 10.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                fontWeight = if (isDir) FontWeight.SemiBold else FontWeight.Normal,
+                                fontSize = 13.sp,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
+                            if (!isDir) {
+                                Text(
+                                    "${entry.length()} B",
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
             }
-        }
-        if (entries.isEmpty()) {
-            item {
-                Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
-                    Text(s.emptyDir, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+            if (filteredEntries.isEmpty()) {
+                item {
+                    Box(Modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+                        Text(s.emptyDir, color = MaterialTheme.colorScheme.onSurfaceVariant, fontFamily = FontFamily.Monospace)
+                    }
                 }
             }
         }

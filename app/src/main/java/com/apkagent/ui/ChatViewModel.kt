@@ -131,6 +131,11 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
 
     init {
         selectProject(agentApp.currentProject.value)
+        viewModelScope.launch {
+            agentApp.settingsStore.config.collect { cfg ->
+                executionMode.value = cfg.mode()
+            }
+        }
     }
 
     fun selectProject(project: ReverseProject?) {
