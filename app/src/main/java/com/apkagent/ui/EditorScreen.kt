@@ -283,46 +283,53 @@ private fun FileBrowser(
 
         LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = PaddingValues(10.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 8.dp, bottom = 92.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp)
         ) {
             items(filteredEntries, key = { it.absolutePath }) { entry ->
                 val isDir = entry.isDirectory
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(18.dp),
                     color = MaterialTheme.colorScheme.surface,
-                    border = androidx.compose.foundation.BorderStroke(
-                        1.dp,
-                        MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-                    ),
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(RoundedCornerShape(18.dp))
                         .clickable { if (isDir) onDirClick(entry) else onFileClick(entry) }
                 ) {
                     Row(
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 11.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            if (isDir) Icons.Default.Folder else Icons.Default.Description,
-                            contentDescription = null,
-                            tint = if (isDir) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(20.dp)
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(
+                                    if (isDir) MaterialTheme.colorScheme.primaryContainer
+                                    else MaterialTheme.colorScheme.surfaceVariant
+                                ),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                if (isDir) Icons.Default.Folder else Icons.Default.Description,
+                                contentDescription = null,
+                                tint = if (isDir) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
                         Spacer(Modifier.width(12.dp))
                         Column(Modifier.weight(1f)) {
                             Text(
                                 entry.name,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = if (isDir) FontWeight.SemiBold else FontWeight.Normal,
-                                fontSize = 13.sp,
+                                fontWeight = if (isDir) FontWeight.Bold else FontWeight.Medium,
+                                fontSize = 14.sp,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             if (!isDir) {
                                 Text(
                                     "${entry.length()} B",
                                     fontFamily = FontFamily.Monospace,
-                                    fontSize = 10.sp,
+                                    fontSize = 11.sp,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }

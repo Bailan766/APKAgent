@@ -1,14 +1,10 @@
 package com.apkagent.ui
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.*
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -37,7 +33,7 @@ private val EXPORT_SUGGEST_TOOLS = setOf(
     "auto_patch", "bypass_signature", "apk_patch", "apk_auto_patch"
 )
 
-/** 科技风微徽章 */
+/** M3 无边框药丸胶囊微徽章 */
 @Composable
 fun TechBadge(
     text: String,
@@ -47,11 +43,10 @@ fun TechBadge(
 ) {
     Surface(
         color = containerColor,
-        shape = RoundedCornerShape(6.dp),
-        border = BorderStroke(1.dp, contentColor.copy(alpha = 0.25f))
+        shape = RoundedCornerShape(50)
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp),
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(4.dp)
         ) {
@@ -60,18 +55,19 @@ fun TechBadge(
                 text = text,
                 color = contentColor,
                 fontSize = 11.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Medium
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
         }
     }
 }
 
 /**
- * Material 3 紧凑型工具调用胶囊卡片：
- * - 执行中与成功后默认保持单行折叠，消除列表频繁抖动和 JSON 刷屏；
- * - 失败时自动展开便于排查报错；
- * - 对重打包/签名/补丁类工具成功完成后内联提供「立即导出 APK」快捷动作。
+ * Material 3 紧凑型大圆角无边框工具卡片：
+ * - 柔和色块底衬图标 + 粗体动作标题 + 常规副标题/输出摘要；
+ * - 无传统细边框，使用暖灰与主题色块区分层级；
+ * - 执行中及完成后默认折叠，失败自动展开，支持重打包后内联快捷导出。
  */
 @Composable
 fun ToolCard(
@@ -82,7 +78,6 @@ fun ToolCard(
     var copied by remember(item.id) { mutableStateOf(false) }
     val clipboard = LocalClipboardManager.current
 
-    // 仅在执行失败时自动展开报错，执行中及成功完成时保持单行紧凑展示
     LaunchedEffect(item.streaming, item.toolSuccess) {
         if (!item.streaming && !item.toolSuccess) {
             expanded = true
@@ -99,13 +94,27 @@ fun ToolCard(
     val toolName = item.toolName ?: "tool"
     val humanTitle = remember(toolName) { KeepAliveService.humanReadableTool(toolName) }
     val isSuccess = item.toolSuccess
-    val accent = when {
-        item.streaming -> MaterialTheme.colorScheme.primary
-        isSuccess -> Color(0xFF10B981)
-        else -> MaterialTheme.colorScheme.error
+
+    val statusContainerColor: Color
+    val statusContentColor: Color
+    val statusText: String
+    when {
+        item.streaming -> {
+            statusContainerColor = MaterialTheme.colorScheme.primaryContainer
+            statusContentColor = MaterialTheme.colorScheme.onPrimaryContainer
+            statusText = "执行中"
+        }
+        isSuccess -> {
+            statusContainerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+            statusContentColor = MaterialTheme.colorScheme.primary
+            statusText = "已完成"
+        }
+        else -> {
+            statusContainerColor = MaterialTheme.colorScheme.errorContainer
+            statusContentColor = MaterialTheme.colorScheme.onErrorContainer
+            statusText = "失败"
+        }
     }
-    val cardBg = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-    val borderColor = if (item.streaming) accent.copy(alpha = 0.45f) else accent.copy(alpha = 0.25f)
 
     val previewLine = remember(item.toolResult) {
         item.toolResult?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trim().orEmpty()
@@ -114,78 +123,68 @@ fun ToolCard(
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
-            .border(1.dp, borderColor, RoundedCornerShape(12.dp))
+            .clip(RoundedCornerShape(22.dp))
             .clickable { expanded = !expanded },
-        color = cardBg,
-        tonalElevation = 1.dp
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(22.dp)
     ) {
-        Column(Modifier.padding(horizontal = 12.dp, vertical = 9.dp)) {
+        Column(Modifier.padding(horizontal = 14.dp, vertical = 12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                if (item.streaming) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(14.dp),
-                        strokeWidth = 2.dp,
-                        color = accent
-                    )
-                } else {
-                    Box(
-                        modifier = Modifier
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(accent)
-                    )
+                // M3 左侧柔和色块底衬图标容器
+                Box(
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(statusContainerColor),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (item.streaming) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(18.dp),
+                            strokeWidth = 2.dp,
+                            color = statusContentColor
+                        )
+                    } else {
+                        Icon(
+                            imageVector = if (isSuccess) Icons.Default.CheckCircle else Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = statusContentColor,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
 
-                Spacer(Modifier.width(8.dp))
+                Spacer(Modifier.width(12.dp))
 
-                Text(
-                    text = humanTitle,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 13.sp,
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-
-                Spacer(Modifier.width(6.dp))
-
-                Surface(
-                    color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-                    shape = RoundedCornerShape(4.dp)
-                ) {
+                Column(Modifier.weight(1f)) {
                     Text(
-                        text = toolName,
-                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp),
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
+                        text = humanTitle,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = if (!expanded && !item.streaming && previewLine.isNotEmpty()) previewLine else toolName,
+                        fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                 }
 
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(8.dp))
 
-                Surface(
-                    color = accent.copy(alpha = 0.14f),
-                    shape = RoundedCornerShape(4.dp)
-                ) {
-                    Text(
-                        text = when {
-                            item.streaming -> "执行中"
-                            isSuccess -> "成功"
-                            else -> "失败"
-                        },
-                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = accent
-                    )
-                }
+                TechBadge(
+                    text = statusText,
+                    containerColor = statusContainerColor,
+                    contentColor = statusContentColor
+                )
 
-                Spacer(Modifier.weight(0.01f).widthIn(min = 4.dp))
+                Spacer(Modifier.width(4.dp))
+
                 Icon(
                     imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                     contentDescription = null,
@@ -194,119 +193,111 @@ fun ToolCard(
                 )
             }
 
-            // 折叠态单行结果摘要，无需展开即可看到核心输出
-            if (!expanded && !item.streaming && previewLine.isNotEmpty()) {
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    text = previewLine,
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-            }
-
             AnimatedVisibility(visible = expanded) {
-                Column(Modifier.padding(top = 8.dp)) {
+                Column(
+                    modifier = Modifier.padding(top = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     item.toolArgs?.takeIf { it.isNotBlank() }?.let { args ->
-                        Text(
-                            text = "调用参数 · ARGS",
-                            fontSize = 10.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
-                        )
-                        Surface(
-                            color = MaterialTheme.colorScheme.background.copy(alpha = 0.85f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                        ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = args,
-                                fontFamily = FontFamily.Monospace,
+                                text = "调用参数 · $toolName",
                                 fontSize = 11.sp,
-                                lineHeight = 15.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier
-                                    .padding(8.dp)
-                                    .heightIn(max = 150.dp)
-                                    .verticalScroll(rememberScrollState())
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.primary
                             )
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = args,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier
+                                        .padding(10.dp)
+                                        .heightIn(max = 150.dp)
+                                        .verticalScroll(rememberScrollState())
+                                )
+                            }
                         }
                     }
 
                     item.toolResult?.takeIf { it.isNotBlank() }?.let { res ->
-                        Spacer(Modifier.height(4.dp))
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Text(
-                                text = "输出结果 · STDOUT",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                fontFamily = FontFamily.Monospace,
-                                color = accent.copy(alpha = 0.9f)
-                            )
-                            Spacer(Modifier.weight(1f))
-                            Text(
-                                text = if (copied) "✓ 已复制" else "复制结果",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.SemiBold,
-                                color = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(4.dp))
-                                    .clickable {
-                                        clipboard.setText(AnnotatedString(res))
-                                        copied = true
-                                    }
-                                    .padding(horizontal = 6.dp, vertical = 2.dp)
-                            )
-                        }
-                        Surface(
-                            color = MaterialTheme.colorScheme.background.copy(alpha = 0.85f),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = res,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                lineHeight = 15.sp,
-                                color = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier
-                                    .padding(8.dp)
-                                    .heightIn(max = 220.dp)
-                                    .verticalScroll(rememberScrollState())
-                            )
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = "输出结果",
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    color = statusContentColor
+                                )
+                                Spacer(Modifier.weight(1f))
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .clickable {
+                                            clipboard.setText(AnnotatedString(res))
+                                            copied = true
+                                        }
+                                ) {
+                                    Text(
+                                        text = if (copied) "✓ 已复制" else "复制结果",
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.Medium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
+                                    )
+                                }
+                            }
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(14.dp),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(
+                                    text = res,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    lineHeight = 16.sp,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier
+                                        .padding(10.dp)
+                                        .heightIn(max = 220.dp)
+                                        .verticalScroll(rememberScrollState())
+                                )
+                            }
                         }
                     }
                 }
             }
 
-            // 当补丁/签名/重打包类工具成功执行后，提供内联「立即导出 APK」闭环按钮
             if (!item.streaming && isSuccess && onQuickExport != null && toolName in EXPORT_SUGGEST_TOOLS) {
-                Spacer(Modifier.height(6.dp))
+                Spacer(Modifier.height(10.dp))
                 FilledTonalButton(
                     onClick = onQuickExport,
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(8.dp),
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    shape = RoundedCornerShape(50),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
                 ) {
                     Icon(Icons.Default.FileDownload, contentDescription = null, modifier = Modifier.size(16.dp))
                     Spacer(Modifier.width(6.dp))
-                    Text("立即导出重打包 APK", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                    Text("立即导出重打包 APK", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
     }
 }
 
-/** 敏感操作权限确认弹窗（正向主按钮引导，支持一键切为快速模式） */
+/** Material 3 敏感操作权限确认弹窗（无边框 tonal 层级，正向确认按钮） */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun PermissionDialog(
@@ -317,7 +308,6 @@ fun PermissionDialog(
     val s = LocalAppStrings.current
     val call = req.call
     val humanTitle = remember(call.name) { KeepAliveService.humanReadableTool(call.name) }
-    // 按 call.id 重置一次性处理标记，连续多个确认弹窗时按钮不会静默失效
     var handled by remember(req.call.id) { mutableStateOf(false) }
     var showFullArgs by remember(req.call.id) { mutableStateOf(false) }
 
@@ -328,21 +318,31 @@ fun PermissionDialog(
         }
     }
 
-    val (badgeText, badgeColor) = when (req.riskLevel) {
-        ToolRiskLevel.DANGER -> "高危 DANGER" to Color(0xFFEF4444)
-        ToolRiskLevel.CAUTION -> "谨慎 CAUTION" to Color(0xFFF59E0B)
-        ToolRiskLevel.SAFE -> "常规 SAFE" to MaterialTheme.colorScheme.onSurfaceVariant
+    val (badgeText, badgeBg, badgeFg) = when (req.riskLevel) {
+        ToolRiskLevel.DANGER -> Triple("高危 DANGER", MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer)
+        ToolRiskLevel.CAUTION -> Triple("谨慎 CAUTION", MaterialTheme.colorScheme.primaryContainer, MaterialTheme.colorScheme.onPrimaryContainer)
+        ToolRiskLevel.SAFE -> Triple("常规 SAFE", MaterialTheme.colorScheme.surfaceVariant, MaterialTheme.colorScheme.onSurfaceVariant)
     }
 
     AlertDialog(
         onDismissRequest = { onAction(false) },
+        shape = RoundedCornerShape(28.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
         icon = {
-            Icon(
-                Icons.Default.Security,
-                contentDescription = null,
-                tint = badgeColor,
-                modifier = Modifier.size(32.dp)
-            )
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(RoundedCornerShape(15.dp))
+                    .background(badgeBg),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.Security,
+                    contentDescription = null,
+                    tint = badgeFg,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
         },
         title = {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -360,28 +360,16 @@ fun PermissionDialog(
             }
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Surface(
-                        color = badgeColor.copy(alpha = 0.16f),
-                        shape = RoundedCornerShape(4.dp),
-                        border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.5f))
-                    ) {
-                        Text(
-                            badgeText,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = badgeColor
-                        )
-                    }
+                    TechBadge(text = badgeText, containerColor = badgeBg, contentColor = badgeFg)
                     Spacer(Modifier.width(8.dp))
                     Text(
                         call.name,
                         fontSize = 13.sp,
                         fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.SemiBold
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
 
@@ -393,14 +381,13 @@ fun PermissionDialog(
 
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
-                    shape = RoundedCornerShape(8.dp),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(Modifier.padding(10.dp)) {
+                    Column(Modifier.padding(12.dp)) {
                         Text(
                             "操作摘要",
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
                             color = MaterialTheme.colorScheme.primary
                         )
@@ -414,18 +401,16 @@ fun PermissionDialog(
                 }
 
                 Surface(
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                    shape = RoundedCornerShape(8.dp),
-                    border = BorderStroke(1.dp, badgeColor.copy(alpha = 0.3f)),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f),
+                    shape = RoundedCornerShape(16.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(Modifier.padding(10.dp)) {
+                    Column(Modifier.padding(12.dp)) {
                         Text(
-                            "PARAMS · ${call.name}",
-                            fontSize = 10.sp,
-                            fontFamily = FontFamily.Monospace,
+                            "调用参数 · ${call.name}",
+                            fontSize = 11.sp,
                             fontWeight = FontWeight.Bold,
-                            color = badgeColor
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(4.dp))
                         Text(
@@ -450,7 +435,7 @@ fun PermissionDialog(
                 Text(
                     s.toolAuthWarn,
                     fontSize = 11.sp,
-                    color = Color(0xFFF59E0B)
+                    color = MaterialTheme.colorScheme.primary
                 )
             }
         },
@@ -466,13 +451,15 @@ fun PermissionDialog(
                                 handled = true
                                 onAllowAndSwitchFast()
                             }
-                        }
+                        },
+                        shape = RoundedCornerShape(50)
                     ) {
                         Text(s.allowAndSwitchFast, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                     }
                 }
                 Button(
                     onClick = { onAction(true) },
+                    shape = RoundedCornerShape(50),
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                 ) {
                     Text(s.allowExecute, fontWeight = FontWeight.Bold)
@@ -480,7 +467,10 @@ fun PermissionDialog(
             }
         },
         dismissButton = {
-            OutlinedButton(onClick = { onAction(false) }) {
+            TextButton(
+                onClick = { onAction(false) },
+                shape = RoundedCornerShape(50)
+            ) {
                 Text(s.reject)
             }
         }

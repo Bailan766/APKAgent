@@ -849,7 +849,7 @@ fun SettingsScreen(
             }
 
             Text(s.apiKeyEncrypted, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(16.dp))
+            Spacer(Modifier.height(92.dp))
         }
     }
 }

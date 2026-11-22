@@ -7,22 +7,39 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
 import androidx.compose.foundation.Image
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AutoAwesome
+import androidx.compose.material.icons.filled.Code
+import androidx.compose.material.icons.filled.Dashboard
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
-import com.apkagent.ui.APKAgentTheme
-import com.apkagent.ui.ThemeState
 import com.apkagent.i18n.LocalAppStrings
 import com.apkagent.i18n.LocaleManager
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.collectAsState
+import com.apkagent.ui.APKAgentTheme
+import com.apkagent.ui.ThemeState
 
 private const val START_DESTINATION = "projects"
 
@@ -35,8 +52,6 @@ class MainActivity : ComponentActivity() {
             val lang by LocaleManager.language.collectAsState()
             val strings = remember(lang) { LocaleManager.strings }
             CompositionLocalProvider(LocalAppStrings provides strings) {
-                // 直接在组合作用域读取 currentTheme（mutableStateOf）：设置页改动后会触发重组刷新配色，
-                // 不再用 remember 保存一次性快照。
                 APKAgentTheme(theme = ThemeState.currentTheme) {
                     Box(modifier = Modifier.fillMaxSize()) {
                         ThemeState.wallpaperBitmap?.let { bmp ->
@@ -100,76 +115,158 @@ private fun AppEntry() {
 @Composable
 private fun AppNav(onOpenTerminal: () -> Unit = {}) {
     val nav = rememberNavController()
+    val navBackStackEntry by nav.currentBackStackEntryAsState()
+    val currentRoute = navBackStackEntry?.destination?.route
+    val topRoutes = remember { setOf("projects", "chat", "editor", "settings") }
+
+    val density = LocalDensity.current
+    val imeVisible = WindowInsets.ime.getBottom(density) > 0
 
     // 顶层目的地：singleTop + popUpTo(startDestination){saveState} + restoreState，
-    // 避免 projects <-> chat 反复 navigate 堆积重复实例，并保留各自返回栈状态。
+    // 避免反复切换悬浮底栏产生重复实例。
     val navigateTop: (String) -> Unit = { route ->
-        nav.navigate(route) {
-            launchSingleTop = true
-            popUpTo(START_DESTINATION) { saveState = true }
-            restoreState = true
+        if (route != currentRoute) {
+            nav.navigate(route) {
+                launchSingleTop = true
+                popUpTo(START_DESTINATION) { saveState = true }
+                restoreState = true
+            }
         }
     }
-    // 子页面仅做 singleTop 防抖，返回统一 popBackStack()。
     val navigateDetail: (String) -> Unit = { route ->
         nav.navigate(route) { launchSingleTop = true }
     }
 
-    NavHost(
-        navController = nav,
-        startDestination = START_DESTINATION,
-        enterTransition = {
-            slideInHorizontally(
-                initialOffsetX = { fullWidth -> fullWidth },
-                animationSpec = tween(350, easing = FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(250))
-        },
-        exitTransition = {
-            slideOutHorizontally(
-                targetOffsetX = { fullWidth -> -fullWidth / 3 },
-                animationSpec = tween(350, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(200))
-        },
-        popEnterTransition = {
-            slideInHorizontally(
-                initialOffsetX = { fullWidth -> -fullWidth / 3 },
-                animationSpec = tween(350, easing = FastOutSlowInEasing)
-            ) + fadeIn(animationSpec = tween(250))
-        },
-        popExitTransition = {
-            slideOutHorizontally(
-                targetOffsetX = { fullWidth -> fullWidth },
-                animationSpec = tween(350, easing = FastOutSlowInEasing)
-            ) + fadeOut(animationSpec = tween(200))
+    Box(modifier = Modifier.fillMaxSize()) {
+        NavHost(
+            navController = nav,
+            startDestination = START_DESTINATION,
+            enterTransition = {
+                fadeIn(animationSpec = tween(220))
+            },
+            exitTransition = {
+                fadeOut(animationSpec = tween(180))
+            },
+            popEnterTransition = {
+                fadeIn(animationSpec = tween(220))
+            },
+            popExitTransition = {
+                fadeOut(animationSpec = tween(180))
+            }
+        ) {
+            composable("projects") {
+                com.apkagent.ui.ProjectScreen(
+                    onOpenProjectChat = { navigateTop("chat") },
+                    onOpenProjectEditor = { navigateTop("editor") },
+                    onOpenSettings = { navigateTop("settings") }
+                )
+            }
+            composable("chat") {
+                com.apkagent.ui.ChatScreen(
+                    onOpenSettings = { navigateTop("settings") },
+                    onOpenEditor = { navigateTop("editor") },
+                    onOpenProjects = { navigateTop("projects") }
+                )
+            }
+            composable("settings") {
+                com.apkagent.ui.SettingsScreen(
+                    onBack = { nav.popBackStack() },
+                    onOpenAbout = { navigateDetail("about") },
+                    onOpenTerminal = onOpenTerminal
+                )
+            }
+            composable("editor") {
+                val ctx = LocalContext.current
+                val app = ctx.applicationContext as? ApkAgentApp
+                if (app != null) com.apkagent.ui.EditorScreen(rootDir = app.currentWorkspace(), onBack = { navigateTop("projects") })
+            }
+            composable("about") { com.apkagent.ui.AboutScreen(onBack = { nav.popBackStack() }) }
         }
+
+        // Material 3 悬浮胶囊状底部导航栏（软键盘弹起时自动避让隐藏）
+        AnimatedVisibility(
+            visible = currentRoute in topRoutes && !imeVisible,
+            enter = fadeIn(tween(200)) + slideInVertically(tween(220)) { it / 2 },
+            exit = fadeOut(tween(150)) + slideOutVertically(tween(180)) { it / 2 },
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 12.dp)
+        ) {
+            FloatingCapsuleNavBar(
+                currentRoute = currentRoute,
+                onNavigate = navigateTop
+            )
+        }
+    }
+}
+
+private data class NavTabItem(
+    val route: String,
+    val label: String,
+    val icon: ImageVector
+)
+
+@Composable
+private fun FloatingCapsuleNavBar(
+    currentRoute: String?,
+    onNavigate: (String) -> Unit
+) {
+    val tabs = remember {
+        listOf(
+            NavTabItem("projects", "工作台", Icons.Default.Dashboard),
+            NavTabItem("chat", "AI 助手", Icons.Default.AutoAwesome),
+            NavTabItem("editor", "源码", Icons.Default.Code),
+            NavTabItem("settings", "设置", Icons.Default.Settings)
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 6.dp,
+        shadowElevation = 6.dp
     ) {
-        composable("projects") {
-            com.apkagent.ui.ProjectScreen(
-                onOpenProjectChat = { navigateTop("chat") },
-                onOpenProjectEditor = { navigateDetail("editor") },
-                onOpenSettings = { navigateDetail("settings") }
-            )
+        Row(
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            tabs.forEach { tab ->
+                val selected = currentRoute == tab.route
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = if (selected) MaterialTheme.colorScheme.primary else Color.Transparent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(50))
+                        .clickable { onNavigate(tab.route) }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(
+                            horizontal = if (selected) 16.dp else 13.dp,
+                            vertical = 9.dp
+                        ),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Icon(
+                            imageVector = tab.icon,
+                            contentDescription = tab.label,
+                            tint = if (selected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(19.dp)
+                        )
+                        if (selected) {
+                            Text(
+                                text = tab.label,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onPrimary,
+                                maxLines = 1
+                            )
+                        }
+                    }
+                }
+            }
         }
-        composable("chat") {
-            com.apkagent.ui.ChatScreen(
-                onOpenSettings = { navigateDetail("settings") },
-                onOpenEditor = { navigateDetail("editor") },
-                onOpenProjects = { navigateTop("projects") }
-            )
-        }
-        composable("settings") {
-            com.apkagent.ui.SettingsScreen(
-                onBack = { nav.popBackStack() },
-                onOpenAbout = { navigateDetail("about") },
-                onOpenTerminal = onOpenTerminal
-            )
-        }
-        composable("editor") {
-            val ctx = LocalContext.current
-            val app = ctx.applicationContext as? ApkAgentApp
-            if (app != null) com.apkagent.ui.EditorScreen(rootDir = app.currentWorkspace(), onBack = { nav.popBackStack() })
-        }
-        composable("about") { com.apkagent.ui.AboutScreen(onBack = { nav.popBackStack() }) }
-        // terminal 由 AppEntry 的 showTerminal 分支承载，NavHost 内不再保留不可达的死路由。
     }
 }
