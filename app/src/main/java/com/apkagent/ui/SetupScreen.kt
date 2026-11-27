@@ -1,8 +1,5 @@
 package com.apkagent.ui
 
-import com.apkagent.i18n.LocalAppStrings
-import com.apkagent.i18n.LocaleManager
-
 import android.Manifest
 import android.content.Intent
 import android.net.Uri
@@ -11,7 +8,6 @@ import android.os.Environment
 import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -27,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -35,15 +30,13 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.apkagent.ApkAgentApp
+import com.apkagent.i18n.LocalAppStrings
+import com.apkagent.i18n.LocaleManager
 import com.apkagent.installer.InternalInstaller
-import com.apkagent.runtime.RuntimeManager
-import com.apkagent.util.Logger
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
-import java.io.File
 
 enum class InstallStatus {
     IDLE, CHECKING, NOT_INSTALLED, INSTALLING, INSTALLED, FAILED
@@ -76,25 +69,21 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
     var nodeVersion by remember { mutableStateOf("") }
     var isInstalling by remember { mutableStateOf(false) }
 
-    // 存储权限请求回调
     val storagePermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
         storageGranted = granted || hasStoragePermission(context)
     }
 
-    // Android 13+ 通知权限请求回调
     val notificationPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { _ -> /* 结果不影响流程，用户可后续在设置中开启 */ }
+    ) { _ -> }
 
-    // 从设置页返回时重新检查权限状态（ON_RESUME 触发，非仅首次组合）
     val lifecycleOwner = LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 storageGranted = hasStoragePermission(context)
-                // Android 13+ 申请通知权限（前台服务通知需要）
                 if (Build.VERSION.SDK_INT >= 33) {
                     val notifGranted = ContextCompat.checkSelfPermission(
                         context, Manifest.permission.POST_NOTIFICATIONS
@@ -109,7 +98,6 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    // 启动时自动检测
     LaunchedEffect(Unit) {
         delay(300)
         storageGranted = hasStoragePermission(context)
@@ -148,60 +136,76 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .verticalScroll(rememberScrollState())
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+                .padding(horizontal = 20.dp, vertical = 16.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(8.dp))
 
-            // ── Logo ──
+            // ── M3 玫瑰暖粉渐变引导主卡 ──
             Box(
                 modifier = Modifier
-                    .size(88.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(28.dp))
+                    .background(M3RoseGradient)
             ) {
-                Icon(
-                    imageVector = Icons.Default.Security,
-                    contentDescription = null,
-                    modifier = Modifier.size(48.dp),
-                    tint = MaterialTheme.colorScheme.primary
-                )
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(24.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(68.dp)
+                            .clip(RoundedCornerShape(20.dp))
+                            .background(M3RoseHeroTitleColor.copy(alpha = 0.14f)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Security,
+                            contentDescription = null,
+                            modifier = Modifier.size(36.dp),
+                            tint = M3RoseHeroTitleColor
+                        )
+                    }
+
+                    Text(
+                        text = "APKAgent",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        color = M3RoseHeroTitleColor
+                    )
+
+                    Text(
+                        text = s.setupTitle,
+                        fontSize = 13.sp,
+                        color = M3RoseHeroBodyColor,
+                        textAlign = TextAlign.Center
+                    )
+
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        color = M3RoseHeroTitleColor,
+                        trackColor = M3RoseHeroTitleColor.copy(alpha = 0.18f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .clip(CircleShape)
+                    )
+                }
             }
 
-            Spacer(modifier = Modifier.height(16.dp))
+            Spacer(modifier = Modifier.height(4.dp))
 
-            Text(
-                text = "APKAgent",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Text(
-                text = s.setupTitle,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp)
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            LinearProgressIndicator(
-                progress = { progress },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(6.dp)
-                    .clip(RoundedCornerShape(3.dp)),
-            )
-
-            Spacer(modifier = Modifier.height(24.dp))
-
-            // ── 存储权限（第一优先级）──
             StoragePermissionCard(
                 granted = storageGranted,
                 onGrant = {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                        // Android 11+ 需要去设置页开启「所有文件访问」
                         try {
                             context.startActivity(Intent(Settings.ACTION_MANAGE_ALL_FILES_ACCESS_PERMISSION))
                         } catch (_: Exception) {
@@ -210,15 +214,11 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                             context.startActivity(intent)
                         }
                     } else {
-                        // Android 10 及以下直接请求运行时权限
                         storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
                     }
                 }
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // ── Python ──
             EnvCard(
                 title = s.pythonRuntime,
                 subtitle = if (pythonVersion.isNotEmpty()) "v$pythonVersion" else s.pythonSubtitleRequired,
@@ -253,9 +253,6 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                 }
             )
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // ── Node.js ──
             EnvCard(
                 title = s.nodeRuntime,
                 subtitle = if (nodeVersion.isNotEmpty()) nodeVersion else s.nodeSubtitleOptional,
@@ -288,60 +285,48 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
                 }
             )
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            // 状态消息
-            Card(
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant
-                ),
-                shape = RoundedCornerShape(12.dp)
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(20.dp)
             ) {
                 Text(
                     text = statusMessage,
-                    style = MaterialTheme.typography.bodyMedium,
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth().padding(14.dp)
                 )
             }
 
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(6.dp))
 
-            // 终端按钮
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = onOpenTerminal,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(48.dp),
-                shape = RoundedCornerShape(14.dp)
+                modifier = Modifier.fillMaxWidth().height(48.dp),
+                shape = RoundedCornerShape(50)
             ) {
                 Icon(Icons.Default.Terminal, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(s.openBuiltinTerminal, fontSize = 14.sp)
+                Spacer(Modifier.width(8.dp))
+                Text(s.openBuiltinTerminal, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
             }
 
-            Spacer(modifier = Modifier.height(12.dp))
-
-            // 完成按钮
             Button(
                 onClick = onSetupComplete,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(52.dp),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
                 enabled = pythonStatus == InstallStatus.INSTALLED,
-                shape = RoundedCornerShape(14.dp)
+                shape = RoundedCornerShape(50)
             ) {
                 Icon(Icons.Default.Check, contentDescription = null)
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(s.startUsing, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.width(8.dp))
+                Text(s.startUsing, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             }
 
-            TextButton(onClick = onSetupComplete, modifier = Modifier.padding(top = 4.dp)) {
+            TextButton(onClick = onSetupComplete, shape = RoundedCornerShape(50)) {
                 Text(s.configureLater, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(16.dp))
         }
     }
 }
@@ -349,15 +334,16 @@ fun SetupScreen(onSetupComplete: () -> Unit, onOpenTerminal: () -> Unit = {}) {
 @Composable
 private fun StoragePermissionCard(granted: Boolean, onGrant: () -> Unit) {
     val s = LocalAppStrings.current
-    val bgColor = if (granted)
-        MaterialTheme.colorScheme.primaryContainer
-    else
-        MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
+    val bgColor = if (granted) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+    } else {
+        MaterialTheme.colorScheme.surface
+    }
 
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = bgColor)
+        shape = RoundedCornerShape(24.dp),
+        color = bgColor
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -366,31 +352,34 @@ private fun StoragePermissionCard(granted: Boolean, onGrant: () -> Unit) {
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(Icons.Default.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                Icon(
+                    Icons.Default.Folder,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(22.dp)
+                )
             }
 
             Spacer(modifier = Modifier.width(14.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(s.storagePermission, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(s.storagePermission, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(4.dp))
-                            .background(MaterialTheme.colorScheme.error.copy(alpha = 0.15f))
-                            .padding(horizontal = 5.dp, vertical = 1.dp)
-                    ) {
-                        Text(s.required, fontSize = 9.sp, color = MaterialTheme.colorScheme.error)
-                    }
+                    TechBadge(
+                        text = s.required,
+                        containerColor = MaterialTheme.colorScheme.errorContainer,
+                        contentColor = MaterialTheme.colorScheme.onErrorContainer
+                    )
                 }
+                Spacer(Modifier.height(2.dp))
                 Text(
                     if (granted) s.storageGranted else s.storageDenied,
-                    style = MaterialTheme.typography.bodySmall,
+                    fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
@@ -400,9 +389,10 @@ private fun StoragePermissionCard(granted: Boolean, onGrant: () -> Unit) {
             } else {
                 FilledTonalButton(
                     onClick = onGrant,
+                    shape = RoundedCornerShape(50),
                     contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
-                    Text(s.authorize, fontSize = 13.sp)
+                    Text(s.authorize, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -421,15 +411,15 @@ private fun EnvCard(
 ) {
     val s = LocalAppStrings.current
     val bgColor = when (status) {
-        InstallStatus.INSTALLED -> MaterialTheme.colorScheme.primaryContainer
-        InstallStatus.FAILED -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.5f)
-        else -> MaterialTheme.colorScheme.surfaceVariant
+        InstallStatus.INSTALLED -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+        InstallStatus.FAILED -> MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.6f)
+        else -> MaterialTheme.colorScheme.surface
     }
 
-    Card(
+    Surface(
         modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        colors = CardDefaults.cardColors(containerColor = bgColor)
+        shape = RoundedCornerShape(24.dp),
+        color = bgColor
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
@@ -438,31 +428,34 @@ private fun EnvCard(
             Box(
                 modifier = Modifier
                     .size(44.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.primaryContainer),
                 contentAlignment = Alignment.Center
             ) {
-                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                Icon(
+                    icon,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(22.dp)
+                )
             }
 
             Spacer(modifier = Modifier.width(14.dp))
 
             Column(modifier = Modifier.weight(1f)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                    Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                     if (required) {
                         Spacer(modifier = Modifier.width(6.dp))
-                        Box(
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(MaterialTheme.colorScheme.error.copy(alpha = 0.15f))
-                                .padding(horizontal = 5.dp, vertical = 1.dp)
-                        ) {
-                            Text(s.required, fontSize = 9.sp, color = MaterialTheme.colorScheme.error)
-                        }
+                        TechBadge(
+                            text = s.required,
+                            containerColor = MaterialTheme.colorScheme.errorContainer,
+                            contentColor = MaterialTheme.colorScheme.onErrorContainer
+                        )
                     }
                 }
-                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
 
             when (status) {
@@ -473,9 +466,10 @@ private fun EnvCard(
                     FilledTonalButton(
                         onClick = onAction,
                         enabled = !isInstalling,
+                        shape = RoundedCornerShape(50),
                         contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                     ) {
-                        Text(s.oneClickInstall, fontSize = 13.sp)
+                        Text(s.oneClickInstall, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
                 }
                 InstallStatus.INSTALLED -> {

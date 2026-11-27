@@ -106,6 +106,14 @@ class ApkAgentApp : Application() {
         Logger.i("App", "APKAgent v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) 启动 — SDK=${android.os.Build.VERSION.SDK_INT}")
         settingsStore = SettingsStore(this)
         LocaleManager.setLanguage(settingsStore.getLanguage())
+        settingsStore.getThemeName()?.let { name ->
+            runCatching { com.apkagent.ui.AppTheme.valueOf(name) }.getOrNull()?.let {
+                com.apkagent.ui.ThemeState.currentTheme = it
+            }
+        }
+        settingsStore.getWallpaperPath()?.takeIf { it.isNotBlank() && File(it).exists() }?.let { path ->
+            com.apkagent.ui.ThemeState.loadWallpaper(path)
+        }
         projectStore = ProjectStore(this, workspace)
         runtimeManager = RuntimeManager(this)
         PythonRunner.init(this)

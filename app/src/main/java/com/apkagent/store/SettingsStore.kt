@@ -270,6 +270,30 @@ class SettingsStore(private val context: Context) {
         save(cur.copy(executionMode = mode.id))
     }
 
+    // ──── Theme & Wallpaper / 主题与壁纸持久化 ────
+
+    fun getThemeName(): String? = readStringSafe(KEY_THEME)
+
+    fun setThemeName(name: String) {
+        try { fallbackPrefs.edit().putString(KEY_THEME, name).apply() } catch (_: Throwable) {}
+        try { getPrefs().edit().putString(KEY_THEME, name).apply() } catch (_: Throwable) {}
+    }
+
+    fun getWallpaperPath(): String? = readStringSafe(KEY_WALLPAPER_PATH)
+
+    fun setWallpaperPath(path: String?) {
+        try {
+            val e = fallbackPrefs.edit()
+            if (path.isNullOrBlank()) e.remove(KEY_WALLPAPER_PATH) else e.putString(KEY_WALLPAPER_PATH, path)
+            e.apply()
+        } catch (_: Throwable) {}
+        try {
+            val e = getPrefs().edit()
+            if (path.isNullOrBlank()) e.remove(KEY_WALLPAPER_PATH) else e.putString(KEY_WALLPAPER_PATH, path)
+            e.apply()
+        } catch (_: Throwable) {}
+    }
+
     companion object {
         private const val KEY_PROVIDER = "provider"
         private const val KEY_BASE = "base_url"
@@ -283,5 +307,7 @@ class SettingsStore(private val context: Context) {
         private const val KEY_MAX_ROUNDS = "max_rounds"
         private const val KEY_LANGUAGE = "app_language"
         private const val KEY_EXECUTION_MODE = "execution_mode"
+        private const val KEY_THEME = "app_theme"
+        private const val KEY_WALLPAPER_PATH = "wallpaper_path"
     }
 }

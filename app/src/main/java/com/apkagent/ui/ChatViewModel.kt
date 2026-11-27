@@ -125,7 +125,7 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     private val contentBuffer = StringBuilder()
     private val reasoningBuffer = StringBuilder()
     private var lastUpdateTime = 0L
-    private val updateIntervalMs = 40L // 40ms 平滑节流，兼顾高帧率与极低延迟
+    private val updateIntervalMs = 65L // 65ms 节流窗口，兼顾流畅吐字与极低 Compose 重组开销
 
     val config: StateFlow<AgentConfig> get() = agentApp.settingsStore.config
 
@@ -491,6 +491,15 @@ class ChatViewModel(app: Application) : AndroidViewModel(app), AgentCallbacks {
     fun getLogPath(): String? = Logger.getLogPath()
 
     // ── Callbacks ──
+    override fun onRoundStart(round: Int) {
+        KeepAliveService.roundCount = round
+        KeepAliveManager.updateTask(
+            taskName = "第 $round 轮分析思考中...",
+            apkName = KeepAliveService.currentApkName,
+            status = if (executionMode.value == ExecutionMode.FAST) "⚡ 快速执行" else "🛡️ 安全分析"
+        )
+    }
+
     override fun onAssistantReasoningDelta(delta: String) {
         reasoningBuffer.append(delta)
         val now = System.currentTimeMillis()

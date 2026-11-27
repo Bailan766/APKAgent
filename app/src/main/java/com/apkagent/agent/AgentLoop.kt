@@ -14,6 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import java.io.File
 
 interface AgentCallbacks {
+    fun onRoundStart(round: Int) {}
     fun onAssistantReasoningDelta(delta: String) {}
     fun onAssistantContentDelta(delta: String)
     fun onAssistantTurnComplete(content: String, toolCalls: List<PendingToolCall>, reasoning: String? = null)
@@ -115,6 +116,7 @@ class AgentLoop(
             for (round in 0 until maxRounds) {
                 currentCoroutineContext().ensureActive()
                 AuditLogger.nextRound()
+                callbacks.onRoundStart(round + 1)
                 trimMessages()
 
                 val toolDefs = registry.toToolDefs().ifEmpty { null }

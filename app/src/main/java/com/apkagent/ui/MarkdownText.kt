@@ -68,7 +68,14 @@ fun MarkdownText(
         blocks.forEach { block ->
             when (block) {
                 is MdBlock.Paragraph -> {
-                    val annotated = remember(block.rawText) {
+                    val annotated = remember(
+                        block.rawText,
+                        textColor,
+                        primaryColor,
+                        mutedColor,
+                        inlineCodeBg,
+                        inlineCodeColor
+                    ) {
                         compileInlineStyles(
                             text = block.rawText,
                             textColor = textColor,
@@ -88,47 +95,51 @@ fun MarkdownText(
 
                 is MdBlock.CodeBlock -> {
                     Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = codeBg,
-                        border = androidx.compose.foundation.BorderStroke(1.dp, outlineColor),
+                        shape = RoundedCornerShape(16.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Column {
-                            // 代码块顶栏（语言 + 复制按钮）
+                            // 代码块顶栏（语言 + 胶囊复制按钮）
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
-                                    .padding(horizontal = 10.dp, vertical = 4.dp),
+                                    .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f))
+                                    .padding(horizontal = 12.dp, vertical = 6.dp),
                                 horizontalArrangement = Arrangement.SpaceBetween,
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = block.language.ifBlank { "TERMINAL" }.uppercase(),
+                                    text = block.language.ifBlank { "CODE" }.uppercase(),
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 10.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = MaterialTheme.colorScheme.primary
                                 )
-                                Row(
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = MaterialTheme.colorScheme.surface,
                                     modifier = Modifier
-                                        .clip(RoundedCornerShape(4.dp))
+                                        .clip(RoundedCornerShape(50))
                                         .clickable {
                                             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                                             cm.setPrimaryClip(ClipData.newPlainText("code", block.code))
                                             Toast.makeText(context, "已复制到剪贴板", Toast.LENGTH_SHORT).show()
                                         }
-                                        .padding(horizontal = 4.dp, vertical = 2.dp),
-                                    verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Icon(
-                                        Icons.Default.ContentCopy,
-                                        contentDescription = "Copy",
-                                        tint = mutedColor,
-                                        modifier = Modifier.size(12.dp)
-                                    )
-                                    Spacer(Modifier.width(4.dp))
-                                    Text("COPY", fontSize = 10.sp, color = mutedColor, fontFamily = FontFamily.Monospace)
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.ContentCopy,
+                                            contentDescription = "Copy",
+                                            tint = primaryColor,
+                                            modifier = Modifier.size(12.dp)
+                                        )
+                                        Spacer(Modifier.width(4.dp))
+                                        Text("复制", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = primaryColor)
+                                    }
                                 }
                             }
 
@@ -137,13 +148,13 @@ fun MarkdownText(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .horizontalScroll(rememberScrollState())
-                                    .padding(10.dp)
+                                    .padding(12.dp)
                             ) {
                                 Text(
                                     text = block.code,
                                     fontFamily = FontFamily.Monospace,
                                     fontSize = 12.sp,
-                                    lineHeight = 16.sp,
+                                    lineHeight = 17.sp,
                                     color = textColor
                                 )
                             }
@@ -155,20 +166,20 @@ fun MarkdownText(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .height(IntrinsicSize.Min)
                             .padding(vertical = 2.dp)
                     ) {
                         Box(
                             modifier = Modifier
                                 .width(3.dp)
-                                .height(IntrinsicSize.Min)
+                                .fillMaxHeight()
                                 .clip(RoundedCornerShape(2.dp))
                                 .background(primaryColor)
                         )
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(10.dp))
                         Text(
                             text = block.text,
                             fontSize = 12.5.sp,
-                            fontFamily = FontFamily.Monospace,
                             lineHeight = 18.sp,
                             color = mutedColor
                         )

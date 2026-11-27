@@ -1,13 +1,14 @@
 package com.apkagent.ui
 
-import com.apkagent.i18n.LocalAppStrings
-
 import android.graphics.Typeface
 import android.view.ViewGroup
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -21,32 +22,30 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.apkagent.i18n.LocalAppStrings
 import com.apkagent.terminal.TerminalSession
-import com.apkagent.util.Logger
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import java.io.File
 
 /**
- * 内置终端界面
+ * 内置终端界面（统一 MD3 暖灰无边框风格 + 胶囊快捷命令栏）
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun TerminalScreen(onBack: () -> Unit) {
     val s = LocalAppStrings.current
-    val scope = rememberCoroutineScope()
     val session = remember { TerminalSession() }
     val output by session.output.collectAsState()
     val isRunning by session.isRunning.collectAsState()
     var command by remember { mutableStateOf("") }
     var history by remember { mutableStateOf(listOf<String>()) }
-    var historyIndex by remember { mutableIntStateOf(-1) }
 
-    // 启动终端
+    val primaryColor = MaterialTheme.colorScheme.primary
+    val onSurfaceColor = MaterialTheme.colorScheme.onSurface
+
     LaunchedEffect(Unit) {
         session.start()
         session.exec("cd /data/data/com.apkagent/files 2>/dev/null || cd /data/data/com.apkagent")
@@ -60,7 +59,6 @@ fun TerminalScreen(onBack: () -> Unit) {
         onDispose { session.stop() }
     }
 
-    // 快捷命令
     val quickCommands = listOf(
         "python3 --version" to "Python",
         "node --version" to "Node",
@@ -70,40 +68,35 @@ fun TerminalScreen(onBack: () -> Unit) {
     )
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(s.builtinTerminal, fontWeight = FontWeight.Bold)
                         Spacer(Modifier.width(8.dp))
-                        Box(
-                            modifier = Modifier
-                                .size(8.dp)
-                                .clip(CircleShape)
-                                .background(if (isRunning) Color(0xFF4CAF50) else Color.Gray)
+                        TechBadge(
+                            text = if (isRunning) "运行中" else "已停止",
+                            containerColor = if (isRunning) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
+                            contentColor = if (isRunning) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, "返回")
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back)
                     }
                 },
                 actions = {
-                    // 清屏
                     IconButton(onClick = { session.clearOutput() }) {
                         Icon(Icons.Default.DeleteSweep, "清屏")
                     }
-                    // 终止
                     IconButton(onClick = { session.stop(); session.start() }) {
                         Icon(Icons.Default.Refresh, "重启")
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = Color(0xFF1A1A1A),
-                    titleContentColor = Color.White,
-                    navigationIconContentColor = Color.White,
-                    actionIconContentColor = Color.White
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         }
@@ -112,37 +105,46 @@ fun TerminalScreen(onBack: () -> Unit) {
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .background(Color(0xFF0D0D0D))
+                .background(MaterialTheme.colorScheme.background)
+                .imePadding()
+                .navigationBarsPadding()
         ) {
-            // 快捷按钮
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF1A1A1A))
-                    .padding(horizontal = 8.dp, vertical = 4.dp),
-                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    .horizontalScroll(rememberScrollState())
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 quickCommands.forEach { (cmd, label) ->
-                    AssistChip(
-                        onClick = {
-                            session.exec(cmd)
-                            history = history + cmd
-                        },
-                        label = { Text(label, fontSize = 10.sp) },
-                        modifier = Modifier.height(28.dp),
-                        colors = AssistChipDefaults.assistChipColors(
-                            containerColor = Color(0xFF2A2A2A),
-                            labelColor = Color(0xFFCCCCCC)
+                    Surface(
+                        shape = RoundedCornerShape(50),
+                        color = MaterialTheme.colorScheme.surfaceVariant,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(50))
+                            .clickable {
+                                session.exec(cmd)
+                                history = history + cmd
+                            }
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
                         )
-                    )
+                    }
                 }
             }
 
-            // 终端输出
-            Box(
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 4.dp)
             ) {
                 AndroidView(
                     factory = { context ->
@@ -154,8 +156,8 @@ fun TerminalScreen(onBack: () -> Unit) {
                             addView(TextView(context).apply {
                                 typeface = Typeface.MONOSPACE
                                 textSize = 12f
-                                setTextColor(Color(0xFF00FF00).toArgb())
-                                setPadding(16, 12, 16, 12)
+                                setTextColor(onSurfaceColor.toArgb())
+                                setPadding(28, 20, 28, 20)
                                 setTextIsSelectable(true)
                                 text = output
                                 tag = "terminal_output"
@@ -173,54 +175,70 @@ fun TerminalScreen(onBack: () -> Unit) {
                 )
             }
 
-            // 输入栏
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(Color(0xFF1A1A1A))
-                    .padding(8.dp),
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    "$",
-                    color = Color(0xFF4CAF50),
-                    fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold,
-                    modifier = Modifier.padding(end = 8.dp)
-                )
-                OutlinedTextField(
-                    value = command,
-                    onValueChange = { command = it },
-                    modifier = Modifier.weight(1f),
-                    placeholder = { Text(s.commandPlaceholder, color = Color.Gray) },
-                    singleLine = true,
-                    textStyle = androidx.compose.ui.text.TextStyle(
-                        color = Color.White,
-                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-                        fontSize = 14.sp
-                    ),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedBorderColor = Color(0xFF4CAF50),
-                        cursorColor = Color(0xFF4CAF50),
-                        unfocusedBorderColor = Color(0xFF333333)
-                    )
-                )
+                Surface(
+                    shape = RoundedCornerShape(26.dp),
+                    color = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "$",
+                            color = primaryColor,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 15.sp
+                        )
+                        TextField(
+                            value = command,
+                            onValueChange = { command = it },
+                            modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text(s.commandPlaceholder, fontSize = 13.sp) },
+                            singleLine = true,
+                            textStyle = LocalTextStyle.current.copy(
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 13.sp
+                            ),
+                            colors = TextFieldDefaults.colors(
+                                focusedContainerColor = Color.Transparent,
+                                unfocusedContainerColor = Color.Transparent,
+                                focusedIndicatorColor = Color.Transparent,
+                                unfocusedIndicatorColor = Color.Transparent
+                            )
+                        )
+                    }
+                }
                 Spacer(Modifier.width(8.dp))
                 IconButton(
                     onClick = {
                         if (command.isNotBlank()) {
                             session.exec(command)
                             history = history + command
-                            historyIndex = -1
                             command = ""
                         }
                     },
-                    enabled = command.isNotBlank() && isRunning
+                    enabled = command.isNotBlank() && isRunning,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (command.isNotBlank() && isRunning) primaryColor
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        )
                 ) {
                     Icon(
                         Icons.AutoMirrored.Filled.Send,
                         "执行",
-                        tint = if (command.isNotBlank()) Color(0xFF4CAF50) else Color.Gray
+                        tint = if (command.isNotBlank() && isRunning) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(19.dp)
                     )
                 }
             }

@@ -20,13 +20,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -35,6 +35,9 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.apkagent.ApkAgentApp
 import com.apkagent.agent.OpenAIClient
 import com.apkagent.i18n.AppLanguage
@@ -42,12 +45,15 @@ import com.apkagent.i18n.LocalAppStrings
 import com.apkagent.service.KeepAliveManager
 import com.apkagent.shizuku.ShizukuManager
 import com.apkagent.store.AgentConfig
-import com.apkagent.store.ExecutionMode
 import com.apkagent.store.AiProvider
+import com.apkagent.store.ExecutionMode
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -82,16 +88,15 @@ fun SettingsScreen(
 
     val selectedProvider = AiProvider.byId(selectedProviderId)
 
-    // 动态模型列表与在线校验状态
     var dynamicModels by remember { mutableStateOf<List<String>>(emptyList()) }
     var isLoadingModels by remember { mutableStateOf(false) }
     var modelFetchError by remember { mutableStateOf<String?>(null) }
     var verifySuccessMsg by remember { mutableStateOf<String?>(null) }
 
     var execMode by remember { mutableStateOf(app.settingsStore.getExecutionMode()) }
+    var saveDebounceJob by remember { mutableStateOf<Job?>(null) }
 
-    // 统一保存函数：对所有字段做规范化兜底并立即持久化
-    fun saveCurrentConfig(
+    fun buildNormalizedConfig(
         pid: String = selectedProviderId,
         rawUrl: String = baseUrl,
         rawKey: String = apiKey,
@@ -99,7 +104,7 @@ fun SettingsScreen(
         temperature: Double = temp,
         extra: String = sysExtra,
         mode: ExecutionMode = execMode
-    ) {
+    ): AgentConfig {
         val provider = AiProvider.byId(pid)
         val cleanKey = OpenAIClient.sanitizeApiKey(rawKey)
         val cleanUrl = OpenAIClient.normalizeBaseUrl(rawUrl).ifBlank {
@@ -110,7 +115,7 @@ fun SettingsScreen(
                 dynamicModels.firstOrNull() ?: provider.models.firstOrNull() ?: "deepseek-chat"
             }
         }
-        val newCfg = cfg.copy(
+        return cfg.copy(
             providerId = pid,
             baseUrl = cleanUrl,
             apiKey = cleanKey,
@@ -119,18 +124,59 @@ fun SettingsScreen(
             systemExtra = extra,
             executionMode = mode.id
         )
-        app.settingsStore.save(newCfg)
-        app.settingsStore.setExecutionMode(mode)
     }
 
-    // 退出页面时强制保存一次，确保左滑返回或点击返回箭头不丢失任何输入
-    val handleBack = {
-        saveCurrentConfig()
+    /** 立即在后台 IO 线程保存配置，避免阻塞主线程导致掉帧 */
+    fun saveCurrentConfigAsync(
+        pid: String = selectedProviderId,
+        rawUrl: String = baseUrl,
+        rawKey: String = apiKey,
+        rawModel: String = model,
+        temperature: Double = temp,
+        extra: String = sysExtra,
+        mode: ExecutionMode = execMode
+    ) {
+        saveDebounceJob?.cancel()
+        val snapshot = buildNormalizedConfig(pid, rawUrl, rawKey, rawModel, temperature, extra, mode)
+        scope.launch(Dispatchers.IO) {
+            app.settingsStore.save(snapshot)
+        }
+    }
+
+    /** 输入框防抖保存：用户停顿 350ms 后在 IO 线程加密写盘 */
+    fun scheduleSaveConfig(
+        pid: String = selectedProviderId,
+        rawUrl: String = baseUrl,
+        rawKey: String = apiKey,
+        rawModel: String = model,
+        temperature: Double = temp,
+        extra: String = sysExtra,
+        mode: ExecutionMode = execMode
+    ) {
+        saveDebounceJob?.cancel()
+        val snapshot = buildNormalizedConfig(pid, rawUrl, rawKey, rawModel, temperature, extra, mode)
+        saveDebounceJob = scope.launch(Dispatchers.IO) {
+            delay(350)
+            app.settingsStore.save(snapshot)
+        }
+    }
+
+    // 离开设置页面时保障最后一次输入不丢失
+    DisposableEffect(Unit) {
+        onDispose {
+            saveDebounceJob?.cancel()
+            val snapshot = buildNormalizedConfig()
+            CoroutineScope(Dispatchers.IO).launch {
+                app.settingsStore.save(snapshot)
+            }
+        }
+    }
+
+    BackHandler {
+        saveCurrentConfigAsync()
         onBack()
     }
-    BackHandler { handleBack() }
 
-    // 智能验证 API Key 并拉取可用模型（支持跨平台自动识别回退）
     fun verifyAndFetchModels(autoTriggered: Boolean = false) {
         val cleanKey = OpenAIClient.sanitizeApiKey(apiKey)
         if (cleanKey.isBlank() && selectedProviderId != "ollama") {
@@ -140,7 +186,7 @@ fun SettingsScreen(
             return
         }
         apiKey = cleanKey
-        saveCurrentConfig(rawKey = cleanKey)
+        saveCurrentConfigAsync(rawKey = cleanKey)
 
         isLoadingModels = true
         modelFetchError = null
@@ -161,7 +207,7 @@ fun SettingsScreen(
                         val preferred = selectedProvider.defaultModel.takeIf { it in models } ?: models.first()
                         model = preferred
                     }
-                    saveCurrentConfig(rawKey = cleanKey, rawModel = model)
+                    saveCurrentConfigAsync(rawKey = cleanKey, rawModel = model)
                     verifySuccessMsg = "API Key 验证有效 (${selectedProvider.label} · ${models.size} 个模型)"
                     modelFetchError = null
                     isLoadingModels = false
@@ -170,7 +216,6 @@ fun SettingsScreen(
                     }
                 }
             }.onFailure { err ->
-                // 如果用户未修改自定义 URL 且报鉴权错误，自动探测该 Key 属于哪个预设平台
                 val isUsingDefaultPresetUrl = selectedProviderId != "custom" &&
                     OpenAIClient.normalizeBaseUrl(baseUrl) == OpenAIClient.normalizeBaseUrl(selectedProvider.baseUrl)
                 val probed = if (isUsingDefaultPresetUrl || baseUrl.isBlank()) {
@@ -186,7 +231,7 @@ fun SettingsScreen(
                         model = matchedProvider.defaultModel.takeIf { it in matchedModels }
                             ?: matchedModels.firstOrNull()
                             ?: matchedProvider.defaultModel
-                        saveCurrentConfig(
+                        saveCurrentConfigAsync(
                             pid = matchedProvider.id,
                             rawUrl = matchedProvider.baseUrl,
                             rawKey = cleanKey,
@@ -209,7 +254,6 @@ fun SettingsScreen(
         }
     }
 
-    // 当用户输入/粘贴 API Key 后，自动根据特征前缀切换平台并在后台静默校验
     LaunchedEffect(apiKey) {
         val clean = OpenAIClient.sanitizeApiKey(apiKey)
         if (clean.length >= 12) {
@@ -223,54 +267,96 @@ fun SettingsScreen(
                     }
                 }
             }
-            saveCurrentConfig(rawKey = clean)
             delay(450)
+            saveCurrentConfigAsync(rawKey = clean)
             verifyAndFetchModels(autoTriggered = true)
         }
     }
 
-    // Theme state
     var currentTheme by remember { mutableStateOf(ThemeState.currentTheme) }
+    var currentWallpaperPath by remember { mutableStateOf(ThemeState.wallpaperPath) }
 
     val wallpaperLauncher = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) {
-            try {
-                val input = context.contentResolver.openInputStream(uri)
-                val tmp = java.io.File(context.cacheDir, "wallpaper_tmp")
-                input?.use { it.copyTo(tmp.outputStream()) }
-                input?.close()
-                ThemeState.loadWallpaper(tmp.absolutePath)
-                ThemeState.currentTheme = AppTheme.CUSTOM_WALLPAPER
-                currentTheme = AppTheme.CUSTOM_WALLPAPER
-                scope.launch { snackbar.showSnackbar(s.wallpaperSet) }
-            } catch (_: Throwable) {
-                scope.launch { snackbar.showSnackbar(s.wallpaperLoadFailed) }
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val dest = File(context.filesDir, "custom_wallpaper.img")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        dest.outputStream().use { out -> input.copyTo(out) }
+                    }
+                    ThemeState.loadWallpaper(dest.absolutePath)
+                    app.settingsStore.setWallpaperPath(dest.absolutePath)
+                    app.settingsStore.setThemeName(AppTheme.CUSTOM_WALLPAPER_DARK.name)
+                    withContext(Dispatchers.Main) {
+                        ThemeState.currentTheme = AppTheme.CUSTOM_WALLPAPER_DARK
+                        currentTheme = AppTheme.CUSTOM_WALLPAPER_DARK
+                        currentWallpaperPath = dest.absolutePath
+                        snackbar.showSnackbar(s.wallpaperSet)
+                    }
+                } catch (_: Throwable) {
+                    withContext(Dispatchers.Main) {
+                        snackbar.showSnackbar(s.wallpaperLoadFailed)
+                    }
+                }
             }
         }
     }
 
     Scaffold(
-        snackbarHost = { SnackbarHost(snackbar) },
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = {
+            SnackbarHost(
+                hostState = snackbar,
+                modifier = Modifier.padding(bottom = 84.dp)
+            )
+        },
         topBar = {
             TopAppBar(
-                title = { Text(s.settings) },
-                navigationIcon = {
-                    IconButton(onClick = handleBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, s.back)
+                title = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(13.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Settings,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column {
+                            Text(s.settings, fontWeight = FontWeight.ExtraBold, fontSize = 19.sp)
+                            Text(
+                                "模型配置、自动化模式与个性化",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 },
                 actions = {
-                    TextButton(
+                    FilledTonalButton(
                         onClick = {
-                            saveCurrentConfig()
+                            saveCurrentConfigAsync()
                             verifyAndFetchModels(autoTriggered = false)
-                        }
+                        },
+                        shape = RoundedCornerShape(50),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp),
+                        modifier = Modifier.padding(end = 8.dp)
                     ) {
-                        Icon(Icons.Default.Check, null, modifier = Modifier.size(18.dp))
+                        Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text(s.save, fontWeight = FontWeight.Bold)
+                        Text(s.save, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                     }
-                }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = MaterialTheme.colorScheme.background
+                )
             )
         }
     ) { padding ->
@@ -278,45 +364,42 @@ fun SettingsScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(padding)
-                .padding(16.dp)
+                .padding(horizontal = 16.dp)
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            // ── 1. AI 模型与 API Key 配置（置顶第一优先级） ──
+            // ── 1. AI 模型与 API Key 配置（MD3 无边框暖灰分层卡片） ──
             SectionTitle(s.sectionAi)
 
-            Card(
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(14.dp),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.65f)
-                )
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface
             ) {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(14.dp),
+                    modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    // 实时生效状态指示条
                     val isConfigured = cfg.isValid()
                     Surface(
                         color = if (isConfigured)
-                            MaterialTheme.colorScheme.primary.copy(alpha = 0.14f)
+                            MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
                         else
-                            MaterialTheme.colorScheme.error.copy(alpha = 0.14f),
-                        shape = RoundedCornerShape(8.dp),
+                            MaterialTheme.colorScheme.errorContainer,
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
                                 imageVector = if (isConfigured) Icons.Default.CheckCircle else Icons.Default.Warning,
                                 contentDescription = null,
-                                tint = if (isConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                                modifier = Modifier.size(16.dp)
+                                tint = if (isConfigured) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                                modifier = Modifier.size(18.dp)
                             )
-                            Spacer(Modifier.width(8.dp))
+                            Spacer(Modifier.width(10.dp))
                             Text(
                                 text = if (isConfigured) {
                                     "当前已生效：${AiProvider.byId(cfg.providerId).label} · ${cfg.model}"
@@ -324,13 +407,12 @@ fun SettingsScreen(
                                     "尚未填写 API Key — 粘贴后将自动识别并保存"
                                 },
                                 fontSize = 12.sp,
-                                fontWeight = FontWeight.Medium,
-                                color = if (isConfigured) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
+                                fontWeight = FontWeight.SemiBold,
+                                color = if (isConfigured) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer
                             )
                         }
                     }
 
-                    // AI 提供商选择
                     ExposedDropdownMenuBox(
                         expanded = showProviderMenu,
                         onExpandedChange = { showProviderMenu = it }
@@ -340,8 +422,11 @@ fun SettingsScreen(
                             onValueChange = {},
                             readOnly = true,
                             label = { Text(s.aiProvider) },
+                            shape = RoundedCornerShape(16.dp),
                             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showProviderMenu) },
-                            modifier = Modifier.fillMaxWidth().menuAnchor()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                         )
                         ExposedDropdownMenu(
                             expanded = showProviderMenu,
@@ -353,7 +438,7 @@ fun SettingsScreen(
                                         Column {
                                             Text(p.label, fontWeight = FontWeight.Medium)
                                             if (p.baseUrl.isNotBlank()) {
-                                                Text(p.baseUrl, fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                                                Text(p.baseUrl, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                             }
                                         }
                                     },
@@ -367,7 +452,7 @@ fun SettingsScreen(
                                             baseUrl = p.baseUrl
                                             model = p.defaultModel
                                         }
-                                        saveCurrentConfig(
+                                        saveCurrentConfigAsync(
                                             pid = p.id,
                                             rawUrl = if (p.id != "custom") p.baseUrl else baseUrl,
                                             rawModel = if (p.id != "custom") p.defaultModel else model
@@ -383,23 +468,22 @@ fun SettingsScreen(
                         }
                     }
 
-                    // API Key 输入框（支持一键粘贴、清空、显示/隐藏，实时自动保存）
                     OutlinedTextField(
                         value = apiKey,
                         onValueChange = { newValue ->
                             apiKey = newValue
                             modelFetchError = null
-                            saveCurrentConfig(rawKey = newValue)
+                            scheduleSaveConfig(rawKey = newValue)
                         },
                         label = { Text("API Key") },
                         placeholder = { Text(s.pasteApiKey) },
                         singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
                         visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                // 一键粘贴按钮
                                 IconButton(
                                     onClick = {
                                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
@@ -407,7 +491,7 @@ fun SettingsScreen(
                                         if (pasted.isNotBlank()) {
                                             val clean = OpenAIClient.sanitizeApiKey(pasted)
                                             apiKey = clean
-                                            saveCurrentConfig(rawKey = clean)
+                                            saveCurrentConfigAsync(rawKey = clean)
                                         }
                                     }
                                 ) {
@@ -419,7 +503,7 @@ fun SettingsScreen(
                                             apiKey = ""
                                             verifySuccessMsg = null
                                             modelFetchError = null
-                                            saveCurrentConfig(rawKey = "")
+                                            saveCurrentConfigAsync(rawKey = "")
                                         }
                                     ) {
                                         Icon(Icons.Default.Clear, "清空", modifier = Modifier.size(18.dp))
@@ -432,23 +516,23 @@ fun SettingsScreen(
                         }
                     )
 
-                    // API Base URL（直接展示，所有提供商均可查看或修改为中转站地址）
                     OutlinedTextField(
                         value = baseUrl,
                         onValueChange = { newUrl ->
                             baseUrl = newUrl
-                            saveCurrentConfig(rawUrl = newUrl)
+                            scheduleSaveConfig(rawUrl = newUrl)
                         },
                         label = { Text("API Base URL (接口地址)") },
                         placeholder = { Text("https://api.deepseek.com/v1") },
                         singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
                         modifier = Modifier.fillMaxWidth(),
                         trailingIcon = {
                             if (selectedProvider.baseUrl.isNotBlank() && baseUrl != selectedProvider.baseUrl) {
                                 TextButton(
                                     onClick = {
                                         baseUrl = selectedProvider.baseUrl
-                                        saveCurrentConfig(rawUrl = selectedProvider.baseUrl)
+                                        saveCurrentConfigAsync(rawUrl = selectedProvider.baseUrl)
                                     }
                                 ) {
                                     Text("默认", fontSize = 11.sp)
@@ -457,7 +541,6 @@ fun SettingsScreen(
                         }
                     )
 
-                    // 模型名称（既可直接编辑输入任意模型名，也可从下拉菜单选择）
                     val candidateModels = remember(dynamicModels, selectedProviderId) {
                         (dynamicModels + selectedProvider.models).distinct()
                     }
@@ -471,9 +554,10 @@ fun SettingsScreen(
                             value = model,
                             onValueChange = { newModel ->
                                 model = newModel
-                                saveCurrentConfig(rawModel = newModel)
+                                scheduleSaveConfig(rawModel = newModel)
                             },
                             singleLine = true,
+                            shape = RoundedCornerShape(16.dp),
                             label = { Text("${s.model} (可下拉选择或直接输入)") },
                             trailingIcon = {
                                 if (candidateModels.isNotEmpty()) {
@@ -482,7 +566,9 @@ fun SettingsScreen(
                                     }
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth().menuAnchor()
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryEditable)
                         )
                         if (candidateModels.isNotEmpty()) {
                             ExposedDropdownMenu(
@@ -495,7 +581,7 @@ fun SettingsScreen(
                                         onClick = {
                                             model = m
                                             modelExpanded = false
-                                            saveCurrentConfig(rawModel = m)
+                                            saveCurrentConfigAsync(rawModel = m)
                                         },
                                         leadingIcon = {
                                             if (m == model) {
@@ -508,23 +594,32 @@ fun SettingsScreen(
                         }
                     }
 
-                    // 快捷模型标签（一键切换）
                     if (candidateModels.isNotEmpty()) {
-                        LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(candidateModels.take(8)) { m ->
-                                FilterChip(
-                                    selected = model == m,
-                                    onClick = {
-                                        model = m
-                                        saveCurrentConfig(rawModel = m)
-                                    },
-                                    label = { Text(m, fontSize = 11.sp) }
-                                )
+                                val selectedModel = model == m
+                                Surface(
+                                    shape = RoundedCornerShape(50),
+                                    color = if (selectedModel) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.surfaceVariant,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(50))
+                                        .clickable {
+                                            model = m
+                                            saveCurrentConfigAsync(rawModel = m)
+                                        }
+                                ) {
+                                    Text(
+                                        text = m,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (selectedModel) FontWeight.Bold else FontWeight.Medium,
+                                        color = if (selectedModel) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                                    )
+                                }
                             }
                         }
                     }
 
-                    // 校验状态反馈
                     if (verifySuccessMsg != null) {
                         Text(
                             text = "✅ $verifySuccessMsg",
@@ -541,34 +636,30 @@ fun SettingsScreen(
                         )
                     }
 
-                    // 操作按钮行：验证并获取模型 + 保存配置
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(10.dp)
                     ) {
-                        OutlinedButton(
+                        FilledTonalButton(
                             onClick = { verifyAndFetchModels(autoTriggered = false) },
                             enabled = (apiKey.isNotBlank() || selectedProviderId == "ollama") && !isLoadingModels,
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(50)
                         ) {
                             if (isLoadingModels) {
-                                CircularProgressIndicator(
-                                    Modifier.size(16.dp),
-                                    strokeWidth = 2.dp
-                                )
+                                CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                                 Spacer(Modifier.width(6.dp))
                                 Text(s.fetching, fontSize = 12.sp)
                             } else {
                                 Icon(Icons.Default.Refresh, null, modifier = Modifier.size(16.dp))
                                 Spacer(Modifier.width(6.dp))
-                                Text("验证 Key / 获取模型", fontSize = 12.sp)
+                                Text("验证 / 拉取模型", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             }
                         }
 
                         Button(
                             onClick = {
-                                saveCurrentConfig()
+                                saveCurrentConfigAsync()
                                 scope.launch {
                                     snackbar.showSnackbar(
                                         s.fmt(s.savedAs, "name" to "${selectedProvider.label} (${model.ifBlank { selectedProvider.defaultModel }})")
@@ -576,15 +667,14 @@ fun SettingsScreen(
                                 }
                             },
                             modifier = Modifier.weight(1f),
-                            shape = RoundedCornerShape(10.dp)
+                            shape = RoundedCornerShape(50)
                         ) {
                             Icon(Icons.Default.Check, null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(6.dp))
-                            Text(s.save, fontSize = 12.sp)
+                            Text(s.save, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                         }
                     }
 
-                    // 高级参数折叠区（温度 + 附加系统提示词）
                     TextButton(
                         onClick = { showAdvanced = !showAdvanced },
                         contentPadding = PaddingValues(0.dp)
@@ -595,10 +685,8 @@ fun SettingsScreen(
                         Text(s.temperature.format(temp), fontSize = 13.sp)
                         Slider(
                             value = temp.toFloat(),
-                            onValueChange = {
-                                temp = it.toDouble()
-                                saveCurrentConfig(temperature = temp)
-                            },
+                            onValueChange = { temp = it.toDouble() },
+                            onValueChangeFinished = { saveCurrentConfigAsync(temperature = temp) },
                             valueRange = 0f..2f,
                             modifier = Modifier.fillMaxWidth()
                         )
@@ -606,127 +694,135 @@ fun SettingsScreen(
                             value = sysExtra,
                             onValueChange = {
                                 sysExtra = it
-                                saveCurrentConfig(extra = sysExtra)
+                                scheduleSaveConfig(extra = it)
                             },
                             label = { Text(s.systemExtra) },
+                            shape = RoundedCornerShape(16.dp),
                             modifier = Modifier.fillMaxWidth().heightIn(min = 80.dp)
                         )
                     }
                 }
             }
 
-            // ── 1.5 自动化运行模式 / Execution Mode ──
+            // ── 1.5 自动化运行模式 / Execution Mode (MD3 无边框暖粉层级) ──
             SectionTitle(s.executionModeLabel)
-            Card(
+            Surface(
                 modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                shape = RoundedCornerShape(16.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                color = MaterialTheme.colorScheme.surface,
+                shape = RoundedCornerShape(24.dp)
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Default.Bolt,
-                            contentDescription = null,
-                            tint = Color(0xFFF59E0B),
-                            modifier = Modifier.size(20.dp)
-                        )
-                        Spacer(Modifier.width(8.dp))
-                        Text(
-                            s.executionModeLabel,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 15.sp
-                        )
+                        Box(
+                            modifier = Modifier
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                Icons.Default.Bolt,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(20.dp)
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(s.executionModeLabel, fontWeight = FontWeight.Bold, fontSize = 15.sp)
+                                Spacer(Modifier.width(8.dp))
+                                TechBadge(
+                                    text = if (execMode == ExecutionMode.FAST) "默认 · 快速" else "安全拦截",
+                                    containerColor = MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            Text(
+                                "控制自动化逆向时的敏感操作策略。默认采用快速模式，全自动放行并留存审计快照。",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
-                    Text(
-                        "控制 Agent 自动化执行时的敏感操作拦截策略。默认采用安全模式，敏感操作需逐次确认。",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
 
-                    // 快速模式选项
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (execMode == ExecutionMode.FAST) Color(0xFFF59E0B).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (execMode == ExecutionMode.FAST) Color(0xFFF59E0B) else Color.Transparent
-                        ),
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (execMode == ExecutionMode.FAST) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
                             .clickable {
                                 execMode = ExecutionMode.FAST
-                                saveCurrentConfig(mode = ExecutionMode.FAST)
+                                saveCurrentConfigAsync(mode = ExecutionMode.FAST)
                             }
                     ) {
-                        Row(
-                            Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(
                                 selected = execMode == ExecutionMode.FAST,
                                 onClick = {
                                     execMode = ExecutionMode.FAST
-                                    saveCurrentConfig(mode = ExecutionMode.FAST)
+                                    saveCurrentConfigAsync(mode = ExecutionMode.FAST)
                                 }
                             )
                             Spacer(Modifier.width(8.dp))
-                            Column {
-                                Text(
-                                    s.modeFast,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 14.sp,
-                                    color = if (execMode == ExecutionMode.FAST) Color(0xFFF59E0B) else MaterialTheme.colorScheme.onSurface
-                                )
+                            Column(Modifier.weight(1f)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(
+                                        s.modeFast,
+                                        fontWeight = FontWeight.Bold,
+                                        fontSize = 14.sp,
+                                        color = if (execMode == ExecutionMode.FAST) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    TechBadge(
+                                        text = "默认",
+                                        containerColor = MaterialTheme.colorScheme.surface,
+                                        contentColor = MaterialTheme.colorScheme.primary
+                                    )
+                                }
                                 Spacer(Modifier.height(2.dp))
                                 Text(
                                     s.modeFastDesc,
                                     fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (execMode == ExecutionMode.FAST) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
                     }
 
-                    // 安全模式选项
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (execMode == ExecutionMode.SAFE) Color(0xFF3B82F6).copy(alpha = 0.12f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                        border = androidx.compose.foundation.BorderStroke(
-                            1.dp,
-                            if (execMode == ExecutionMode.SAFE) Color(0xFF3B82F6) else Color.Transparent
-                        ),
+                        shape = RoundedCornerShape(18.dp),
+                        color = if (execMode == ExecutionMode.SAFE) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clip(RoundedCornerShape(18.dp))
                             .clickable {
                                 execMode = ExecutionMode.SAFE
-                                saveCurrentConfig(mode = ExecutionMode.SAFE)
+                                saveCurrentConfigAsync(mode = ExecutionMode.SAFE)
                             }
                     ) {
-                        Row(
-                            Modifier.padding(12.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
+                        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                             RadioButton(
                                 selected = execMode == ExecutionMode.SAFE,
                                 onClick = {
                                     execMode = ExecutionMode.SAFE
-                                    saveCurrentConfig(mode = ExecutionMode.SAFE)
+                                    saveCurrentConfigAsync(mode = ExecutionMode.SAFE)
                                 }
                             )
                             Spacer(Modifier.width(8.dp))
-                            Column {
+                            Column(Modifier.weight(1f)) {
                                 Text(
                                     s.modeSafe,
                                     fontWeight = FontWeight.Bold,
                                     fontSize = 14.sp,
-                                    color = if (execMode == ExecutionMode.SAFE) Color(0xFF3B82F6) else MaterialTheme.colorScheme.onSurface
+                                    color = if (execMode == ExecutionMode.SAFE) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
                                 )
                                 Spacer(Modifier.height(2.dp))
                                 Text(
                                     s.modeSafeDesc,
                                     fontSize = 11.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = if (execMode == ExecutionMode.SAFE) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -736,70 +832,117 @@ fun SettingsScreen(
 
             // ── 2. 语言 / Language ──
             SectionTitle(s.sectionLanguage)
-            Text(s.languageHint, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            ExposedDropdownMenuBox(expanded = showLangMenu, onExpandedChange = { showLangMenu = it }) {
-                val langLabel = when (language) {
-                    AppLanguage.SYSTEM -> s.langSystem
-                    AppLanguage.ZH -> s.langZh
-                    AppLanguage.EN -> s.langEn
-                }
-                OutlinedTextField(
-                    value = langLabel,
-                    onValueChange = {},
-                    readOnly = true,
-                    label = { Text(s.languageLabel) },
-                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLangMenu) },
-                    modifier = Modifier.fillMaxWidth().menuAnchor()
-                )
-                ExposedDropdownMenu(expanded = showLangMenu, onDismissRequest = { showLangMenu = false }) {
-                    listOf(AppLanguage.SYSTEM, AppLanguage.ZH, AppLanguage.EN).forEach { lang ->
-                        val label = when (lang) {
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(s.languageHint, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    ExposedDropdownMenuBox(expanded = showLangMenu, onExpandedChange = { showLangMenu = it }) {
+                        val langLabel = when (language) {
                             AppLanguage.SYSTEM -> s.langSystem
                             AppLanguage.ZH -> s.langZh
                             AppLanguage.EN -> s.langEn
                         }
-                        DropdownMenuItem(
-                            text = { Text(label) },
-                            onClick = {
-                                language = lang
-                                showLangMenu = false
-                                app.settingsStore.setLanguage(lang)
-                                scope.launch { snackbar.showSnackbar(s.languageChanged) }
-                            },
-                            leadingIcon = {
-                                if (lang == language) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
-                            }
+                        OutlinedTextField(
+                            value = langLabel,
+                            onValueChange = {},
+                            readOnly = true,
+                            shape = RoundedCornerShape(16.dp),
+                            label = { Text(s.languageLabel) },
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = showLangMenu) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryNotEditable)
                         )
+                        ExposedDropdownMenu(expanded = showLangMenu, onDismissRequest = { showLangMenu = false }) {
+                            listOf(AppLanguage.SYSTEM, AppLanguage.ZH, AppLanguage.EN).forEach { lang ->
+                                val label = when (lang) {
+                                    AppLanguage.SYSTEM -> s.langSystem
+                                    AppLanguage.ZH -> s.langZh
+                                    AppLanguage.EN -> s.langEn
+                                }
+                                DropdownMenuItem(
+                                    text = { Text(label) },
+                                    onClick = {
+                                        language = lang
+                                        showLangMenu = false
+                                        app.settingsStore.setLanguage(lang)
+                                        scope.launch { snackbar.showSnackbar(s.languageChanged) }
+                                    },
+                                    leadingIcon = {
+                                        if (lang == language) Icon(Icons.Default.Check, null, tint = MaterialTheme.colorScheme.primary)
+                                    }
+                                )
+                            }
+                        }
                     }
                 }
             }
 
-            // ── 3. 主题 ──
+            // ── 3. 主题与壁纸持久化 ──
             SectionTitle(s.sectionTheme)
-            Text(s.chooseColorScheme, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                items(AppTheme.entries.toList()) { theme ->
-                    ThemeChip(
-                        theme = theme,
-                        selected = currentTheme == theme,
-                        onClick = {
-                            ThemeState.currentTheme = theme
-                            currentTheme = theme
+            Surface(
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text(s.chooseColorScheme, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LazyRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        items(AppTheme.entries.toList()) { theme ->
+                            ThemeChip(
+                                theme = theme,
+                                selected = currentTheme == theme,
+                                onClick = {
+                                    ThemeState.currentTheme = theme
+                                    currentTheme = theme
+                                    app.settingsStore.setThemeName(theme.name)
+                                }
+                            )
                         }
-                    )
+                    }
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        FilledTonalButton(
+                            onClick = { wallpaperLauncher.launch("image/*") },
+                            shape = RoundedCornerShape(50),
+                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                        ) {
+                            Icon(Icons.Default.Wallpaper, null, modifier = Modifier.size(16.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(s.chooseWallpaper, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                        if (currentWallpaperPath != null) {
+                            TextButton(
+                                onClick = {
+                                    ThemeState.wallpaperBitmap = null
+                                    ThemeState.wallpaperPath = null
+                                    currentWallpaperPath = null
+                                    app.settingsStore.setWallpaperPath(null)
+                                    if (currentTheme.hasWallpaper) {
+                                        ThemeState.currentTheme = AppTheme.AMOLED_BLACK
+                                        currentTheme = AppTheme.AMOLED_BLACK
+                                        app.settingsStore.setThemeName(AppTheme.AMOLED_BLACK.name)
+                                    }
+                                },
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text("清除壁纸", fontSize = 12.sp)
+                            }
+                        }
+                    }
+                    if (currentWallpaperPath != null) {
+                        Text(
+                            "${s.wallpaperPrefix}${currentWallpaperPath!!.takeLast(30)}",
+                            fontSize = 11.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
-            }
-            TextButton(onClick = { wallpaperLauncher.launch("image/*") }) {
-                Icon(Icons.Default.Wallpaper, null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(s.chooseWallpaper, fontSize = 13.sp)
-            }
-            if (ThemeState.wallpaperPath != null) {
-                Text(
-                    "${s.wallpaperPrefix}${ThemeState.wallpaperPath!!.takeLast(30)}",
-                    fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
 
             // ── 4. Shizuku & 系统权限 ──
@@ -811,40 +954,46 @@ fun SettingsScreen(
             SectionTitle(s.sectionPython)
             PythonStatusCard()
 
-            OutlinedButton(
+            FilledTonalButton(
                 onClick = onOpenTerminal,
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                shape = RoundedCornerShape(12.dp)
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(50),
+                contentPadding = PaddingValues(vertical = 12.dp)
             ) {
                 Icon(Icons.Default.Terminal, null, modifier = Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(s.openBuiltinTerminal, fontSize = 13.sp)
+                Text(s.openBuiltinTerminal, fontSize = 13.sp, fontWeight = FontWeight.Bold)
             }
 
             // ── 6. 关于 ──
             SectionTitle(s.sectionAbout)
-            Card(
-                modifier = Modifier.fillMaxWidth().clickable { onOpenAbout() },
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(24.dp))
+                    .clickable { onOpenAbout() },
+                shape = RoundedCornerShape(24.dp),
+                color = MaterialTheme.colorScheme.surface
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(16.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Box(
-                        modifier = Modifier.size(44.dp).clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f)),
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.primaryContainer),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(22.dp))
+                        Icon(Icons.Default.Info, null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(22.dp))
                     }
                     Spacer(Modifier.width(14.dp))
                     Column(modifier = Modifier.weight(1f)) {
-                        Text(s.aboutApp, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                        Text(s.aboutApp, fontWeight = FontWeight.Bold, fontSize = 15.sp)
                         Text(s.aboutSubtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
-                    Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.outline)
+                    Icon(Icons.Default.ChevronRight, null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
@@ -856,29 +1005,40 @@ fun SettingsScreen(
 
 @Composable
 private fun ThemeChip(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
+    val brush: Brush? = if (theme == AppTheme.AMOLED_BLACK) M3RoseGradient else null
     val previewColor = when (theme) {
-        AppTheme.AMOLED_BLACK -> Color(0xFF000000)
+        AppTheme.AMOLED_BLACK -> M3RoseAccent
         AppTheme.PURE_WHITE -> Color(0xFFFFFFFF)
         AppTheme.CREAM -> Color(0xFFFAF8F5)
         AppTheme.MD3_BLUE -> Color(0xFF1A3A5C)
-        AppTheme.MD3_GREEN -> Color(0xFFE8F5E9)
-        AppTheme.MD3_PURPLE -> Color(0xFF2D1B4E)
-        AppTheme.MD3_ORANGE -> Color(0xFFFFF3E0)
-        AppTheme.MD3_MONO -> Color(0xFFEEEEEE)
-        AppTheme.CUSTOM_WALLPAPER -> Color(0xFF607D8B)
-        AppTheme.CUSTOM_WALLPAPER_DARK -> Color(0xFF263238)
-        else -> Color(0xFF888888)
+        AppTheme.MD3_GREEN -> Color(0xFF10B981)
+        AppTheme.MD3_PURPLE -> Color(0xFF7C3AED)
+        AppTheme.MD3_ORANGE -> Color(0xFFF59E0B)
+        AppTheme.MD3_MONO -> Color(0xFF94A3B8)
+        AppTheme.CUSTOM_WALLPAPER -> Color(0xFFF3B8C8)
+        AppTheme.CUSTOM_WALLPAPER_DARK -> Color(0xFF491B2A)
+        else -> M3RoseAccent
     }
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier.width(64.dp).clickable { onClick() }
+        modifier = Modifier
+            .width(68.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .clickable { onClick() }
+            .padding(vertical = 4.dp)
     ) {
         Box(
-            modifier = Modifier.size(44.dp).clip(CircleShape).background(previewColor)
+            modifier = Modifier
+                .size(46.dp)
+                .clip(CircleShape)
+                .then(
+                    if (brush != null) Modifier.background(brush)
+                    else Modifier.background(previewColor)
+                )
                 .then(
                     if (selected) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, CircleShape)
-                    else Modifier.border(1.dp, Color.Gray.copy(alpha = 0.3f), CircleShape)
+                    else Modifier
                 ),
             contentAlignment = Alignment.Center
         ) {
@@ -886,13 +1046,19 @@ private fun ThemeChip(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
                 Icon(
                     Icons.Default.Check,
                     null,
-                    tint = if (theme.isDark) Color.White else Color.Black,
+                    tint = if (theme == AppTheme.AMOLED_BLACK) M3RoseHeroTitleColor else if (theme.isDark) Color.White else Color.Black,
                     modifier = Modifier.size(20.dp)
                 )
             }
         }
-        Spacer(Modifier.height(4.dp))
-        Text(theme.localizedLabel(), fontSize = 10.sp, maxLines = 1)
+        Spacer(Modifier.height(6.dp))
+        Text(
+            theme.localizedLabel(),
+            fontSize = 10.sp,
+            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
+            color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1
+        )
     }
 }
 
@@ -900,9 +1066,10 @@ private fun ThemeChip(theme: AppTheme, selected: Boolean, onClick: () -> Unit) {
 private fun SectionTitle(text: String) {
     Text(
         text,
-        style = MaterialTheme.typography.titleSmall,
+        fontSize = 14.sp,
+        fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(top = 8.dp)
+        modifier = Modifier.padding(top = 6.dp, start = 4.dp)
     )
 }
 
@@ -914,43 +1081,64 @@ private fun ShizukuStatusCard() {
     val scope = rememberCoroutineScope()
     var requesting by remember { mutableStateOf(false) }
 
-    data class StatusInfo(val text: String, val color: Color, val label: String?, val action: (() -> Unit)?)
+    data class StatusInfo(val text: String, val color: Color, val container: Color, val label: String?, val action: (() -> Unit)?)
     val statusInfo = when (status) {
         is ShizukuManager.Status.Authorized -> StatusInfo(
             s.shizukuAuthorized + if (status.uid > 0) " (UID: ${status.uid})" else "",
-            MaterialTheme.colorScheme.primary, null, null
+            MaterialTheme.colorScheme.onPrimaryContainer,
+            MaterialTheme.colorScheme.primaryContainer,
+            null,
+            null
         )
         is ShizukuManager.Status.Running -> StatusInfo(
-            s.shizukuRunning, MaterialTheme.colorScheme.tertiary, s.authorize,
+            s.shizukuRunning,
+            MaterialTheme.colorScheme.primary,
+            MaterialTheme.colorScheme.surfaceVariant,
+            s.authorize,
             { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } }
         )
         is ShizukuManager.Status.Installed -> StatusInfo(
-            s.shizukuInstalled, MaterialTheme.colorScheme.error, s.authorize,
+            s.shizukuInstalled,
+            MaterialTheme.colorScheme.onErrorContainer,
+            MaterialTheme.colorScheme.errorContainer,
+            s.authorize,
             { requesting = true; scope.launch { ShizukuManager.requestPermission(); requesting = false } }
         )
         else -> StatusInfo(
-            s.shizukuMissing, MaterialTheme.colorScheme.error, s.install,
+            s.shizukuMissing,
+            MaterialTheme.colorScheme.onErrorContainer,
+            MaterialTheme.colorScheme.errorContainer,
+            s.install,
             { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/download/"))) }
         )
     }
 
-    Card(
-        Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(12.dp)
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(24.dp)
     ) {
-        Row(Modifier.padding(12.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Security, contentDescription = null, tint = statusInfo.color, modifier = Modifier.size(20.dp))
-            Spacer(Modifier.width(10.dp))
-            Text(statusInfo.text, fontSize = 12.sp, color = statusInfo.color, modifier = Modifier.weight(1f))
+        Row(Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(statusInfo.container),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(Icons.Filled.Security, contentDescription = null, tint = statusInfo.color, modifier = Modifier.size(20.dp))
+            }
+            Spacer(Modifier.width(12.dp))
+            Text(statusInfo.text, fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurface, modifier = Modifier.weight(1f))
             if (statusInfo.label != null && statusInfo.action != null) {
-                Button(
+                FilledTonalButton(
                     onClick = { if (!requesting) statusInfo.action!!.invoke() },
                     enabled = !requesting,
-                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                    shape = RoundedCornerShape(50),
+                    contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
                 ) {
                     if (requesting) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                    else Text(statusInfo.label!!, fontSize = 12.sp)
+                    else Text(statusInfo.label!!, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -963,11 +1151,10 @@ private fun BatteryOptimizationCard() {
     val context = LocalContext.current
     var isIgnoring by remember { mutableStateOf(KeepAliveManager.isIgnoringBatteryOptimizations(context)) }
 
-    // 从系统设置返回时重新检查电池优化状态
-    val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
-    androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
-        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
                 isIgnoring = KeepAliveManager.isIgnoringBatteryOptimizations(context)
             }
         }
@@ -975,46 +1162,54 @@ private fun BatteryOptimizationCard() {
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Card(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        colors = CardDefaults.cardColors(
-            containerColor = if (isIgnoring)
-                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-            else MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.3f)
-        )
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(24.dp),
+        color = MaterialTheme.colorScheme.surface
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(12.dp),
+            modifier = Modifier.fillMaxWidth().padding(14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Icon(
-                Icons.Default.BatteryChargingFull, null,
-                tint = if (isIgnoring) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                modifier = Modifier.size(20.dp)
-            )
-            Spacer(Modifier.width(8.dp))
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(13.dp))
+                    .background(if (isIgnoring) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.errorContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    Icons.Default.BatteryChargingFull, null,
+                    tint = if (isIgnoring) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onErrorContainer,
+                    modifier = Modifier.size(20.dp)
+                )
+            }
+            Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(s.batteryWhitelist, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                Text(s.batteryWhitelist, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                 Text(
                     if (isIgnoring) s.batteryExempted else s.batteryNotExempted,
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
             if (!isIgnoring) {
-                TextButton(onClick = {
-                    try {
-                        val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                            data = Uri.parse("package:${context.packageName}")
-                        }
-                        context.startActivity(intent)
-                    } catch (_: Throwable) {
+                FilledTonalButton(
+                    shape = RoundedCornerShape(50),
+                    onClick = {
                         try {
-                            context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-                        } catch (_: Throwable) {}
+                            val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            }
+                            context.startActivity(intent)
+                        } catch (_: Throwable) {
+                            try {
+                                context.startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+                            } catch (_: Throwable) {}
+                        }
                     }
-                }) {
-                    Text(s.goToSettings, fontSize = 12.sp)
+                ) {
+                    Text(s.goToSettings, fontSize = 12.sp, fontWeight = FontWeight.Bold)
                 }
             }
         }
@@ -1032,7 +1227,7 @@ private fun PythonStatusCard() {
     val scope = rememberCoroutineScope()
 
     LaunchedEffect(Unit) {
-        scope.launch(Dispatchers.IO) {
+        withContext(Dispatchers.IO) {
             available = com.apkagent.apktools.PythonRunner.isAvailable()
             pythonPath = com.apkagent.apktools.PythonRunner.findPython()
             version = com.apkagent.apktools.PythonRunner.getVersion()
@@ -1041,41 +1236,50 @@ private fun PythonStatusCard() {
         }
     }
 
-    Card(
+    Surface(
         Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(12.dp)
+        color = MaterialTheme.colorScheme.surface,
+        shape = RoundedCornerShape(24.dp)
     ) {
-        Column(Modifier.padding(12.dp)) {
+        Column(Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    Icons.Filled.Code, contentDescription = null,
-                    tint = if (available) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(Modifier.width(10.dp))
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(RoundedCornerShape(13.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Filled.Code, contentDescription = null,
+                        tint = if (available) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
                 if (checking) {
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                     Spacer(Modifier.width(10.dp))
-                    Text(s.checking, fontSize = 12.sp)
+                    Text(s.checking, fontSize = 13.sp)
                 } else if (available) {
-                    Text(s.pythonReady, fontSize = 13.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+                    Text(s.pythonReady, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
                 } else {
-                    Text(s.pythonMissing, fontSize = 13.sp, color = MaterialTheme.colorScheme.error)
+                    Text(s.pythonMissing, fontSize = 14.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.error)
                 }
             }
             if (!checking) {
                 if (available && version != null) {
-                    Spacer(Modifier.height(6.dp))
+                    Spacer(Modifier.height(8.dp))
                     Text(s.fmt(s.pathLabel, "path" to pythonPath), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Text(s.fmt(s.versionLabel, "ver" to version), fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(10.dp))
                 OutlinedTextField(
                     value = customPath,
                     onValueChange = { customPath = it },
                     label = { Text(s.pythonPathManual, fontSize = 11.sp) },
                     singleLine = true,
+                    shape = RoundedCornerShape(16.dp),
                     textStyle = androidx.compose.ui.text.TextStyle(fontSize = 12.sp),
                     modifier = Modifier.fillMaxWidth(),
                     trailingIcon = {
@@ -1091,7 +1295,8 @@ private fun PythonStatusCard() {
                         }
                     }
                 )
-                Text(s.pythonTermuxHint, fontSize = 10.sp, color = MaterialTheme.colorScheme.outline)
+                Spacer(Modifier.height(4.dp))
+                Text(s.pythonTermuxHint, fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
         }
     }
